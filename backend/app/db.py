@@ -156,6 +156,10 @@ def init_db() -> None:
                 message TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
+            ON cloud_assets(provider, provider_file_id)
+            WHERE provider_file_id != '';
             """
         )
         for key, value in DEFAULT_SETTINGS.items():
@@ -209,6 +213,13 @@ def migrate(conn: sqlite3.Connection) -> None:
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
     merge_duplicate_series(conn)
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
+        ON cloud_assets(provider, provider_file_id)
+        WHERE provider_file_id != ''
+        """
+    )
 
 
 def merge_duplicate_series(conn: sqlite3.Connection) -> None:

@@ -16,7 +16,7 @@ from .db import connect, get_settings, init_db, log, merge_duplicate_series, now
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import mark_selected_releases, poll_submitted_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
-from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series
+from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series, scan_cloud_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -98,6 +98,12 @@ async def scheduled_scan() -> None:
     if bool_setting(settings.get("auto_scan", "false")):
         await scan_and_queue(settings)
     await poll_submitted_tasks(settings)
+    try:
+        imported, skipped = await scan_cloud_library(settings)
+        if imported:
+            log("info", f"云盘库扫描完成: 入库 {imported} 个，跳过 {skipped} 个")
+    except Exception as exc:
+        log("warn", f"云盘库扫描跳过: {exc}")
 
 
 @asynccontextmanager
@@ -372,6 +378,21 @@ async def api_poll_tasks() -> dict[str, str]:
     if count:
         log("info", f"已补齐云盘资源状态: {count} 个")
     return {"status": "started", "message": "状态刷新已启动"}
+
+
+@app.post("/api/cloud/scan")
+async def api_scan_cloud() -> dict[str, str]:
+    async def run() -> None:
+        settings = get_settings()
+        try:
+            imported, skipped = await scan_cloud_library(settings)
+        except Exception as exc:
+            log("error", f"云盘库扫描失败: {exc}")
+            return
+        log("info", f"云盘库扫描完成: 入库 {imported} 个，跳过 {skipped} 个")
+
+    asyncio.create_task(run())
+    return {"status": "started", "message": "云盘库扫描已启动"}
 
 
 @app.post("/api/sync/tasks/process")

@@ -135,6 +135,7 @@
             <div class="card-header">
               <span>云盘队列</span>
               <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新状态</el-button>
+              <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
               <el-button type="success" :icon="VideoPlay" @click="runAction('/tasks/process')">处理云盘任务</el-button>
             </div>
           </template>

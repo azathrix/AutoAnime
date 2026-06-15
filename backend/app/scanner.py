@@ -478,3 +478,11 @@ async def scan_and_queue(settings: dict[str, str]) -> None:
 
     log("info", f"扫描完成: {len(items)} 条发布，更新 {len(touched_series)} 部番剧，队列 {queued} 条")
     await process_tasks(settings)
+    from .sync_service import scan_cloud_library
+
+    try:
+        imported, skipped = await scan_cloud_library(settings)
+        if imported:
+            log("info", f"云盘库扫描完成: 入库 {imported} 个，跳过 {skipped} 个")
+    except Exception as exc:
+        log("warn", f"云盘库扫描跳过: {exc}")

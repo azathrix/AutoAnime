@@ -84,6 +84,8 @@ async def submit_offline_download(settings: dict[str, str], source: str, target_
 
 async def list_offline_tasks(settings: dict[str, str]) -> list[dict[str, Any]]:
     api = build_client(settings)
+    if settings.get("pikpak_auth_mode") == "password":
+        await api.login()
     phases = [
         "PHASE_TYPE_PENDING",
         "PHASE_TYPE_RUNNING",
@@ -92,6 +94,52 @@ async def list_offline_tasks(settings: dict[str, str]) -> list[dict[str, Any]]:
     ]
     data = await api.offline_list(size=1000, phase=phases)
     return data.get("tasks", []) if isinstance(data, dict) else []
+
+
+async def list_cloud_files(
+    settings: dict[str, str],
+    root_path: str,
+    max_depth: int = 4,
+    max_items: int = 2000,
+) -> list[dict[str, Any]]:
+    api = build_client(settings)
+    if settings.get("pikpak_auth_mode") == "password":
+        await api.login()
+    folders = await api.path_to_id(root_path, create=False)
+    if not folders:
+        return []
+    root_id = folders[-1]["id"]
+    collected: list[dict[str, Any]] = []
+
+    async def walk(parent_id: str, current_path: str, depth: int) -> None:
+        if len(collected) >= max_items or depth > max_depth:
+            return
+        page_token = None
+        while len(collected) < max_items:
+            data = await api.file_list(size=100, parent_id=parent_id, next_page_token=page_token)
+            files = data.get("files", []) if isinstance(data, dict) else []
+            folders_to_walk: list[tuple[str, str]] = []
+            for item in files:
+                name = str(item.get("name") or "")
+                path = f"{current_path.rstrip('/')}/{name}" if current_path else name
+                item["cloud_path"] = path
+                kind = str(item.get("kind") or "")
+                mime_type = str(item.get("mime_type") or item.get("mimeType") or "")
+                is_folder = kind.endswith("#folder") or mime_type == "application/vnd.google-apps.folder"
+                if is_folder and item.get("id"):
+                    folders_to_walk.append((str(item["id"]), path))
+                else:
+                    collected.append(item)
+                    if len(collected) >= max_items:
+                        break
+            for folder_id, folder_path in folders_to_walk:
+                await walk(folder_id, folder_path, depth + 1)
+            page_token = data.get("next_page_token") if isinstance(data, dict) else ""
+            if not page_token:
+                break
+
+    await walk(root_id, root_path.rstrip("/"), 0)
+    return collected
 
 
 async def rename_cloud_file(settings: dict[str, str], file_id: str, new_name: str) -> None:

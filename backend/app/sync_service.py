@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import shutil
+import re
+import zlib
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -8,7 +10,8 @@ import httpx
 from .db import connect, log, now
 from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
 from .metadata import generate_nfo_for_series
-from .pikpak_service import get_cloud_download_url
+from .parser import normalize_title_key, parse_episode
+from .pikpak_service import get_cloud_download_url, list_cloud_files
 
 
 def cloud_asset_path(task: dict, release: dict, series: dict, settings: dict[str, str]) -> tuple[str, str]:
@@ -166,6 +169,140 @@ def backfill_cloud_assets_from_completed_tasks(settings: dict[str, str]) -> int:
         if upsert_cloud_asset(row["id"], settings):
             count += 1
     return count
+
+
+VIDEO_SUFFIXES = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"}
+
+
+def cloud_file_id(item: dict) -> str:
+    return str(item.get("id") or item.get("file_id") or item.get("fileId") or "")
+
+
+def synthetic_task_id(file_id: str) -> int:
+    return 0 - (zlib.crc32(file_id.encode("utf-8")) % 2147483647) - 1
+
+
+def match_cloud_file_to_series(item: dict, series_rows: list[dict]) -> dict | None:
+    path = str(item.get("cloud_path") or item.get("name") or "")
+    match = re.search(r"bangumi[-_ ]?(\d+)", path, re.I)
+    if match:
+        bangumi_id = match.group(1)
+        for series in series_rows:
+            if str(series.get("bangumi_id") or "") == bangumi_id:
+                return series
+    normalized_path = normalize_title_key(path)
+    best: dict | None = None
+    best_len = 0
+    for series in series_rows:
+        keys = {
+            normalize_title_key(str(series.get("title_cn") or "")),
+            normalize_title_key(str(series.get("title_raw") or "")),
+        }
+        for key in keys:
+            if key and key in normalized_path and len(key) > best_len:
+                best = series
+                best_len = len(key)
+    return best
+
+
+def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str]) -> int | None:
+    file_id = cloud_file_id(item)
+    name = str(item.get("name") or Path(str(item.get("cloud_path") or "")).name)
+    path = str(item.get("cloud_path") or name)
+    if not file_id or not name:
+        return None
+    episode_number = parse_episode(name) or parse_episode(path) or 0
+    if episode_number <= 0:
+        return None
+    with connect() as conn:
+        release = conn.execute(
+            """
+            SELECT *
+            FROM releases
+            WHERE series_id=? AND episode_number=?
+            ORDER BY selected DESC, id DESC
+            LIMIT 1
+            """,
+            (series["id"], episode_number),
+        ).fetchone()
+        if not release:
+            return None
+        ts = now()
+        existing = conn.execute(
+            "SELECT id FROM cloud_assets WHERE provider='pikpak' AND provider_file_id=?",
+            (file_id,),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE cloud_assets
+                SET release_id=?, series_id=?, episode_number=?, cloud_path=?, cloud_name=?,
+                    status='available', updated_at=?
+                WHERE id=?
+                """,
+                (release["id"], series["id"], episode_number, path, name, ts, existing["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO cloud_assets
+                  (task_id, release_id, series_id, episode_number, provider, provider_file_id,
+                   cloud_path, cloud_name, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                """,
+                (
+                    synthetic_task_id(file_id),
+                    release["id"],
+                    series["id"],
+                    episode_number,
+                    file_id,
+                    path,
+                    name,
+                    ts,
+                    ts,
+                ),
+            )
+        asset = conn.execute("SELECT id FROM cloud_assets WHERE provider_file_id=?", (file_id,)).fetchone()
+    return int(asset["id"]) if asset else None
+
+
+async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
+    files = await list_cloud_files(settings, settings.get("library_root") or "/Anime")
+    with connect() as conn:
+        series_rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM series WHERE COALESCE(hidden, 0)=0"
+            ).fetchall()
+        ]
+    imported = 0
+    skipped = 0
+    synced_series: set[int] = set()
+    for item in files:
+        name = str(item.get("name") or item.get("cloud_path") or "")
+        if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
+            continue
+        series = match_cloud_file_to_series(item, series_rows)
+        if not series:
+            skipped += 1
+            continue
+        asset_id = upsert_scanned_cloud_asset(item, series, settings)
+        if not asset_id:
+            skipped += 1
+            continue
+        imported += 1
+        with connect() as conn:
+            rule = conn.execute(
+                "SELECT * FROM sync_rules WHERE series_id=?",
+                (series["id"],),
+            ).fetchone()
+        if rule and rule["sync_enabled"]:
+            synced_series.add(int(series["id"]))
+    for series_id in synced_series:
+        queue_sync_for_series(series_id, settings)
+    if synced_series:
+        await process_sync_tasks(settings)
+    return imported, skipped
 
 
 async def download_cloud_file_to_local(file_id: str, source: str, target: str, settings: dict[str, str]) -> None:
