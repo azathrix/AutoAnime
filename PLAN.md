@@ -28,8 +28,9 @@ RSS/搜索/导入/收藏
 当前第一阶段仍以 Mikan RSS + PikPak 为主：
 
 ```txt
-Mikan RSS -> 番剧聚合 -> Bangumi/TMDB 匹配 -> 字幕组/分辨率/语言自动选择
--> PikPak 离线下载 -> 云盘状态轮询 -> 手动或追更自动同步到 NAS 本地
+Mikan RSS -> 读取 Mikan bangumiId -> 番剧聚合与旧数据修复 -> Bangumi/TMDB 匹配
+-> 字幕组/分辨率/语言自动选择 -> PikPak 离线下载或云盘库扫描入库
+-> 云盘状态轮询 -> 按同步意图自动同步到 NAS 本地
 -> 本地 NFO -> Jellyfin 本地库
 ```
 
@@ -81,9 +82,9 @@ autoanime/
     app/
       main.py             FastAPI 应用、JSON API、静态前端托管
       db.py               SQLite schema、配置、日志、迁移
-      scanner.py          RSS 扫描、发布聚合、下载队列、PikPak 任务处理
-      parser.py           RSS 标题解析：标题、字幕组、分辨率、集数
-      pikpak_service.py   PikPakAPI 封装、token 登录
+      scanner.py          RSS 扫描、发布聚合、云盘队列、PikPak 任务处理
+      parser.py           RSS 标题解析：标题、字幕组、分辨率、集数、语言、Bangumi ID
+      pikpak_service.py   PikPakAPI 封装、token 登录、云盘目录扫描
       metadata.py         Bangumi 元数据、NFO 生成
       library.py          Jellyfin 友好的目录和文件名渲染
       config.py           数据目录和默认配置
@@ -182,6 +183,9 @@ docker compose up -d --build
 - FastAPI JSON API 已创建。
 - SQLite 保存配置、番剧、集数、RSS 发布、下载任务和日志。
 - Mikan RSS 扫描、番剧聚合、发布入库已实现。
+- Mikan RSS 的 `bangumiId` 已按 Bangumi.tv subject ID 读取，并优先作为稳定身份。
+- RSS 扫描会先隐藏临时条目，完成归并、元数据处理和规则计算后再显示，避免刷新时看到大量重复卡片。
+- 旧 release 如果在重扫时解析到正确 Bangumi ID，会迁回正确番剧；原错误空壳会自动隐藏。
 - 标题指纹归一化已实现：
   - 处理常见简繁差异。
   - 去除常见发布标签、标点、空格、集数后缀和分辨率标签。
@@ -190,16 +194,19 @@ docker compose up -d --build
 - PikPak 提交前会初始化 captcha；如果返回 `Verification code is invalid`，会刷新 captcha 并重试一次。
 - 下载任务支持提交、轮询、失败重试。
 - 新扫描到且没有 `metadata_source` 的番剧会尝试刷新 Bangumi 元数据。
-- 当前代码会在扫描后生成 NFO；后续需要改为“同步到本地后生成 NFO”。
+- 当前代码仍保留扫描后生成一份旧 NFO；后续需要彻底移除，只保留“同步到本地后生成 NFO”。
 - 发布语言解析已接入，支持简体、繁体、日语、中文和常见 CHS/CHT/BIG5/GB/JP 标记。
 - 自动选择已扩展为字幕组、分辨率、语言三维过滤。
 - 自动下载到云盘必须过滤后唯一；不唯一时会跳过并写日志原因。
 - 已新增云盘资源、本地同步规则、本地资源、同步任务数据模型。
 - PikPak 任务完成后会登记为云盘资源。
-- 已支持手动“同步到本地”和“取消同步”。
+- 已支持同步意图开关：未入云盘时也可以先开启同步，后续云盘资源入库后自动同步。
+- 已支持“取消同步”，会关闭后续同步并清理本地文件。
 - 同步成功后会在本地媒体库生成 NFO。
 - 取消同步会删除本地媒体文件和单集 NFO，但保留云盘资源。
 - 同步已改为通过 PikPak API 获取下载链接并直接下载到本地。
+- 已支持扫描配置的 PikPak 云盘库根目录，把明确匹配的云盘已有视频文件登记到 `cloud_assets`。
+- 云盘库扫描优先按路径中的 `bangumi-xxxx` 匹配，其次按已知标题归一化匹配；匹配不到会跳过，避免错归。
 - 默认自动扫描间隔为 60 分钟，同时保留手动扫描和手动刷新。
 
 ### 前端
@@ -216,6 +223,10 @@ docker compose up -d --build
   - `/api/dashboard` 返回 `task_counts` 和 `active_tasks`。
   - UI 展示 pending、running、submitted、failed 等状态。
 - `POST /api/tasks/retry-failed` 已接入 UI，用于重试失败任务。
+- 番剧详情抽屉中“同步到本地”已改为本地同步开关，不再要求必须先显示为已入云盘才能开启。
+- 番剧详情支持“删除误识别”，只删除应用记录和本地同步记录，不删除云盘文件。
+- 任务页已增加“扫描云盘库”入口。
+- 番剧库筛选已把“已下载”改为“已入云盘”和“已同步”。
 
 ### 构建和验证
 
@@ -245,10 +256,15 @@ POST /api/scan
 POST /api/tasks/process
 POST /api/tasks/poll
 POST /api/tasks/retry-failed
+POST /api/cloud/scan
 POST /api/series/{series_id}/download
 POST /api/series/{series_id}/metadata
 POST /api/series/{series_id}/nfo
 POST /api/releases/{release_id}/download
+POST /api/series/{series_id}/sync
+POST /api/series/{series_id}/sync/cancel
+POST /api/sync/tasks/process
+DELETE /api/series/{series_id}
 ```
 
 这些 API 仍是旧语义：`download` 基本等于提交 PikPak 离线任务。后续需要把 API 改名和拆分为：
@@ -257,6 +273,7 @@ POST /api/releases/{release_id}/download
 POST /api/cloud/download
 POST /api/cloud/tasks/process
 POST /api/cloud/tasks/poll
+POST /api/cloud/scan
 POST /api/sync/start
 POST /api/sync/cancel
 POST /api/sync/tasks/process
@@ -273,6 +290,10 @@ POST /api/jellyfin/scan
 - `episodes`: 单集记录
 - `releases`: RSS 发布记录
 - `download_tasks`: PikPak 提交和轮询任务
+- `cloud_assets`: 已在云盘中的资源，包括本程序任务完成和云盘库扫描导入。
+- `sync_rules`: 每个番剧的本地同步意图和本地根目录。
+- `local_assets`: NAS 本地真实文件记录。
+- `sync_tasks`: 云盘到本地的同步任务。
 - `logs`: 操作日志
 
 目标表需要重构为更通用的媒体库模型：
@@ -336,7 +357,8 @@ bangumi:{id} > tmdb:{id} > title:{normalized_title}
    - 语言优先级，例如 `简体 > 繁体 > 日语`
 
 6. 元数据应尽早匹配。
-   - RSS 扫描后先尝试 Bangumi/TMDB 匹配。
+   - Mikan RSS 的 `bangumiId` 是 Bangumi.tv subject ID，应优先使用。
+   - RSS 扫描后先按稳定 ID 归并，再尝试 Bangumi/TMDB 匹配。
    - 根据元数据 ID 合并重复条目。
    - 手动确认的元数据优先级最高。
 
@@ -363,7 +385,7 @@ access_token + refresh_token
 
 - 现有 `download_tasks` 仍是旧云盘下载任务表，已经补充 `cloud_assets`，但还没有完全重命名为 `cloud_tasks`。
 - 扫描阶段仍会生成一份旧 NFO，后续应彻底移除扫描后生成 NFO 的行为，只保留同步完成后本地 NFO。
-- 真实 PikPak 端到端提交尚未用真实 token 验证。
+- 真实 PikPak 端到端提交、云盘目录扫描和云盘文件直链下载尚未在 NAS 上完整验证。
 - PikPak 任务 ID 和 file ID 提取逻辑需要对照真实响应确认。
 - 云端重命名依赖有效 `file_id`，缺失时只能先标记完成并等待后续补拿。
 - API 错误响应还不够规范，后台任务也缺少统一操作状态。
@@ -376,7 +398,7 @@ access_token + refresh_token
 - TMDB 尚未实现。
 - 集标题和放送日期还没有完整填充。
 - 需要支持 Bangumi/TMDB 搜索候选选择和手动确认。
-- RSS 扫描时应先匹配元数据，再按稳定 ID 合并。
+- Mikan RSS `bangumiId` 已优先用于稳定合并；Bangumi 自动搜索仍需增加候选确认，避免启发式第一结果误配。
 
 ### 语言和发布选择
 
@@ -386,11 +408,11 @@ access_token + refresh_token
 ### 同步和本地库
 
 - 云盘到本地的同步任务模型已接入。
-- 已支持手动同步到本地。
-- 需要支持追更自动同步到本地。
+- 已支持同步意图开关，开启后新云盘资源会自动同步到本地。
 - 已支持取消同步并删除本地文件，但保留云盘资源。
 - 已支持通过 PikPak API 下载到本地。
-- 需要在 NAS 上用真实 PikPak file_id 验证下载链接和大文件稳定性。
+- 已支持云盘库扫描，把明确匹配的 PikPak 已有文件登记为云盘资源。
+- 需要在 NAS 上用真实 PikPak file_id 验证目录扫描、下载链接和大文件稳定性。
 - Jellyfin API 刷新尚未实现。
 
 ### 补全和导入
@@ -404,7 +426,7 @@ access_token + refresh_token
 
 - 暂无认证。
 - 暂无路由级浏览器 URL，当前 Vue 使用内部状态。
-- 番剧卡片需要展示云盘状态、本地同步状态、追更状态。
+- 番剧卡片已展示云盘数量和本地数量；后续仍需展示更明确的阻塞原因和自动选择状态。
 - 日历需要 Bangumi/TMDB 放送数据。
 
 ## 9. 下一阶段路线图
@@ -444,7 +466,7 @@ access_token + refresh_token
   - 本地已删除
   - 失败
 
-状态：部分完成。`cloud_assets`、`sync_rules`、`local_assets`、`sync_tasks` 已建立；旧 `download_tasks` 仍待重命名或迁移为 `cloud_tasks`。
+状态：部分完成。`cloud_assets`、`sync_rules`、`local_assets`、`sync_tasks` 已建立；云盘库扫描已接入；旧 `download_tasks` 仍待重命名或迁移为 `cloud_tasks`。
 
 ### P2: 本地同步执行器
 
@@ -452,22 +474,25 @@ access_token + refresh_token
 
 - 配置本地库目录，默认 `/media/pikpak-anime`。
 - 同步执行方式优先使用云盘 provider API。
-- 支持手动“同步到本地”。
+- 支持同步意图开关：未入云盘也能先开启。
 - 支持“取消同步”，只删除本地文件和本地 NFO。
 - 同步成功后生成 NFO。
 - 同步成功后可触发 Jellyfin 扫描。
 
-状态：部分完成。手动同步、取消同步、同步后 NFO 已实现；Jellyfin 扫描暂缓，真实 PikPak 文件下载需要 NAS 环境验证。
+状态：部分完成。同步意图开关、取消同步、同步后 NFO 已实现；Jellyfin 扫描暂缓，真实 PikPak 文件下载需要 NAS 环境验证。
 
 ### P3: 元数据优先合并
 
 目标：扫描时尽早建立稳定身份。
 
-- RSS 扫描后先尝试 Bangumi 匹配。
+- Mikan RSS `bangumiId` 已作为稳定 ID 使用。
+- RSS 扫描后先隐藏临时条目，完成归并后再显示。
 - 增加 TMDB 匹配。
 - 增加匹配候选 UI。
 - 建立 `identity_key`。
 - 按 Bangumi/TMDB ID 合并重复媒体。
+
+状态：部分完成。Mikan `bangumiId` 稳定合并、旧错归 release 修复、无资源空壳隐藏已实现；TMDB、候选 UI 和完整 `identity_key` 仍待实现。
 
 ### P4: 语言过滤和三维自动选择
 
@@ -498,6 +523,8 @@ access_token + refresh_token
 - 同步完成后生成 NFO。
 - 同步完成后触发 Jellyfin 扫描。
 
+状态：部分完成。现在实现的是“同步意图”开关，已覆盖新云盘资源自动同步；Jellyfin 扫描仍暂缓。
+
 ### P6: 补全、导入和收藏
 
 目标：让云盘库成为长期影院库。
@@ -508,6 +535,8 @@ access_token + refresh_token
 - 支持欧美剧导入到云盘。
 - 支持云盘已有资源扫描入库。
 - 支持收藏条目只入云盘、不占本地空间。
+
+状态：部分完成。PikPak 云盘库扫描已实现保守匹配：优先 `bangumi-xxxx`，其次标题归一化；老番/电影/美剧导入确认流程仍待实现。
 
 ### P7: Jellyfin 集成和前端完善
 
