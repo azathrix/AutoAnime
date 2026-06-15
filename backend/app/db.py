@@ -42,6 +42,7 @@ def init_db() -> None:
                 summary TEXT NOT NULL DEFAULT '',
                 metadata_source TEXT NOT NULL DEFAULT '',
                 nfo_status TEXT NOT NULL DEFAULT 'pending',
+                hidden INTEGER NOT NULL DEFAULT 0,
                 auto_download TEXT NOT NULL DEFAULT 'inherit',
                 selected_group TEXT NOT NULL DEFAULT '',
                 selected_resolution TEXT NOT NULL DEFAULT '',
@@ -162,6 +163,23 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, value),
             )
+        migrated = conn.execute(
+            "SELECT value FROM settings WHERE key='migration_auto_sync_default_v2'"
+        ).fetchone()
+        if not migrated or not migrated["value"]:
+            conn.execute(
+                """
+                UPDATE settings
+                SET value='true'
+                WHERE key='auto_sync_following' AND value='false'
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO settings (key, value) VALUES ('migration_auto_sync_default_v2', 'done')
+                ON CONFLICT(key) DO UPDATE SET value='done'
+                """
+            )
         migrate(conn)
 
 
@@ -174,6 +192,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         "poster_path": "TEXT NOT NULL DEFAULT ''",
         "metadata_source": "TEXT NOT NULL DEFAULT ''",
         "nfo_status": "TEXT NOT NULL DEFAULT 'pending'",
+        "hidden": "INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in series_additions.items():
         if column not in series_columns:
@@ -208,6 +227,24 @@ def merge_duplicate_series(conn: sqlite3.Connection) -> None:
         remove_ids = [value for value in ids if value != keep_id]
         for old_id in remove_ids:
             conn.execute("UPDATE releases SET series_id=? WHERE series_id=?", (keep_id, old_id))
+            conn.execute("UPDATE cloud_assets SET series_id=? WHERE series_id=?", (keep_id, old_id))
+            conn.execute("UPDATE local_assets SET series_id=? WHERE series_id=?", (keep_id, old_id))
+            conn.execute("UPDATE sync_tasks SET series_id=? WHERE series_id=?", (keep_id, old_id))
+            conn.execute(
+                """
+                INSERT INTO sync_rules
+                  (series_id, sync_enabled, auto_sync_following, local_root, created_at, updated_at)
+                SELECT ?, sync_enabled, auto_sync_following, local_root, created_at, updated_at
+                FROM sync_rules
+                WHERE series_id=?
+                ON CONFLICT(series_id) DO UPDATE SET
+                  sync_enabled=MAX(sync_rules.sync_enabled, excluded.sync_enabled),
+                  auto_sync_following=MAX(sync_rules.auto_sync_following, excluded.auto_sync_following),
+                  local_root=CASE WHEN sync_rules.local_root='' THEN excluded.local_root ELSE sync_rules.local_root END,
+                  updated_at=excluded.updated_at
+                """,
+                (keep_id, old_id),
+            )
             old_episodes = conn.execute(
                 "SELECT * FROM episodes WHERE series_id=?",
                 (old_id,),
@@ -231,7 +268,24 @@ def merge_duplicate_series(conn: sqlite3.Connection) -> None:
                 )
             conn.execute("UPDATE download_tasks SET series_id=? WHERE series_id=?", (keep_id, old_id))
             conn.execute("DELETE FROM episodes WHERE series_id=?", (old_id,))
+            conn.execute("DELETE FROM sync_rules WHERE series_id=?", (old_id,))
             conn.execute("DELETE FROM series WHERE id=?", (old_id,))
+
+
+def hide_orphan_series(conn: sqlite3.Connection) -> int:
+    cursor = conn.execute(
+        """
+        UPDATE series
+        SET hidden=1, updated_at=?
+        WHERE COALESCE(hidden, 0)=0
+          AND id NOT IN (SELECT DISTINCT series_id FROM releases)
+          AND id NOT IN (SELECT DISTINCT series_id FROM download_tasks)
+          AND id NOT IN (SELECT DISTINCT series_id FROM cloud_assets)
+          AND id NOT IN (SELECT DISTINCT series_id FROM local_assets)
+        """,
+        (now(),),
+    )
+    return cursor.rowcount
 
 
 def get_settings() -> dict[str, str]:

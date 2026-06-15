@@ -28,3 +28,7 @@ export async function saveSeries(id, payload) {
 export async function postAction(path) {
   return (await api.post(path)).data
 }
+
+export async function deleteAction(path) {
+  return (await api.delete(path)).data
+}

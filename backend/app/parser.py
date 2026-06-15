@@ -164,7 +164,38 @@ def parse_year(title: str, published_at: str = "") -> int:
     return int(match.group(1)) if match else 0
 
 
-def parse_bangumi_id(link: str, title: str) -> str:
+def entry_value(entry: Any, candidates: list[str]) -> str:
+    for key in candidates:
+        value = ""
+        if isinstance(entry, dict):
+            value = entry.get(key, "")
+        if not value:
+            value = getattr(entry, key, "")
+        if value:
+            return str(value)
+    if isinstance(entry, dict):
+        for key, value in entry.items():
+            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if normalized.endswith("bangumiid") and value:
+                return str(value)
+    return ""
+
+
+def parse_bangumi_id(entry: Any, link: str, title: str) -> str:
+    rss_value = entry_value(
+        entry,
+        [
+            "mikan_bangumiid",
+            "mikan_bangumiId",
+            "mikan_bangumi_id",
+            "bangumiid",
+            "bangumiId",
+            "bangumi_id",
+        ],
+    )
+    match = re.search(r"\d+", rss_value)
+    if match:
+        return match.group(0)
     match = re.search(r"[?&](?:bangumiId|bangumi_id)=(\d+)", link, re.I)
     if match:
         return match.group(1)
@@ -211,7 +242,7 @@ def parse_entry(entry: Any) -> ParsedRelease:
         subtitle_group=parse_group(title),
         resolution=parse_resolution(title),
         language=parse_language(title),
-        bangumi_id=parse_bangumi_id(link, title),
+        bangumi_id=parse_bangumi_id(entry, link, title),
         year=parse_year(title, published),
         torrent_url=torrent_url,
         magnet=magnet,

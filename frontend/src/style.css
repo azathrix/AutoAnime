@@ -387,6 +387,28 @@ h1 {
   margin-top: 8px;
 }
 
+.sync-panel {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  margin: 8px 0 12px;
+  padding: 12px 14px;
+}
+
+.sync-panel strong,
+.sync-panel span {
+  display: block;
+}
+
+.sync-panel span {
+  color: #64748b;
+  font-size: 13px;
+  margin-top: 3px;
+}
+
 .task-card {
   margin-top: 14px;
 }

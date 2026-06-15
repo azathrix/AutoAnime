@@ -38,7 +38,7 @@
             <el-option label="30 秒" :value="30000" />
           </el-select>
           <el-button type="primary" :icon="Search" @click="runAction('/scan')">扫描 RSS</el-button>
-          <el-button :icon="Refresh" @click="reload" :loading="loading">刷新页面</el-button>
+          <el-button :icon="Refresh" @click="reload" :loading="loading">刷新状态</el-button>
           <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败</el-button>
         </div>
       </header>
@@ -105,7 +105,7 @@
       <section v-if="view === 'library'" class="library">
         <div class="toolbar">
           <el-input v-model="keyword" clearable placeholder="搜索番剧、Bangumi ID、字幕组" />
-          <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已下载', '失败']" />
+          <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
         </div>
         <div class="anime-grid">
           <article v-for="item in filteredSeries" :key="item.id" class="anime-card" @click="openSeries(item.id)">
@@ -304,13 +304,23 @@
             </el-form-item>
           </div>
         </el-form>
+        <div class="sync-panel">
+          <div>
+            <strong>本地同步</strong>
+            <span>{{ syncSummary }}</span>
+          </div>
+          <el-switch :model-value="syncWanted" @change="toggleSeriesSync" />
+        </div>
         <div class="drawer-actions">
           <el-button type="primary" @click="saveCurrentSeries">保存</el-button>
           <el-button v-if="!seriesHasCloud" @click="runSeriesAction('download')">存入云盘</el-button>
-          <el-button v-if="seriesHasCloud && !seriesHasLocal" type="success" @click="runSeriesAction('sync')">同步到本地</el-button>
-          <el-button v-if="seriesHasLocal" type="danger" @click="runSeriesAction('sync/cancel')">取消本地同步</el-button>
           <el-button @click="runSeriesAction('metadata')">刷新元数据</el-button>
           <el-button @click="runSeriesAction('nfo')">生成 NFO</el-button>
+          <el-popconfirm title="只删除本应用里的误识别条目，不删除云盘文件。确定删除？" @confirm="deleteCurrentSeries">
+            <template #reference>
+              <el-button type="danger" plain>删除误识别</el-button>
+            </template>
+          </el-popconfirm>
         </div>
         <el-divider />
         <el-table :data="selectedSeries.releases" height="360">
@@ -333,7 +343,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
 import { Calendar, Collection, DataBoard, List, Refresh, Search, Setting, VideoPlay } from '@element-plus/icons-vue'
-import { getDashboard, getSeries, getSettings, postAction, saveSeries, saveSettings } from './api'
+import { deleteAction, getDashboard, getSeries, getSettings, postAction, saveSeries, saveSettings } from './api'
 
 const view = ref('dashboard')
 const loading = ref(false)
@@ -348,6 +358,7 @@ const dashboard = reactive({
   series: [],
   tasks: [],
   sync_tasks: [],
+  sync_rules: [],
   cloud_assets: [],
   logs: [],
   calendar: [],
@@ -374,6 +385,22 @@ const seriesHasLocal = computed(() => {
   const id = selectedSeries.value?.series?.id
   return Boolean(id && dashboard.series.some(item => item.id === id && Number(item.local_asset_count || 0) > 0))
 })
+const selectedSeriesStats = computed(() => {
+  const id = selectedSeries.value?.series?.id
+  return dashboard.series.find(item => item.id === id) || {}
+})
+const selectedSyncRule = computed(() => {
+  const id = selectedSeries.value?.series?.id
+  return dashboard.sync_rules.find(item => item.series_id === id) || {}
+})
+const syncWanted = computed(() => Boolean(selectedSyncRule.value.sync_enabled))
+const syncSummary = computed(() => {
+  const stats = selectedSeriesStats.value
+  if (Number(stats.local_asset_count || 0) > 0) return `已同步 ${stats.local_asset_count} 集到本地`
+  if (syncWanted.value && Number(stats.cloud_asset_count || 0) > 0) return '已开启，正在等待或处理本地同步'
+  if (syncWanted.value) return '已开启，云盘资源入库后会自动同步'
+  return '关闭后只保留云盘资源，本地文件会被清理'
+})
 
 const filteredSeries = computed(() => {
   const text = keyword.value.toLowerCase()
@@ -381,7 +408,8 @@ const filteredSeries = computed(() => {
     const matched = !text || `${item.title_cn} ${item.bangumi_id}`.toLowerCase().includes(text)
     if (!matched) return false
     if (seriesFilter.value === '待配置') return !item.bangumi_id || !item.group_count || !item.resolution_count
-    if (seriesFilter.value === '已下载') return Number(item.downloaded_count || 0) > 0
+    if (seriesFilter.value === '已入云盘') return Number(item.cloud_asset_count || 0) > 0
+    if (seriesFilter.value === '已同步') return Number(item.local_asset_count || 0) > 0
     if (seriesFilter.value === '失败') return dashboard.tasks.some(t => t.series_id === item.id && t.status === 'failed')
     return true
   })
@@ -461,6 +489,31 @@ async function runSeriesAction(action) {
     ElMessage.success(result.message || '操作已提交')
   }
   setTimeout(reload, 800)
+}
+
+async function toggleSeriesSync(enabled) {
+  const action = enabled ? 'sync' : 'sync/cancel'
+  const result = await postAction(`/series/${selectedSeries.value.series.id}/${action}`)
+  if (result.status === 'skipped') {
+    ElMessage.warning(result.message || '没有可执行任务')
+  } else {
+    ElMessage.success(result.message || '同步状态已更新')
+  }
+  await reload()
+}
+
+async function deleteCurrentSeries() {
+  const id = selectedSeries.value?.series?.id
+  if (!id) return
+  const result = await deleteAction(`/series/${id}`)
+  if (result.status === 'not_found') {
+    ElMessage.warning(result.message || '番剧不存在')
+  } else {
+    ElMessage.success(result.message || '已删除')
+  }
+  seriesDrawer.value = false
+  selectedSeries.value = null
+  await reload()
 }
 
 async function downloadRelease(id) {

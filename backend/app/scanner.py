@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import feedparser
 
-from .db import connect, log, now
+from .db import connect, hide_orphan_series, log, merge_duplicate_series, now
 from .library import bool_setting, render_episode_name, target_dir
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .parser import ParsedRelease, fingerprint, parse_entry, split_lines
@@ -27,8 +27,8 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
         conn.execute(
             """
             INSERT INTO series
-              (fingerprint, title_raw, title_cn, bangumi_id, year, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+              (fingerprint, title_raw, title_cn, bangumi_id, year, hidden, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               title_raw=excluded.title_raw,
               title_cn=CASE WHEN series.title_cn='' THEN excluded.title_cn ELSE series.title_cn END,
@@ -84,6 +84,18 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
         release_id = conn.execute("SELECT id FROM releases WHERE guid=?", (item.guid,)).fetchone()["id"]
         conn.execute(
             "UPDATE download_tasks SET series_id=? WHERE release_id=?",
+            (series_id, release_id),
+        )
+        conn.execute(
+            "UPDATE cloud_assets SET series_id=? WHERE release_id=?",
+            (series_id, release_id),
+        )
+        conn.execute(
+            "UPDATE local_assets SET series_id=? WHERE release_id=?",
+            (series_id, release_id),
+        )
+        conn.execute(
+            "UPDATE sync_tasks SET series_id=? WHERE release_id=?",
             (series_id, release_id),
         )
     return series_id, release_id
@@ -422,12 +434,26 @@ async def scan_and_queue(settings: dict[str, str]) -> None:
         log("error", f"RSS 扫描失败: {exc}")
         return
 
-    touched_series: set[int] = set()
+    touched_release_ids: set[int] = set()
     for item in items:
-        series_id, _ = upsert_release(item)
-        touched_series.add(series_id)
+        _, release_id = upsert_release(item)
+        touched_release_ids.add(release_id)
+    with connect() as conn:
+        merge_duplicate_series(conn)
+        hidden = hide_orphan_series(conn)
+        if hidden:
+            log("info", f"已隐藏无资源临时条目: {hidden} 个")
 
     queued = 0
+    with connect() as conn:
+        placeholders = ",".join("?" for _ in touched_release_ids)
+        touched_series = {
+            row["series_id"]
+            for row in conn.execute(
+                f"SELECT DISTINCT series_id FROM releases WHERE id IN ({placeholders})",
+                list(touched_release_ids),
+            ).fetchall()
+        } if touched_release_ids else set()
     for series_id in touched_series:
         with connect() as conn:
             series = conn.execute("SELECT metadata_source, bangumi_id FROM series WHERE id=?", (series_id,)).fetchone()
@@ -444,6 +470,11 @@ async def scan_and_queue(settings: dict[str, str]) -> None:
             queue_release(release_id, settings)
             queued += 1
         generate_nfo_for_series(series_id, settings)
+        with connect() as conn:
+            conn.execute(
+                "UPDATE series SET hidden=0, updated_at=? WHERE id=?",
+                (now(), series_id),
+            )
 
     log("info", f"扫描完成: {len(items)} 条发布，更新 {len(touched_series)} 部番剧，队列 {queued} 条")
     await process_tasks(settings)

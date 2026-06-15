@@ -12,11 +12,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import connect, get_settings, init_db, log, now, save_settings
+from .db import connect, get_settings, init_db, log, merge_duplicate_series, now, save_settings
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import mark_selected_releases, poll_submitted_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
-from .sync_service import cancel_sync_for_series, process_sync_tasks, queue_sync_for_series
+from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -41,7 +41,7 @@ class SettingsPayload(BaseModel):
     pikpak_proxy: str = ""
     library_root: str = "/Anime"
     local_library_root: str = "/media/pikpak-anime"
-    auto_sync_following: bool = False
+    auto_sync_following: bool = True
     nfo_output_root: str = ""
     series_dir_template: str = ""
     season_dir_template: str = ""
@@ -79,7 +79,7 @@ def settings_response() -> dict[str, Any]:
     result["auto_scan"] = bool_setting(settings.get("auto_scan", "false"))
     result["auto_download_unique"] = bool_setting(settings.get("auto_download_unique", "true"))
     result["auto_download_by_priority"] = bool_setting(settings.get("auto_download_by_priority", "true"))
-    result["auto_sync_following"] = bool_setting(settings.get("auto_sync_following", "false"))
+    result["auto_sync_following"] = bool_setting(settings.get("auto_sync_following", "true"))
     result["subtitle_priority"] = split_setting(settings.get("subtitle_priority", ""))
     result["resolution_priority"] = split_setting(settings.get("resolution_priority", ""))
     result["language_priority"] = split_setting(settings.get("language_priority", ""))
@@ -113,6 +113,10 @@ app = FastAPI(title="AutoAnime", lifespan=lifespan)
 
 
 def dashboard_data() -> dict[str, Any]:
+    settings = get_settings()
+    backfilled = backfill_cloud_assets_from_completed_tasks(settings)
+    if backfilled:
+        log("info", f"已补齐云盘资源状态: {backfilled} 个")
     with connect() as conn:
         series = conn.execute(
             """
@@ -134,6 +138,7 @@ def dashboard_data() -> dict[str, Any]:
             LEFT JOIN cloud_assets ca ON ca.series_id=s.id
             LEFT JOIN local_assets la ON la.series_id=s.id AND la.status='synced'
             LEFT JOIN sync_rules sr ON sr.series_id=s.id
+            WHERE COALESCE(s.hidden, 0)=0
             GROUP BY s.id
             ORDER BY s.updated_at DESC
             """
@@ -165,6 +170,16 @@ def dashboard_data() -> dict[str, Any]:
             JOIN series s ON s.id=st.series_id
             ORDER BY st.updated_at DESC
             LIMIT 80
+            """
+        ).fetchall()
+        sync_rules = conn.execute(
+            """
+            SELECT sr.*, s.title_cn
+            FROM sync_rules sr
+            JOIN series s ON s.id=sr.series_id
+            WHERE COALESCE(s.hidden, 0)=0
+            ORDER BY sr.updated_at DESC
+            LIMIT 200
             """
         ).fetchall()
         task_counts = conn.execute(
@@ -204,6 +219,7 @@ def dashboard_data() -> dict[str, Any]:
         "tasks": rows_to_dicts(tasks),
         "logs": rows_to_dicts(logs),
         "cloud_assets": rows_to_dicts(cloud_assets),
+        "sync_rules": rows_to_dicts(sync_rules),
         "sync_tasks": rows_to_dicts(sync_tasks),
         "calendar": rows_to_dicts(calendar),
         "task_counts": {row["status"]: row["count"] for row in task_counts},
@@ -308,7 +324,32 @@ async def api_update_series(series_id: int, payload: SeriesPayload) -> dict[str,
             ),
         )
     log("info", f"番剧设置已保存: {payload.title_cn}")
+    with connect() as conn:
+        merge_duplicate_series(conn)
     return await api_series(series_id)
+
+
+@app.delete("/api/series/{series_id}")
+async def api_delete_series(series_id: int) -> dict[str, str]:
+    with connect() as conn:
+        series = conn.execute("SELECT title_cn FROM series WHERE id=?", (series_id,)).fetchone()
+        if not series:
+            return {"status": "not_found", "message": "番剧不存在"}
+        title = series["title_cn"]
+        ts = now()
+        conn.execute("DELETE FROM releases WHERE series_id=?", (series_id,))
+        conn.execute("DELETE FROM episodes WHERE series_id=?", (series_id,))
+        conn.execute("DELETE FROM download_tasks WHERE series_id=?", (series_id,))
+        conn.execute("DELETE FROM cloud_assets WHERE series_id=?", (series_id,))
+        conn.execute("DELETE FROM sync_tasks WHERE series_id=?", (series_id,))
+        conn.execute("DELETE FROM local_assets WHERE series_id=?", (series_id,))
+        conn.execute("DELETE FROM sync_rules WHERE series_id=?", (series_id,))
+        conn.execute(
+            "UPDATE series SET hidden=1, updated_at=? WHERE id=?",
+            (ts, series_id),
+        )
+    log("warn", f"已删除误识别番剧: {title}")
+    return {"status": "completed", "message": "已删除误识别番剧和关联记录"}
 
 
 @app.post("/api/scan")
@@ -325,7 +366,11 @@ async def api_process_tasks() -> dict[str, str]:
 
 @app.post("/api/tasks/poll")
 async def api_poll_tasks() -> dict[str, str]:
-    asyncio.create_task(poll_submitted_tasks(get_settings()))
+    settings = get_settings()
+    asyncio.create_task(poll_submitted_tasks(settings))
+    count = backfill_cloud_assets_from_completed_tasks(settings)
+    if count:
+        log("info", f"已补齐云盘资源状态: {count} 个")
     return {"status": "started", "message": "状态刷新已启动"}
 
 
@@ -396,10 +441,10 @@ async def api_generate_nfo(series_id: int) -> dict[str, str]:
 async def api_sync_series(series_id: int) -> dict[str, str]:
     settings = get_settings()
     count, message = queue_sync_for_series(series_id, settings)
-    if count <= 0:
-        return {"status": "skipped", "count": "0", "message": message}
-    asyncio.create_task(process_sync_tasks(settings))
-    return {"status": "queued", "count": str(count), "message": message}
+    if count > 0:
+        asyncio.create_task(process_sync_tasks(settings))
+        return {"status": "queued", "count": str(count), "message": message}
+    return {"status": "completed", "count": "0", "message": message}
 
 
 @app.post("/api/series/{series_id}/sync/cancel")

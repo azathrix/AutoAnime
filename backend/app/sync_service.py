@@ -60,9 +60,10 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
     return None
 
 
-def ensure_sync_rule(series_id: int, settings: dict[str, str], enabled: bool = False) -> None:
+def ensure_sync_rule(series_id: int, settings: dict[str, str], enabled: bool | None = None) -> None:
     ts = now()
-    auto_sync = settings.get("auto_sync_following", "false").lower() == "true"
+    auto_sync = settings.get("auto_sync_following", "true").lower() == "true"
+    sync_enabled = auto_sync if enabled is None else enabled
     with connect() as conn:
         conn.execute(
             """
@@ -75,7 +76,7 @@ def ensure_sync_rule(series_id: int, settings: dict[str, str], enabled: bool = F
             """,
             (
                 series_id,
-                1 if enabled else 0,
+                1 if sync_enabled else 0,
                 1 if auto_sync else 0,
                 settings.get("local_library_root") or "/media/pikpak-anime",
                 ts,
@@ -114,7 +115,7 @@ def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int
             (series_id,),
         ).fetchall()
         if not assets:
-            return 0, "没有已完成的云盘资源可同步"
+            return 0, "已开启本地同步；云盘资源入库后会自动同步"
         ts = now()
         queued = 0
         for asset in assets:
@@ -145,6 +146,26 @@ def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int
             )
             queued += 1
     return queued, f"已加入本地同步队列: {queued} 条"
+
+
+def backfill_cloud_assets_from_completed_tasks(settings: dict[str, str]) -> int:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT dt.id
+            FROM download_tasks dt
+            LEFT JOIN cloud_assets ca ON ca.task_id=dt.id
+            WHERE dt.status='completed'
+              AND dt.pikpak_file_id != ''
+              AND ca.id IS NULL
+            ORDER BY dt.id ASC
+            """
+        ).fetchall()
+    count = 0
+    for row in rows:
+        if upsert_cloud_asset(row["id"], settings):
+            count += 1
+    return count
 
 
 async def download_cloud_file_to_local(file_id: str, source: str, target: str, settings: dict[str, str]) -> None:
