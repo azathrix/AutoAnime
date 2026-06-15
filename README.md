@@ -25,6 +25,30 @@ RSS/导入 -> 元数据匹配 -> 自动选择发布 -> 下载到云盘
 
 ## Docker 部署
 
+本地打干净包：
+
+```bat
+package-clean.bat
+```
+
+包会输出到：
+
+```txt
+build\
+```
+
+直接上传源码到 NAS 调试目录：
+
+```bat
+upload-clean.bat
+```
+
+默认上传到：
+
+```txt
+\\InputName\docker\autoanime
+```
+
 上传干净包到：
 
 ```sh
@@ -37,6 +61,8 @@ RSS/导入 -> 元数据匹配 -> 自动选择发布 -> 下载到云盘
 cd /volume1/docker/autoanime
 docker compose up -d --build
 ```
+
+重新 build 通常不需要手动停止旧容器，`docker compose up -d --build` 会重建镜像并替换服务容器。
 
 访问：
 
