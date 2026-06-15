@@ -122,6 +122,16 @@ def parse_resolution(title: str) -> str:
 
 def parse_language(title: str) -> str:
     value = title.lower()
+    if re.search(r"(简繁|簡繁|简体[&+／/ ]*繁体|簡體[&+／/ ]*繁體|chs[&+／/ ]*cht)", value, re.I):
+        return "简繁"
+    if re.search(r"(简日|簡日|简体[&+／/ ]*日[语語文]?|簡體[&+／/ ]*日[语語文]?|chs[&+／/ ]*(jp|jpn))", value, re.I):
+        return "简日"
+    if re.search(r"(繁日|繁體?[&+／/ ]*日[语語文]?|cht[&+／/ ]*(jp|jpn))", value, re.I):
+        return "繁日"
+    if re.search(r"(简英|簡英|简体[&+／/ ]*英[语語文]?|簡體[&+／/ ]*英[语語文]?|chs[&+／/ ]*eng?)", value, re.I):
+        return "简英"
+    if re.search(r"(繁英|繁體?[&+／/ ]*英[语語文]?|cht[&+／/ ]*eng?)", value, re.I):
+        return "繁英"
     if re.search(r"(简体|簡體|简中|簡中|chs|gb|gb2312|sc)", value, re.I):
         return "简体"
     if re.search(r"(繁体|繁體|繁中|繁中|cht|big5|tc)", value, re.I):
@@ -155,7 +165,7 @@ def parse_year(title: str, published_at: str = "") -> int:
 
 
 def parse_bangumi_id(link: str, title: str) -> str:
-    match = re.search(r"[?&](?:bangumiId|bangumi_id|id)=(\d+)", link, re.I)
+    match = re.search(r"[?&](?:bangumiId|bangumi_id)=(\d+)", link, re.I)
     if match:
         return match.group(1)
     match = re.search(r"bangumi[-_ ]?(\d+)", title, re.I)

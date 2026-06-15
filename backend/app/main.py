@@ -362,13 +362,13 @@ async def api_download_series(series_id: int) -> dict[str, str]:
     ids, choice = resolve_series_choice(series_id, settings)
     mark_selected_releases(series_id, ids)
     if not ids:
-        message = choice["reason"] or "没有可下载发布"
-        log("warn", f"手动下载跳过: {series['title_cn']} - {message}")
+        message = choice["reason"] or "没有可入云盘发布"
+        log("warn", f"手动入云盘跳过: {series['title_cn']} - {message}")
         return {"status": "skipped", "count": "0", "message": message}
     for release_id in ids:
         queue_release(release_id, settings)
     asyncio.create_task(process_tasks(settings))
-    return {"status": "queued", "count": str(len(ids)), "message": f"已加入云盘下载队列: {len(ids)} 条"}
+    return {"status": "queued", "count": str(len(ids)), "message": f"已加入云盘队列: {len(ids)} 条"}
 
 
 @app.post("/api/releases/{release_id}/download")

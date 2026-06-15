@@ -11,7 +11,7 @@
       <nav>
         <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 控制台</button>
         <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 新番库</button>
-        <button :class="{ active: view === 'tasks' }" @click="view = 'tasks'"><el-icon><List /></el-icon> 下载队列</button>
+        <button :class="{ active: view === 'tasks' }" @click="view = 'tasks'"><el-icon><List /></el-icon> 云盘队列</button>
         <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
@@ -37,10 +37,8 @@
             <el-option label="10 秒" :value="10000" />
             <el-option label="30 秒" :value="30000" />
           </el-select>
-          <el-button :icon="Refresh" @click="reload" :loading="loading">刷新</el-button>
           <el-button type="primary" :icon="Search" @click="runAction('/scan')">扫描 RSS</el-button>
-          <el-button type="success" :icon="VideoPlay" @click="runAction('/tasks/process')">处理队列</el-button>
-          <el-button :icon="Refresh" @click="runAction('/sync/tasks/process')">处理同步</el-button>
+          <el-button :icon="Refresh" @click="reload" :loading="loading">刷新页面</el-button>
           <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败</el-button>
         </div>
       </header>
@@ -135,8 +133,9 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>下载队列</span>
+              <span>云盘队列</span>
               <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新状态</el-button>
+              <el-button type="success" :icon="VideoPlay" @click="runAction('/tasks/process')">处理云盘任务</el-button>
             </div>
           </template>
           <el-table :data="dashboard.tasks" height="620">
@@ -213,7 +212,7 @@
               </el-tab-pane>
               <el-tab-pane label="自动选择">
                 <div class="form-row">
-                  <el-form-item label="唯一匹配自动下载"><el-switch v-model="settings.auto_download_unique" /></el-form-item>
+                  <el-form-item label="唯一匹配自动入云盘"><el-switch v-model="settings.auto_download_unique" /></el-form-item>
                   <el-form-item label="按优先级选择"><el-switch v-model="settings.auto_download_by_priority" /></el-form-item>
                 </div>
                 <div class="priority-layout">
@@ -242,7 +241,7 @@
               <el-tab-pane label="媒体库">
                 <div class="form-row">
                   <el-form-item label="云盘库根目录"><el-input v-model="settings.library_root" /></el-form-item>
-                  <el-form-item label="本地媒体库目录"><el-input v-model="settings.local_library_root" placeholder="/media/pikpak-anime" /></el-form-item>
+                <el-form-item label="本地同步目录"><el-input v-model="settings.local_library_root" placeholder="/media/pikpak-anime" /></el-form-item>
                 </div>
                 <el-form-item label="追更自动同步"><el-switch v-model="settings.auto_sync_following" /></el-form-item>
                 <el-form-item label="NFO 输出目录"><el-input v-model="settings.nfo_output_root" placeholder="留空；同步后默认写入本地媒体库" /></el-form-item>
@@ -263,7 +262,7 @@
           type="info"
           show-icon
           :closable="false"
-          title="番剧设置保存后只更新规则；要立即执行，请点“下载这部番”。补全全部需要后续搜索源支持，当前 RSS 只能处理已扫描到的发布。"
+          title="番剧设置保存后只更新规则；云盘入库一般由扫描自动处理，只有需要手动补救时才点“存入云盘”。"
           class="settings-alert"
         />
         <el-form :model="selectedSeries.series" label-position="top">
@@ -288,7 +287,7 @@
             </el-form-item>
           </div>
           <div class="form-row">
-            <el-form-item label="自动下载">
+            <el-form-item label="自动入云盘">
               <el-select v-model="selectedSeries.series.auto_download">
                 <el-option label="跟随全局" value="inherit" />
                 <el-option label="开启" value="on" />
@@ -307,9 +306,9 @@
         </el-form>
         <div class="drawer-actions">
           <el-button type="primary" @click="saveCurrentSeries">保存</el-button>
-          <el-button @click="runSeriesAction('download')">下载这部番</el-button>
-          <el-button type="success" @click="runSeriesAction('sync')">同步到本地</el-button>
-          <el-button type="danger" @click="runSeriesAction('sync/cancel')">取消同步</el-button>
+          <el-button v-if="!seriesHasCloud" @click="runSeriesAction('download')">存入云盘</el-button>
+          <el-button v-if="seriesHasCloud && !seriesHasLocal" type="success" @click="runSeriesAction('sync')">同步到本地</el-button>
+          <el-button v-if="seriesHasLocal" type="danger" @click="runSeriesAction('sync/cancel')">取消本地同步</el-button>
           <el-button @click="runSeriesAction('metadata')">刷新元数据</el-button>
           <el-button @click="runSeriesAction('nfo')">生成 NFO</el-button>
         </div>
@@ -321,7 +320,7 @@
           <el-table-column prop="language" label="语言" width="90" />
           <el-table-column prop="title" label="发布标题" />
           <el-table-column label="操作" width="100">
-            <template #default="{ row }"><el-button size="small" @click="downloadRelease(row.id)">下载</el-button></template>
+            <template #default="{ row }"><el-button size="small" @click="downloadRelease(row.id)">存云盘</el-button></template>
           </el-table-column>
         </el-table>
       </template>
@@ -360,13 +359,21 @@ const settings = reactive({})
 const pageTitle = computed(() => ({
   dashboard: '控制台',
   library: '新番库',
-  tasks: '下载队列',
+  tasks: '云盘队列',
   calendar: '追番日历',
   settings: '设置中心'
 }[view.value]))
 
 const submittedCount = computed(() => dashboard.tasks.filter(t => ['submitted', 'completed'].includes(t.status)).length)
 const failedCount = computed(() => dashboard.tasks.filter(t => t.status === 'failed').length)
+const seriesHasCloud = computed(() => {
+  const id = selectedSeries.value?.series?.id
+  return Boolean(id && dashboard.cloud_assets.some(item => item.series_id === id && item.status === 'available'))
+})
+const seriesHasLocal = computed(() => {
+  const id = selectedSeries.value?.series?.id
+  return Boolean(id && dashboard.series.some(item => item.id === id && Number(item.local_asset_count || 0) > 0))
+})
 
 const filteredSeries = computed(() => {
   const text = keyword.value.toLowerCase()
@@ -424,7 +431,7 @@ async function runAction(path) {
   if (result.status === 'skipped') {
     ElMessage.warning(result.message || '没有可执行任务')
   } else {
-    ElMessage.success(result.message || '任务已提交')
+    ElMessage.success(result.message || '操作已提交')
   }
   setTimeout(reload, 800)
 }
@@ -458,7 +465,7 @@ async function runSeriesAction(action) {
 
 async function downloadRelease(id) {
   await postAction(`/releases/${id}/download`)
-  ElMessage.success('已加入下载队列')
+  ElMessage.success('已加入云盘队列')
   setTimeout(reload, 800)
 }
 

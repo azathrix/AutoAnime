@@ -56,6 +56,9 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
                torrent_url, magnet, published_at, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
+              series_id=excluded.series_id,
+              episode_number=excluded.episode_number,
+              title=excluded.title,
               subtitle_group=excluded.subtitle_group,
               resolution=excluded.resolution,
               language=excluded.language,
@@ -79,6 +82,10 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
             ),
         )
         release_id = conn.execute("SELECT id FROM releases WHERE guid=?", (item.guid,)).fetchone()["id"]
+        conn.execute(
+            "UPDATE download_tasks SET series_id=? WHERE release_id=?",
+            (series_id, release_id),
+        )
     return series_id, release_id
 
 
@@ -88,7 +95,17 @@ def priority_pick(values: list[str], priority: list[str]) -> str:
         return ""
     for preferred in priority:
         for value in values_clean:
-            if preferred.lower() == value.lower() or preferred.lower() in value.lower():
+            preferred_lower = preferred.lower()
+            value_lower = value.lower()
+            if preferred_lower == value_lower or preferred_lower in value_lower:
+                return value
+            if preferred in {"简体", "简中"} and value.startswith("简"):
+                return value
+            if preferred in {"繁体", "繁中"} and value.startswith("繁"):
+                return value
+            if preferred in {"日语", "日文"} and "日" in value:
+                return value
+            if preferred in {"英语", "英文"} and "英" in value:
                 return value
     return values_clean[0] if len(set(values_clean)) == 1 else ""
 
