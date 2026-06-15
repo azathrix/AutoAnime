@@ -1,0 +1,30 @@
+import axios from 'axios'
+
+const api = axios.create({
+  baseURL: '/api',
+  timeout: 30000
+})
+
+export async function getDashboard() {
+  return (await api.get('/dashboard')).data
+}
+
+export async function getSettings() {
+  return (await api.get('/settings')).data
+}
+
+export async function saveSettings(payload) {
+  return (await api.put('/settings', payload)).data
+}
+
+export async function getSeries(id) {
+  return (await api.get(`/series/${id}`)).data
+}
+
+export async function saveSeries(id, payload) {
+  return (await api.put(`/series/${id}`, payload)).data
+}
+
+export async function postAction(path) {
+  return (await api.post(path)).data
+}

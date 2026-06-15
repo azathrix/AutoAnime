@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ series.title_cn }} - AutoAnime</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>{{ series.title_cn }}</h1>
+      <p><a href="/">返回首页</a></p>
+    </div>
+    <form method="post" action="/series/{{ series.id }}/download"><button>下载这部番剧</button></form>
+    <form method="post" action="/series/{{ series.id }}/metadata"><button>刷新元数据</button></form>
+    <form method="post" action="/series/{{ series.id }}/nfo"><button>生成 NFO</button></form>
+  </header>
+
+  <main class="layout">
+    <section class="panel settings">
+      <h2>番剧设置</h2>
+      <form method="post" action="/series/{{ series.id }}/settings">
+        <div class="grid">
+          <label>中文标题 <input name="title_cn" value="{{ series.title_cn }}"></label>
+          <label>年份 <input type="number" name="year" value="{{ series.year }}"></label>
+        </div>
+        <div class="grid">
+          <label>Bangumi ID <input name="bangumi_id" value="{{ series.bangumi_id }}"></label>
+          <label>TMDB ID <input name="tmdb_id" value="{{ series.tmdb_id }}"></label>
+        </div>
+        <label>季编号 <input type="number" min="1" name="season_number" value="{{ series.season_number }}"></label>
+        <div class="grid">
+          <label>自动下载
+            <select name="auto_download">
+              <option value="inherit" {% if series.auto_download == "inherit" %}selected{% endif %}>跟随全局</option>
+              <option value="on" {% if series.auto_download == "on" %}selected{% endif %}>开启</option>
+              <option value="off" {% if series.auto_download == "off" %}selected{% endif %}>关闭</option>
+            </select>
+          </label>
+          <label>补全
+            <select name="backfill_mode">
+              <option value="inherit" {% if series.backfill_mode == "inherit" %}selected{% endif %}>跟随全局</option>
+              <option value="none" {% if series.backfill_mode == "none" %}selected{% endif %}>不补全</option>
+              <option value="season" {% if series.backfill_mode == "season" %}selected{% endif %}>补全本季</option>
+              <option value="all" {% if series.backfill_mode == "all" %}selected{% endif %}>补全全部</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid">
+          <label>字幕组
+            <select name="selected_group">
+              <option value="">未选择</option>
+              {% for group in groups %}
+              <option value="{{ group }}" {% if series.selected_group == group %}selected{% endif %}>{{ group }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>分辨率
+            <select name="selected_resolution">
+              <option value="">未选择</option>
+              {% for res in resolutions %}
+              <option value="{{ res }}" {% if series.selected_resolution == res %}selected{% endif %}>{{ res }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <button>保存番剧设置</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>扫描到的发布</h2>
+      <table>
+        <thead><tr><th>集</th><th>字幕组</th><th>分辨率</th><th>标题</th><th>选择</th></tr></thead>
+        <tbody>
+          {% for release in releases %}
+          <tr>
+            <td>{{ release.episode_number }}</td>
+            <td>{{ release.subtitle_group }}</td>
+            <td>{{ release.resolution }}</td>
+            <td>{{ release.title }}</td>
+            <td>
+              <form method="post" action="/release/{{ release.id }}/download"><button>下载</button></form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>任务</h2>
+      <table>
+        <thead><tr><th>状态</th><th>目标目录</th><th>标准名</th><th>错误</th></tr></thead>
+        <tbody>
+          {% for task in tasks %}
+          <tr>
+            <td><span class="badge {{ task.status }}">{{ task.status }}</span></td>
+            <td>{{ task.target_dir }}</td>
+            <td>{{ task.normalized_name }}</td>
+            <td class="error">{{ task.last_error }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

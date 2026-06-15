@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+import sqlite3
+from datetime import datetime, timezone
+from typing import Any
+
+from .config import DATA_DIR, DB_PATH, DEFAULT_SETTINGS
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with connect() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS series (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint TEXT NOT NULL UNIQUE,
+                title_raw TEXT NOT NULL,
+                title_cn TEXT NOT NULL,
+                title_romaji TEXT NOT NULL DEFAULT '',
+                bangumi_id TEXT NOT NULL DEFAULT '',
+                tmdb_id TEXT NOT NULL DEFAULT '',
+                year INTEGER NOT NULL DEFAULT 0,
+                season_number INTEGER NOT NULL DEFAULT 1,
+                poster_url TEXT NOT NULL DEFAULT '',
+                poster_path TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                metadata_source TEXT NOT NULL DEFAULT '',
+                nfo_status TEXT NOT NULL DEFAULT 'pending',
+                auto_download TEXT NOT NULL DEFAULT 'inherit',
+                selected_group TEXT NOT NULL DEFAULT '',
+                selected_resolution TEXT NOT NULL DEFAULT '',
+                backfill_mode TEXT NOT NULL DEFAULT 'inherit',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                series_id INTEGER NOT NULL,
+                episode_number INTEGER NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                air_date TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'missing',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(series_id, episode_number)
+            );
+
+            CREATE TABLE IF NOT EXISTS releases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                series_id INTEGER NOT NULL,
+                episode_number INTEGER NOT NULL,
+                guid TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                subtitle_group TEXT NOT NULL DEFAULT '',
+                resolution TEXT NOT NULL DEFAULT '',
+                torrent_url TEXT NOT NULL DEFAULT '',
+                magnet TEXT NOT NULL DEFAULT '',
+                published_at TEXT NOT NULL DEFAULT '',
+                selected INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS download_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                release_id INTEGER NOT NULL,
+                series_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                pikpak_task_id TEXT NOT NULL DEFAULT '',
+                pikpak_file_id TEXT NOT NULL DEFAULT '',
+                target_dir TEXT NOT NULL DEFAULT '',
+                normalized_name TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(release_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        for key, value in DEFAULT_SETTINGS.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+        migrate(conn)
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(series)").fetchall()
+    }
+    additions = {
+        "poster_path": "TEXT NOT NULL DEFAULT ''",
+        "metadata_source": "TEXT NOT NULL DEFAULT ''",
+        "nfo_status": "TEXT NOT NULL DEFAULT 'pending'",
+    }
+    for column, ddl in additions.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE series ADD COLUMN {column} {ddl}")
+    merge_duplicate_series(conn)
+
+
+def merge_duplicate_series(conn: sqlite3.Connection) -> None:
+    duplicate_groups = conn.execute(
+        """
+        SELECT bangumi_id, GROUP_CONCAT(id) AS ids
+        FROM series
+        WHERE bangumi_id != ''
+        GROUP BY bangumi_id
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    for group in duplicate_groups:
+        ids = [int(value) for value in group["ids"].split(",")]
+        keep_id = min(ids)
+        remove_ids = [value for value in ids if value != keep_id]
+        for old_id in remove_ids:
+            conn.execute("UPDATE releases SET series_id=? WHERE series_id=?", (keep_id, old_id))
+            old_episodes = conn.execute(
+                "SELECT * FROM episodes WHERE series_id=?",
+                (old_id,),
+            ).fetchall()
+            for ep in old_episodes:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO episodes
+                      (series_id, episode_number, title, air_date, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        keep_id,
+                        ep["episode_number"],
+                        ep["title"],
+                        ep["air_date"],
+                        ep["status"],
+                        ep["created_at"],
+                        ep["updated_at"],
+                    ),
+                )
+            conn.execute("UPDATE download_tasks SET series_id=? WHERE series_id=?", (keep_id, old_id))
+            conn.execute("DELETE FROM episodes WHERE series_id=?", (old_id,))
+            conn.execute("DELETE FROM series WHERE id=?", (old_id,))
+
+
+def get_settings() -> dict[str, str]:
+    cfg = dict(DEFAULT_SETTINGS)
+    with connect() as conn:
+        for row in conn.execute("SELECT key, value FROM settings"):
+            cfg[row["key"]] = row["value"]
+    return cfg
+
+
+def save_settings(values: dict[str, Any]) -> None:
+    with connect() as conn:
+        for key, value in values.items():
+            if key in DEFAULT_SETTINGS:
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, str(value)),
+                )
+
+
+def log(level: str, message: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO logs (level, message, created_at) VALUES (?, ?, ?)",
+            (level, message[:2000], now()),
+        )

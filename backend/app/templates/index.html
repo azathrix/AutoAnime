@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoAnime</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>AutoAnime</h1>
+      <p>Media automation hub</p>
+    </div>
+    <form method="post" action="/scan"><button>扫描 RSS</button></form>
+    <form method="post" action="/tasks/process"><button>处理队列</button></form>
+    <form method="post" action="/tasks/poll"><button>刷新状态</button></form>
+  </header>
+
+  <main class="layout">
+    <section class="panel settings">
+      <h2>来源与下载器</h2>
+      <form method="post" action="/settings">
+        <label>自动扫描 <input type="checkbox" name="auto_scan" {% if settings.auto_scan == "true" %}checked{% endif %}></label>
+        <label>Mikan RSS <input name="rss_url" value="{{ settings.rss_url }}" placeholder="https://mikanani.me/RSS/MyBangumi?token=..."></label>
+        <label>RSS 代理 <input name="rss_proxy" value="{{ settings.rss_proxy }}" placeholder="http://NAS_IP:20171"></label>
+        <div class="grid">
+          <label>扫描间隔 <input type="number" min="1" name="scan_interval_minutes" value="{{ settings.scan_interval_minutes }}"></label>
+          <label>默认补全
+            <select name="default_backfill">
+              <option value="none" {% if settings.default_backfill == "none" %}selected{% endif %}>不补全</option>
+              <option value="season" {% if settings.default_backfill == "season" %}selected{% endif %}>补全本季</option>
+              <option value="all" {% if settings.default_backfill == "all" %}selected{% endif %}>补全全部</option>
+            </select>
+          </label>
+        </div>
+        <label>唯一匹配时自动下载 <input type="checkbox" name="auto_download_unique" {% if settings.auto_download_unique == "true" %}checked{% endif %}></label>
+        <label>按优先级自动选择 <input type="checkbox" name="auto_download_by_priority" {% if settings.auto_download_by_priority == "true" %}checked{% endif %}></label>
+        <div class="grid">
+          <label>字幕组优先级 <textarea name="subtitle_priority">{{ settings.subtitle_priority }}</textarea></label>
+          <label>分辨率优先级 <textarea name="resolution_priority">{{ settings.resolution_priority }}</textarea></label>
+        </div>
+
+        <h3>PikPak 下载器</h3>
+        <label>认证方式
+          <select name="pikpak_auth_mode">
+            <option value="token" {% if settings.pikpak_auth_mode == "token" %}selected{% endif %}>Access + Refresh Token</option>
+            <option value="password" {% if settings.pikpak_auth_mode == "password" %}selected{% endif %}>账号密码</option>
+          </select>
+        </label>
+        <div class="grid">
+          <label>Access Token <input name="pikpak_access_token" value="{{ settings.pikpak_access_token }}"></label>
+          <label>Refresh Token <input name="pikpak_refresh_token" value="{{ settings.pikpak_refresh_token }}"></label>
+        </div>
+        <div class="grid">
+          <label>用户名 <input name="pikpak_username" value="{{ settings.pikpak_username }}"></label>
+          <label>密码 <input type="password" name="pikpak_password" value="{{ settings.pikpak_password }}"></label>
+        </div>
+        <label>PikPak 代理 <input name="pikpak_proxy" value="{{ settings.pikpak_proxy }}" placeholder="通常留空"></label>
+
+        <h3>媒体库命名</h3>
+        <label>媒体库根目录 <input name="library_root" value="{{ settings.library_root }}"></label>
+        <label>NFO 输出目录 <input name="nfo_output_root" value="{{ settings.nfo_output_root }}" placeholder="例如 /media/anime；留空则输出到 /data/nfo"></label>
+        <label>番剧目录模板 <input name="series_dir_template" value="{{ settings.series_dir_template }}"></label>
+        <label>季目录模板 <input name="season_dir_template" value="{{ settings.season_dir_template }}"></label>
+        <label>单集名模板 <input name="episode_name_template" value="{{ settings.episode_name_template }}"></label>
+        <button>保存设置</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>功能板块</h2>
+      <div class="module-grid">
+        <div><strong>新番追更</strong><span>已启用：Mikan RSS -> PikPak</span></div>
+        <div><strong>老番补全</strong><span>待接入：Mikan 搜索 / 其他索引源</span></div>
+        <div><strong>电影下载</strong><span>待接入：TMDB + 索引源</span></div>
+        <div><strong>美剧追番</strong><span>待接入：TVDB/TMDB + 索引源</span></div>
+        <div><strong>媒体库整理</strong><span>进行中：标准命名 + NFO</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>新番列表</h2>
+      <div class="series-grid">
+        {% for item in series %}
+        <a class="series-card" href="/series/{{ item.id }}">
+          <div class="poster">{% if item.poster_url %}<img src="{{ item.poster_url }}">{% else %}<span>{{ item.title_cn[:2] }}</span>{% endif %}</div>
+          <div class="series-info">
+            <strong>{{ item.title_cn }}</strong>
+            <small>Bangumi: {{ item.bangumi_id or "未关联" }}</small>
+            <small>{{ item.release_count }} releases · {{ item.group_count }} 字幕组 · {{ item.resolution_count }} 分辨率</small>
+            <small>已提交 {{ item.downloaded_count }}</small>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>下载队列</h2>
+      <table>
+        <thead><tr><th>状态</th><th>番剧</th><th>集</th><th>字幕组</th><th>分辨率</th><th>目标目录</th><th>错误</th></tr></thead>
+        <tbody>
+          {% for task in tasks %}
+          <tr>
+            <td><span class="badge {{ task.status }}">{{ task.status }}</span></td>
+            <td>{{ task.title_cn }}</td>
+            <td>{{ task.episode_number }}</td>
+            <td>{{ task.subtitle_group }}</td>
+            <td>{{ task.resolution }}</td>
+            <td>{{ task.target_dir }}</td>
+            <td class="error">{{ task.last_error }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>日历</h2>
+      <div class="empty">当前版本先展示已知放送日期；Bangumi 元数据接入后会自动填充。</div>
+      {% for item in calendar %}
+      <p>{{ item.air_date }} · {{ item.title_cn }} 第 {{ item.episode_number }} 话 · {{ item.status }}</p>
+      {% endfor %}
+    </section>
+
+    <section class="panel">
+      <h2>日志</h2>
+      <div class="logs">
+        {% for item in logs %}
+        <p><span>{{ item.created_at }}</span> <b>{{ item.level }}</b> {{ item.message }}</p>
+        {% endfor %}
+      </div>
+    </section>
+  </main>
+</body>
+</html>
