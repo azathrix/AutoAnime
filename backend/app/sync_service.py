@@ -243,6 +243,9 @@ def cancel_sync_for_series(series_id: int) -> tuple[int, str]:
             try:
                 if path.exists():
                     path.unlink()
+                nfo_path = path.with_suffix(".nfo")
+                if nfo_path.exists():
+                    nfo_path.unlink()
                 removed += 1
             except Exception as exc:
                 log("warn", f"删除本地文件失败: {path} - {exc}")
