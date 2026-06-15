@@ -15,7 +15,7 @@ from .config import APP_DIR
 from .db import connect, get_settings, init_db, log, now, save_settings
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
-from .scanner import poll_submitted_tasks, process_tasks, queue_release, scan_and_queue
+from .scanner import mark_selected_releases, poll_submitted_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -31,6 +31,7 @@ class SettingsPayload(BaseModel):
     default_backfill: str = "none"
     subtitle_priority: list[str] = []
     resolution_priority: list[str] = []
+    language_priority: list[str] = []
     pikpak_auth_mode: str = "token"
     pikpak_username: str = ""
     pikpak_password: str = ""
@@ -77,6 +78,7 @@ def settings_response() -> dict[str, Any]:
     result["auto_download_by_priority"] = bool_setting(settings.get("auto_download_by_priority", "true"))
     result["subtitle_priority"] = split_setting(settings.get("subtitle_priority", ""))
     result["resolution_priority"] = split_setting(settings.get("resolution_priority", ""))
+    result["language_priority"] = split_setting(settings.get("language_priority", ""))
     return result
 
 
@@ -115,6 +117,7 @@ def dashboard_data() -> dict[str, Any]:
               COUNT(DISTINCT r.id) AS release_count,
               COUNT(DISTINCT r.subtitle_group) AS group_count,
               COUNT(DISTINCT r.resolution) AS resolution_count,
+              COUNT(DISTINCT r.language) AS language_count,
               COUNT(DISTINCT CASE WHEN dt.status IN ('submitted','completed') THEN dt.id END) AS downloaded_count
             FROM series s
             LEFT JOIN episodes e ON e.series_id=s.id
@@ -126,7 +129,7 @@ def dashboard_data() -> dict[str, Any]:
         ).fetchall()
         tasks = conn.execute(
             """
-            SELECT dt.*, s.title_cn, r.episode_number, r.subtitle_group, r.resolution, r.title AS release_title
+            SELECT dt.*, s.title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
             FROM download_tasks dt
             JOIN series s ON s.id=dt.series_id
             JOIN releases r ON r.id=dt.release_id
@@ -140,7 +143,7 @@ def dashboard_data() -> dict[str, Any]:
         ).fetchall()
         active_tasks = conn.execute(
             """
-            SELECT dt.*, s.title_cn, r.episode_number, r.subtitle_group, r.resolution, r.title AS release_title
+            SELECT dt.*, s.title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
             FROM download_tasks dt
             JOIN series s ON s.id=dt.series_id
             JOIN releases r ON r.id=dt.release_id
@@ -200,6 +203,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "default_backfill": payload.default_backfill,
             "subtitle_priority": "\n".join(payload.subtitle_priority),
             "resolution_priority": "\n".join(payload.resolution_priority),
+            "language_priority": "\n".join(payload.language_priority),
             "pikpak_auth_mode": payload.pikpak_auth_mode,
             "pikpak_username": payload.pikpak_username.strip(),
             "pikpak_password": payload.pikpak_password,
@@ -234,12 +238,14 @@ async def api_series(series_id: int) -> dict[str, Any]:
         return {"series": None, "releases": [], "tasks": [], "groups": [], "resolutions": []}
     groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
     resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
+    languages = sorted({r["language"] for r in releases if r["language"]})
     return {
         "series": row_to_dict(series),
         "releases": rows_to_dicts(releases),
         "tasks": rows_to_dicts(tasks),
         "groups": groups,
         "resolutions": resolutions,
+        "languages": languages,
     }
 
 
@@ -314,22 +320,16 @@ async def api_download_series(series_id: int) -> dict[str, str]:
         series = conn.execute("SELECT * FROM series WHERE id=?", (series_id,)).fetchone()
         if not series:
             return {"status": "not_found"}
-        group = series["selected_group"]
-        resolution = series["selected_resolution"]
-        if group and resolution:
-            releases = conn.execute(
-                "SELECT id FROM releases WHERE series_id=? AND subtitle_group=? AND resolution=? ORDER BY episode_number",
-                (series_id, group, resolution),
-            ).fetchall()
-        else:
-            releases = conn.execute(
-                "SELECT id FROM releases WHERE series_id=? ORDER BY episode_number",
-                (series_id,),
-            ).fetchall()
-    for release in releases:
-        queue_release(release["id"], settings)
+    ids, choice = resolve_series_choice(series_id, settings)
+    mark_selected_releases(series_id, ids)
+    if not ids:
+        message = choice["reason"] or "没有可下载发布"
+        log("warn", f"手动下载跳过: {series['title_cn']} - {message}")
+        return {"status": "skipped", "count": "0", "message": message}
+    for release_id in ids:
+        queue_release(release_id, settings)
     asyncio.create_task(process_tasks(settings))
-    return {"status": "queued", "count": str(len(releases))}
+    return {"status": "queued", "count": str(len(ids)), "message": f"已加入云盘下载队列: {len(ids)} 条"}
 
 
 @app.post("/api/releases/{release_id}/download")

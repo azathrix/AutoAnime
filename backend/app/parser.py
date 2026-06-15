@@ -13,6 +13,7 @@ class ParsedRelease:
     episode_number: int
     subtitle_group: str
     resolution: str
+    language: str
     bangumi_id: str
     year: int
     torrent_url: str
@@ -119,6 +120,19 @@ def parse_resolution(title: str) -> str:
     return match.group(1) if match else ""
 
 
+def parse_language(title: str) -> str:
+    value = title.lower()
+    if re.search(r"(简体|簡體|简中|簡中|chs|gb|gb2312|sc)", value, re.I):
+        return "简体"
+    if re.search(r"(繁体|繁體|繁中|繁中|cht|big5|tc)", value, re.I):
+        return "繁体"
+    if re.search(r"(日语|日語|日文|japanese|jpn|jp)", value, re.I):
+        return "日语"
+    if re.search(r"(中字|中文|chinese)", value, re.I):
+        return "中文"
+    return ""
+
+
 def parse_episode(title: str) -> int:
     patterns = [
         r"(?:第|EP|E|Episode|#)\s*(\d{1,3})(?:[话話集])?",
@@ -186,6 +200,7 @@ def parse_entry(entry: Any) -> ParsedRelease:
         episode_number=parse_episode(title),
         subtitle_group=parse_group(title),
         resolution=parse_resolution(title),
+        language=parse_language(title),
         bangumi_id=parse_bangumi_id(link, title),
         year=parse_year(title, published),
         torrent_url=torrent_url,

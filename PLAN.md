@@ -1,55 +1,106 @@
-# AutoAnime Handoff Plan
+# AutoAnime 项目计划
 
-## Project Goal
+## 1. 项目定位
 
-AutoAnime is a NAS media automation app. The first production workflow is:
+AutoAnime 是面向 NAS 的媒体自动化应用。目标不是只做 RSS 下载器，而是做一个“云盘长期媒体库 + 本地观看缓存”的管理入口。
+
+核心原则：
+
+- 云盘是长期媒体库，容量大，默认保留资源。
+- 本地 NAS 是观看缓存，只保存正在看、想看、正在追的内容。
+- Jellyfin 只扫描本地真实文件，不再挂载云盘目录。
+- 取消同步只清理本地文件和本地 NFO，不删除云盘内容。
+- 云盘 provider 需要抽象化；当前先实现 PikPak，后续可能接入其他云盘。
+
+目标工作流：
 
 ```txt
-Mikan RSS -> anime aggregation -> per-series release choice -> PikPak offline download
--> task polling -> cloud rename -> Bangumi metadata -> NFO output -> Jellyfin library
+RSS/搜索/导入/收藏
+-> 元数据匹配与合并
+-> 云盘库入库或离线下载
+-> 云盘任务轮询
+-> 按“想看/追更”规则同步到本地
+-> 本地生成 NFO
+-> Jellyfin 扫描本地库
 ```
 
-The project name is intentionally general enough to support future modules:
+当前第一阶段仍以 Mikan RSS + PikPak 为主：
 
-- seasonal anime tracking
-- old anime backfill
-- movie downloads
-- US/EU TV tracking
-- old TV backfill
-- multi-indexer and multi-downloader support
+```txt
+Mikan RSS -> 番剧聚合 -> Bangumi/TMDB 匹配 -> 字幕组/分辨率/语言自动选择
+-> PikPak 离线下载 -> 云盘状态轮询 -> 手动或追更自动同步到 NAS 本地
+-> 本地 NFO -> Jellyfin 本地库
+```
 
-## Current Architecture
+后续应继续支持：
+
+- 本季番追更
+- 老番补全和导入
+- 电影导入
+- 欧美剧导入和追更
+- 用户收藏内容管理
+- 多索引器
+- 多下载器
+- 多云盘 provider
+- Jellyfin 刷新和同步
+
+## 2. 目标架构
+
+### 媒体分层
+
+```txt
+source adapters
+  Mikan RSS / 搜索源 / 手动导入 / 收藏导入 / 未来其他来源
+
+metadata layer
+  Bangumi / TMDB / 标题归一化 / 身份合并
+
+cloud library
+  provider: pikpak / future providers
+  cloud assets / cloud download tasks / cloud paths / file ids
+
+watch cache
+  想看 / 正在追 / 手动同步 / 自动追更同步
+
+local library
+  NAS 本地真实文件
+  /volume1/Assets3/Media/pikpak-anime
+  容器内建议挂载为 /media/anime
+
+jellyfin
+  只扫描本地真实文件
+```
+
+### 当前代码结构
 
 ```txt
 autoanime/
   backend/
     app/
-      main.py            FastAPI app and JSON API routes
-      db.py              SQLite schema, settings, logs, migrations
-      scanner.py         Mikan RSS scanning, release aggregation, queueing, PikPak task processing
-      parser.py          RSS title parsing: series title, group, resolution, episode
-      pikpak_service.py  PikPakAPI wrapper, access/refresh token handling
-      metadata.py        Bangumi metadata fetch and NFO generation
-      library.py         Jellyfin-friendly path/name rendering
-      config.py          data paths and default settings
+      main.py             FastAPI 应用、JSON API、静态前端托管
+      db.py               SQLite schema、配置、日志、迁移
+      scanner.py          RSS 扫描、发布聚合、下载队列、PikPak 任务处理
+      parser.py           RSS 标题解析：标题、字幕组、分辨率、集数
+      pikpak_service.py   PikPakAPI 封装、token 登录
+      metadata.py         Bangumi 元数据、NFO 生成
+      library.py          Jellyfin 友好的目录和文件名渲染
+      config.py           数据目录和默认配置
     requirements.txt
   frontend/
     src/
-      App.vue            Vue admin console
-      api.js             Axios API client
-      style.css          App-level styling
-      main.js
+      App.vue             Vue 管理台
+      api.js              Axios API 客户端
+      style.css           应用样式
+      main.js             前端入口
     package.json
-    vite.config.js       builds to backend/frontend_dist
+    vite.config.js        构建产物输出到 backend/frontend_dist
   Dockerfile
   docker-compose.yml
   README.md
   PLAN.md
 ```
 
-## Backend
-
-Stack:
+### 后端栈
 
 - Python 3.12
 - FastAPI
@@ -59,15 +110,118 @@ Stack:
 - feedparser
 - PikPakAPI
 
-Data path:
+### 前端栈
+
+- Vue 3
+- Vite
+- Element Plus
+- vuedraggable
+- axios
+
+## 3. 本地库和部署
+
+容器内默认数据路径：
 
 ```txt
 APP_DATA_DIR=/data
 /data/autoanime.db
-/data/nfo
 ```
 
-Main API routes:
+Jellyfin 媒体库应指向 NAS 本地真实文件目录，不再指向云盘挂载目录。
+
+NAS 推荐本地库路径：
+
+```txt
+/volume1/Assets3/Media/pikpak-anime
+```
+
+容器建议挂载：
+
+```yaml
+volumes:
+  - ./data:/data
+  - /volume1/Assets3/Media/pikpak-anime:/media/anime
+```
+
+UI 中本地媒体库目录设置为：
+
+```txt
+本地媒体库目录: /media/anime
+```
+
+NFO 生成到本地媒体文件旁边：
+
+```txt
+/media/anime/{title_cn} ({year}) [bangumi-{bangumi_id}]/Season 01/*.nfo
+```
+
+部署路径：
+
+```sh
+/volume1/docker/autoanime
+```
+
+启动：
+
+```sh
+docker compose up -d --build
+```
+
+端口：
+
+```txt
+32888:8080
+```
+
+## 4. 已实现能力
+
+### 后端
+
+- FastAPI JSON API 已创建。
+- SQLite 保存配置、番剧、集数、RSS 发布、下载任务和日志。
+- Mikan RSS 扫描、番剧聚合、发布入库已实现。
+- 标题指纹归一化已实现：
+  - 处理常见简繁差异。
+  - 去除常见发布标签、标点、空格、集数后缀和分辨率标签。
+- 相同 `bangumi_id` 的重复番剧会在数据库迁移和 Bangumi 元数据刷新后合并。
+- PikPak 离线提交已接入。
+- PikPak 提交前会初始化 captcha；如果返回 `Verification code is invalid`，会刷新 captcha 并重试一次。
+- 下载任务支持提交、轮询、失败重试。
+- 新扫描到且没有 `metadata_source` 的番剧会尝试刷新 Bangumi 元数据。
+- 当前代码会在扫描后生成 NFO；后续需要改为“同步到本地后生成 NFO”。
+
+### 前端
+
+- Vue + Element Plus 管理台已搭建。
+- 侧边栏导航、仪表盘、番剧库、下载队列、日历占位、设置中心已实现。
+- 番剧详情抽屉已实现。
+- 字幕组优先级和分辨率优先级支持拖拽排序。
+- 仪表盘支持自动刷新：
+  - 默认 5 秒。
+  - 可切换手动/自动。
+  - 设置页激活或番剧抽屉打开时暂停刷新，避免覆盖正在编辑的数据。
+- 仪表盘展示活跃队列：
+  - `/api/dashboard` 返回 `task_counts` 和 `active_tasks`。
+  - UI 展示 pending、running、submitted、failed 等状态。
+- `POST /api/tasks/retry-failed` 已接入 UI，用于重试失败任务。
+
+### 构建和验证
+
+已完成的本地验证：
+
+- `npm install`
+- `npm run build`
+- `python -m compileall backend/app`
+- 本地 uvicorn 访问 `/` 返回 200
+- 本地 uvicorn 访问 `/api/settings` 返回 200
+
+已知构建提示：
+
+- `npm audit` 报告 3 个 high severity 漏洞。
+- 未执行 `npm audit fix --force`，因为可能引入破坏性依赖升级。
+- Vite 提示主 JS chunk 超过 500 kB，当前可接受，后续可通过动态导入拆分。
+
+## 5. 现有 API
 
 ```txt
 GET  /api/dashboard
@@ -85,185 +239,277 @@ POST /api/series/{series_id}/nfo
 POST /api/releases/{release_id}/download
 ```
 
-Frontend hosting:
+这些 API 仍是旧语义：`download` 基本等于提交 PikPak 离线任务。后续需要把 API 改名和拆分为：
 
-- Vite builds to `backend/frontend_dist`
-- FastAPI serves `/assets/*` and SPA fallback from `backend/frontend_dist/index.html`
-- If frontend is missing, FastAPI serves `backend/app/static/missing-frontend.html`
+```txt
+POST /api/cloud/download
+POST /api/cloud/tasks/process
+POST /api/cloud/tasks/poll
+POST /api/sync/start
+POST /api/sync/cancel
+POST /api/sync/tasks/process
+POST /api/local/nfo
+POST /api/jellyfin/scan
+```
 
-## Frontend
+## 6. 目标数据模型
 
-Chosen stack:
+当前表：
 
-- Vue 3
-- Vite
-- Element Plus
-- vuedraggable
-- axios
+- `settings`: 全局 key/value 配置
+- `series`: 聚合后的番剧/剧集条目
+- `episodes`: 单集记录
+- `releases`: RSS 发布记录
+- `download_tasks`: PikPak 提交和轮询任务
+- `logs`: 操作日志
 
-Reasoning:
+目标表需要重构为更通用的媒体库模型：
 
-- More maintainable than Jinja for a complex admin app.
-- Element Plus gives production-grade Chinese-friendly admin UI components.
-- vuedraggable supports visual priority ordering for subtitle groups and resolutions.
-- Still lightweight enough for NAS Docker deployment.
+- `media_items`: 番剧、电影、剧集等媒体主体
+- `episodes`: 单集记录，番剧和剧集共用
+- `releases`: 来源发现的候选发布
+- `metadata_matches`: Bangumi/TMDB 搜索候选和人工确认结果
+- `cloud_providers`: 云盘 provider 配置，当前先支持 PikPak
+- `cloud_assets`: 已在云盘中的文件或目录
+- `cloud_tasks`: 下载、转存、导入到云盘的任务
+- `sync_rules`: 哪些媒体需要同步到本地
+- `local_assets`: NAS 本地真实文件记录
+- `sync_tasks`: 云盘到本地的同步任务
+- `logs`: 操作日志
 
-Current UI sections:
+关键身份字段：
 
-- Sidebar navigation
-- Dashboard with metrics and feature modules
-- Anime library cards
-- Download queue table
-- Calendar placeholder
-- Settings center
-- Series detail drawer
-- Drag-sort subtitle group priority
-- Drag-sort resolution priority
+- `media_items.bangumi_id`
+- `media_items.tmdb_id`
+- `media_items.identity_key`
+- `media_items.media_type`
+- `cloud_assets.provider`
+- `cloud_assets.provider_file_id`
+- `cloud_assets.cloud_path`
+- `local_assets.local_path`
+- `sync_rules.sync_enabled`
+- `sync_rules.auto_sync_following`
 
-## Data Model
+身份合并优先级：
 
-SQLite tables:
+```txt
+bangumi:{id} > tmdb:{id} > title:{normalized_title}
+```
 
-- `settings`: global key/value settings
-- `series`: one aggregated anime/show entry
-- `episodes`: per-series episode records
-- `releases`: RSS releases grouped under a series
-- `download_tasks`: PikPak submission and polling status
-- `logs`: operational logs
+## 7. 设计约束
 
-Important fields:
+1. “下载”和“同步”必须分开。
+   - 下载：把资源放入云盘长期库。
+   - 同步：把云盘资源复制到 NAS 本地观看缓存。
+   - 取消同步只删除本地，不删除云盘。
 
-- `series.bangumi_id`
-- `series.tmdb_id`
-- `series.selected_group`
-- `series.selected_resolution`
-- `series.auto_download`
-- `series.backfill_mode`
-- `download_tasks.pikpak_task_id`
-- `download_tasks.pikpak_file_id`
-- `download_tasks.normalized_name`
+2. Jellyfin 只扫描本地真实文件。
+   - 不再挂载云盘给 Jellyfin。
+   - 本地库路径使用 `/volume1/Assets3/Media/pikpak-anime`。
+   - 容器内建议挂载为 `/media/anime`。
 
-## Key Design Decisions
+3. 云盘 provider 不写死。
+   - 当前 provider 是 PikPak。
+   - 后续应通过 adapter 支持其他云盘。
+   - 业务层使用 `cloud_assets` 和 `cloud_tasks`，不要直接依赖 PikPak 字段。
 
-1. Do not use global subtitle/resolution filtering as the final rule.
-   - Global priority only helps auto-select defaults.
-   - Final selection is per series.
+4. 自动下载到云盘默认开启，但必须能选出唯一发布。
+   - 如果有多个字幕组、分辨率或语言候选，必须按优先级过滤。
+   - 过滤后仍不唯一时，不自动下载，标记为“需要选择”。
 
-2. PikPak auth should primarily use:
+5. 自动选择维度包括：
+   - 字幕组优先级
+   - 分辨率优先级
+   - 语言优先级，例如 `简体 > 繁体 > 日语`
+
+6. 元数据应尽早匹配。
+   - RSS 扫描后先尝试 Bangumi/TMDB 匹配。
+   - 根据元数据 ID 合并重复条目。
+   - 手动确认的元数据优先级最高。
+
+7. NFO 在本地同步完成后生成。
+   - NFO 跟随本地媒体目录。
+   - 云盘库不负责 Jellyfin 直接扫描。
+
+8. PikPak 认证优先使用：
 
 ```txt
 access_token + refresh_token
 ```
 
-   Account/password remains a fallback.
+   账号密码只作为备用方式。注意：当前 `DEFAULT_SETTINGS` 里的初始值仍是 `password`，后续需要改成 `token`，或在首次配置体验中明确推荐 token。
 
-3. Jellyfin-friendly naming should be standard:
+9. 后续扩展应优先增加 adapter。
+   - source adapter：RSS、搜索、导入、收藏。
+   - cloud adapter：PikPak、未来其他云盘。
+   - metadata adapter：Bangumi、TMDB。
+
+## 8. 已知缺口
+
+### 高优先级
+
+- 现有 `download_tasks` 同时承担云盘下载和媒体库目标路径概念，需要拆分。
+- 现有 NFO 生成时机过早，应改到本地同步完成后。
+- 真实 PikPak 端到端提交尚未用真实 token 验证。
+- PikPak 任务 ID 和 file ID 提取逻辑需要对照真实响应确认。
+- 云端重命名依赖有效 `file_id`，缺失时只能先标记完成并等待后续补拿。
+- API 错误响应还不够规范，后台任务也缺少统一操作状态。
+- 自动选择和自动下载的开关语义需要理顺：
+  - `auto_download_by_priority` 当前只影响字幕组/分辨率选择。
+  - `auto_download_unique` 当前同时承担“唯一匹配自动下载”和全局自动下载 gate。
+  - 后续应拆成清晰的“自动选择规则”和“自动入队规则”。
+- 前端 `dashboard` 初始状态缺少 `active_tasks`、`task_counts` 默认值，首次渲染有潜在 undefined 风险。
+- 补全和自动下载按钮存在“点了没反应”的体验问题，需要返回明确结果和跳过原因。
+
+### 元数据
+
+- Bangumi 自动搜索目前只是第一结果启发式。
+- TMDB 尚未实现。
+- 集标题和放送日期还没有完整填充。
+- 需要支持 Bangumi/TMDB 搜索候选选择和手动确认。
+- RSS 扫描时应先匹配元数据，再按稳定 ID 合并。
+
+### 语言和发布选择
+
+- 当前未解析语言。
+- 需要从发布标题中解析简体、繁体、日语、CHS、CHT、BIG5、GB、JP 等信息。
+- 自动选择需要加入语言优先级。
+- 过滤后不唯一时必须阻止自动下载，并在 UI 显示原因。
+
+### 同步和本地库
+
+- 当前没有云盘到本地的同步任务模型。
+- 需要支持手动同步到本地。
+- 需要支持追更自动同步到本地。
+- 需要支持取消同步并删除本地文件，但保留云盘资源。
+- 需要接入 rclone 或其他同步执行器。
+- Jellyfin API 刷新尚未实现。
+
+### 补全和导入
+
+- 老番补全还只是计划模块。
+- 当前 RSS 不能可靠补历史集，需要可搜索来源。
+- “补全全部”配置已存储，但没有搜索源前不能真正拉取缺失历史发布。
+- 电影、欧美剧、收藏导入仍是占位方向。
+
+### UI 和产品
+
+- 暂无认证。
+- 暂无路由级浏览器 URL，当前 Vue 使用内部状态。
+- 番剧卡片需要展示云盘状态、本地同步状态、追更状态。
+- 日历需要 Bangumi/TMDB 放送数据。
+
+## 9. 下一阶段路线图
+
+### P0: 修复按钮反馈和自动下载语义
+
+目标：先解决“点了没反应”和自动下载条件不清的问题。
+
+- 所有操作 API 返回明确结果：
+  - queued
+  - skipped
+  - failed
+  - reason
+- UI 显示跳过原因。
+- 补全在没有搜索源时显示“当前不可用”，不要假装执行。
+- 修复前端 `dashboard.active_tasks` 默认值。
+- 明确当前“下载”按钮语义为“下载到云盘”。
+- 自动下载只在候选唯一时执行。
+
+### P1: 拆分云盘下载和本地同步
+
+目标：建立新状态模型。
+
+- 新增或迁移到 `cloud_assets`、`cloud_tasks`。
+- 新增 `sync_rules`、`local_assets`、`sync_tasks`。
+- 保留旧表迁移兼容。
+- API 拆分为 cloud 和 sync 两组。
+- UI 增加状态：
+  - 未入云盘
+  - 云盘下载中
+  - 已在云盘
+  - 需要同步
+  - 同步中
+  - 已在本地
+  - 本地已删除
+  - 失败
+
+### P2: 本地同步执行器
+
+目标：把云盘资源复制到 NAS 本地真实目录。
+
+- 配置本地库目录，默认 `/media/anime`。
+- 配置同步执行方式，优先 rclone。
+- 支持手动“同步到本地”。
+- 支持“取消同步”，只删除本地文件和本地 NFO。
+- 同步成功后生成 NFO。
+- 同步成功后可触发 Jellyfin 扫描。
+
+### P3: 元数据优先合并
+
+目标：扫描时尽早建立稳定身份。
+
+- RSS 扫描后先尝试 Bangumi 匹配。
+- 增加 TMDB 匹配。
+- 增加匹配候选 UI。
+- 建立 `identity_key`。
+- 按 Bangumi/TMDB ID 合并重复媒体。
+
+### P4: 语言过滤和三维自动选择
+
+目标：让自动下载可靠。
+
+- 增加语言解析。
+- 增加语言优先级设置，默认：
 
 ```txt
-{title_cn} ({year}) [bangumi-{bangumi_id}]/Season {season:02d}/{title_cn} - S{season:02d}E{episode:02d} - {episode_title}
+简体
+繁体
+日语
 ```
 
-4. NFO output must be configurable.
-   - Default: `/data/nfo`
-   - For Jellyfin direct use, mount the rclone media directory into the container and set `nfo_output_root`, e.g. `/media/anime`.
-   - NFO should live next to the media files using the same series/season directory structure.
+- 自动选择顺序：
+  1. 字幕组优先级
+  2. 分辨率优先级
+  3. 语言优先级
+  4. 唯一性检查
+- 如果最终不唯一，进入“需要选择”状态。
 
-5. Mikan RSS proxy and PikPak proxy are separate settings.
-   - User said Mikan RSS mainly needs proxy; PikPak may not.
+### P5: 追更同步
 
-## Current Implementation State
+目标：让正在追的内容自动落到本地。
 
-Completed:
+- 媒体条目增加“追更同步”开关。
+- 新集下载到云盘完成后，如果该条目开启追更同步，则自动同步到本地。
+- 同步完成后生成 NFO。
+- 同步完成后触发 Jellyfin 扫描。
 
-- Backend moved to `backend/app`
-- JSON API created
-- Vue + Element Plus frontend scaffolded
-- Modern admin UI written in `frontend/src/App.vue`
-- Drag-sort priority controls added
-- Frontend dashboard now supports auto-refresh.
-  - Default interval: 5 seconds.
-  - User can switch between manual/auto refresh.
-  - Refresh pauses while settings page is active or series drawer is open, to avoid overwriting in-progress edits.
-- Dashboard now exposes active queue visibility.
-  - `/api/dashboard` includes `task_counts` and `active_tasks`.
-  - UI shows pending/running/submitted/failed tasks in the dashboard.
-- Failed task retry is supported.
-  - `POST /api/tasks/retry-failed` resets failed tasks to pending, clears attempts/errors, and starts processing.
-- UI now clarifies setting effects.
-  - Global settings affect future scan/queue decisions.
-  - Failed token/download tasks need "重试失败".
-  - "补全全部" is not fully implemented until a searchable backfill source is added.
-- Existing backend workflow preserved
-- Project renamed to AutoAnime
-- Root Dockerfile changed to multi-stage build:
-  - Node builds frontend
-  - Python image serves FastAPI + built Vue SPA
-- Local validation completed:
-  - `npm install`
-  - `npm run build`
-  - `python -m compileall backend/app`
-  - local uvicorn served `/` with status 200
-  - local uvicorn served `/api/settings` with status 200
-- PikPak offline submission now initializes captcha before `POST /drive/v1/files`.
-  - If PikPak returns `Verification code is invalid`, AutoAnime refreshes captcha and retries once.
-- Scan flow automatically attempts Bangumi metadata refresh for newly discovered series without `metadata_source`.
-- Scan flow generates NFO after each touched series is processed.
-  - If `nfo_output_root` is `/media/anime`, NFO follows the Jellyfin media folder structure.
-- Series aggregation now normalizes title fingerprints.
-  - Handles common Simplified/Traditional character differences.
-  - Removes common release tags, punctuation, spaces, episode suffixes, and resolution labels before title fingerprinting.
-- Existing duplicate series with the same `bangumi_id` are merged during DB migration and after Bangumi metadata refresh.
+### P6: 补全、导入和收藏
 
-Validation notes:
+目标：让云盘库成为长期影院库。
 
-- npm audit reported 3 high severity vulnerabilities after install.
-- `npm audit fix --force` was not run because it may introduce breaking dependency upgrades.
-- Vite build warned that the main JS chunk is larger than 500 kB. This is acceptable for now, but code splitting can be added later.
+- 增加可搜索 indexer adapter。
+- 支持老番补全到云盘。
+- 支持电影导入到云盘。
+- 支持欧美剧导入到云盘。
+- 支持云盘已有资源扫描入库。
+- 支持收藏条目只入云盘、不占本地空间。
 
-## Known Gaps
+### P7: Jellyfin 集成和前端完善
 
-Functional gaps:
+目标：提升日常使用体验。
 
-- Real end-to-end PikPak submission has not been tested with a real token.
-- PikPak task/file ID extraction may need adjustment after seeing actual API return payload.
-- Cloud rename depends on a valid `file_id`.
-- Bangumi metadata is basic: manual Bangumi ID works best; automatic search is only first-result heuristic.
-- Episode titles and air dates are not fully populated yet.
-- TMDB is not implemented yet.
-- Old anime backfill is only a planned module; current RSS alone cannot reliably backfill old episodes.
-- Movie/TV modules are placeholders.
-- Jellyfin refresh API is not implemented.
+- 增加 Jellyfin URL 和 API Key 配置。
+- 支持手动触发 Jellyfin 扫描。
+- 支持同步完成后自动触发扫描。
+- 增加浏览器路由。
+- 接入真实日历数据。
+- 增加更好的空状态和首轮配置引导。
+- 按需拆分前端 chunk。
 
-UI gaps:
+## 10. 上传和交接规则
 
-- No authentication.
-- No route-level browser URLs yet; current Vue app uses internal state.
-- Series cards need richer status badges once real data exists.
-- Calendar needs real Bangumi/TMDB schedule data.
-
-## Deployment
-
-Expected NAS path:
-
-```sh
-/volume1/docker/autoanime
-```
-
-Run:
-
-```sh
-docker compose up -d --build
-```
-
-Port:
-
-```txt
-32888:8080
-```
-
-## Upload Package Rules
-
-Do not upload generated/heavy directories to NAS:
+不要上传生成目录、运行时目录或大文件到 NAS：
 
 ```txt
 frontend/node_modules
@@ -274,7 +520,7 @@ test-data
 *.zip
 ```
 
-Upload only source and deployment files:
+只上传源码和部署文件：
 
 ```txt
 backend/
@@ -291,70 +537,20 @@ PLAN.md
 .gitignore
 ```
 
-Reason:
+原因：
 
-- `frontend/node_modules` contains thousands of files and is slow to copy.
-- Docker builds dependencies on the NAS during `docker compose up -d --build`.
-- `data/` contains runtime state and should not be overwritten by source uploads.
+- `frontend/node_modules` 文件数量巨大，复制到 NAS 很慢。
+- Docker build 会在 NAS 上重新安装依赖并构建前端。
+- `data/` 是运行时状态，不应被源码包覆盖。
 
-When handing this project to another AI or uploading for NAS testing, create a clean archive that excludes generated/runtime paths.
+交接给另一个 AI 或上传 NAS 测试前，创建干净源码包，并排除以上路径。
 
-For NFO/Jellyfin direct output, add a media mount:
+## 11. 维护规则
 
-```yaml
-volumes:
-  - ./data:/data
-  - /volume1/Assets3/Media/pikpak-anime:/media/anime
-```
-
-Then set in UI:
-
-```txt
-NFO 输出目录: /media/anime
-```
-
-## Next Plan
-
-1. Improve API robustness.
-   - Add proper error responses.
-   - Add operation status endpoints for background jobs.
-   - Add API response schemas later if needed.
-
-2. Test real Mikan RSS parsing.
-   - Confirm title parser handles common groups.
-   - Improve episode parsing for multi-language naming.
-
-3. Test real PikPak token workflow.
-   - Confirm access/refresh token wrapping works.
-   - Inspect actual offline download response.
-   - Fix task/file ID extraction if necessary.
-   - Re-test after captcha initialization fix for `Verification code is invalid`.
-
-4. Add metadata enhancements.
-   - Better Bangumi search selection UI.
-   - Store cover locally or support remote cover in UI.
-   - Episode list from Bangumi where available.
-   - NFO with richer fields.
-
-5. Add old anime backfill module.
-   - Needs a searchable source, not just RSS.
-   - Likely Mikan search or other indexer adapter.
-   - Current "补全全部" setting is stored, but it cannot fetch missing historical episodes by itself yet.
-
-6. Add Jellyfin integration.
-   - Configure Jellyfin URL/API key.
-   - Trigger library scan after NFO generation or task completion.
-
-7. Frontend polish.
-   - Add browser routes if navigation state needs sharable URLs.
-   - Add real calendar data after metadata enrichment.
-   - Add better empty states and first-run setup wizard.
-   - Consider dynamic imports to reduce Vite chunk size.
-
-## Notes For Next AI
-
-- Do not revert user/NAS-specific work.
-- Keep the app NAS-friendly and Docker-friendly.
-- Prefer adding modules/adapters over hardcoding Mikan/PikPak assumptions everywhere.
-- Keep frontend dependency count modest.
-- Update this `PLAN.md` after every meaningful architecture or workflow change.
+- 不要回滚用户或 NAS 上已有的特定修改。
+- 保持 NAS 友好和 Docker 友好。
+- 优先通过 source/cloud/metadata adapter 扩展能力。
+- 当前云盘 provider 是 PikPak，但不要把业务模型写死为 PikPak。
+- Jellyfin 永远只面对本地真实文件。
+- 控制前端依赖数量。
+- 每次修改架构、数据模型、任务流程、部署方式或关键 UI 行为后，同步更新本文件。

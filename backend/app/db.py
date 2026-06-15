@@ -70,6 +70,7 @@ def init_db() -> None:
                 title TEXT NOT NULL,
                 subtitle_group TEXT NOT NULL DEFAULT '',
                 resolution TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
                 torrent_url TEXT NOT NULL DEFAULT '',
                 magnet TEXT NOT NULL DEFAULT '',
                 published_at TEXT NOT NULL DEFAULT '',
@@ -111,18 +112,29 @@ def init_db() -> None:
 
 
 def migrate(conn: sqlite3.Connection) -> None:
-    existing = {
+    series_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(series)").fetchall()
     }
-    additions = {
+    series_additions = {
         "poster_path": "TEXT NOT NULL DEFAULT ''",
         "metadata_source": "TEXT NOT NULL DEFAULT ''",
         "nfo_status": "TEXT NOT NULL DEFAULT 'pending'",
     }
-    for column, ddl in additions.items():
-        if column not in existing:
+    for column, ddl in series_additions.items():
+        if column not in series_columns:
             conn.execute(f"ALTER TABLE series ADD COLUMN {column} {ddl}")
+
+    release_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(releases)").fetchall()
+    }
+    release_additions = {
+        "language": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in release_additions.items():
+        if column not in release_columns:
+            conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
     merge_duplicate_series(conn)
 
 

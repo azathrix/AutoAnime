@@ -51,12 +51,13 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
         conn.execute(
             """
             INSERT INTO releases
-              (series_id, episode_number, guid, title, subtitle_group, resolution,
+              (series_id, episode_number, guid, title, subtitle_group, resolution, language,
                torrent_url, magnet, published_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
               subtitle_group=excluded.subtitle_group,
               resolution=excluded.resolution,
+              language=excluded.language,
               torrent_url=excluded.torrent_url,
               magnet=excluded.magnet,
               updated_at=excluded.updated_at
@@ -68,6 +69,7 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
                 item.title,
                 item.subtitle_group,
                 item.resolution,
+                item.language,
                 item.torrent_url,
                 item.magnet,
                 item.published_at,
@@ -90,54 +92,133 @@ def priority_pick(values: list[str], priority: list[str]) -> str:
     return values_clean[0] if len(set(values_clean)) == 1 else ""
 
 
-def resolve_series_choice(series_id: int, settings: dict[str, str]) -> tuple[str, str, bool]:
+def filter_by_priority(rows: list, field: str, priority: list[str]) -> tuple[list, str, str]:
+    values = sorted({row[field] for row in rows if row[field]})
+    if not values:
+        return rows, "", ""
+    if len(values) == 1:
+        selected = values[0]
+    else:
+        selected = priority_pick(values, priority)
+    if not selected:
+        return rows, "", f"{field}存在多个候选: {', '.join(values)}"
+    return [row for row in rows if row[field] == selected], selected, ""
+
+
+def auto_download_enabled(series, settings: dict[str, str]) -> bool:
+    value = series["auto_download"]
+    return value == "on" or (value == "inherit" and bool_setting(settings.get("auto_download_unique", "true")))
+
+
+def resolve_series_choice(series_id: int, settings: dict[str, str]) -> tuple[list[int], dict[str, str]]:
     with connect() as conn:
         series = conn.execute("SELECT * FROM series WHERE id=?", (series_id,)).fetchone()
         rows = conn.execute(
-            "SELECT DISTINCT subtitle_group, resolution FROM releases WHERE series_id=?",
+            """
+            SELECT id, episode_number, subtitle_group, resolution, language
+            FROM releases
+            WHERE series_id=?
+            ORDER BY episode_number ASC, id DESC
+            """,
             (series_id,),
         ).fetchall()
 
-    groups = sorted({r["subtitle_group"] for r in rows if r["subtitle_group"]})
-    resolutions = sorted({r["resolution"] for r in rows if r["resolution"]})
+    info = {
+        "enabled": "true" if series and auto_download_enabled(series, settings) else "false",
+        "selected_group": "",
+        "selected_resolution": "",
+        "selected_language": "",
+        "reason": "",
+    }
+    if not series:
+        info["reason"] = "番剧不存在"
+        return [], info
+    if not rows:
+        info["reason"] = "没有可下载发布"
+        return [], info
+    if not auto_download_enabled(series, settings):
+        info["reason"] = "自动下载已关闭"
+        return [], info
+
+    candidates = list(rows)
     selected_group = series["selected_group"] or ""
+    if selected_group:
+        candidates = [row for row in candidates if row["subtitle_group"] == selected_group]
+        if not candidates:
+            info["reason"] = f"没有匹配字幕组: {selected_group}"
+            return [], info
+    else:
+        candidates, selected_group, reason = filter_by_priority(
+            candidates,
+            "subtitle_group",
+            split_lines(settings.get("subtitle_priority", ""))
+            if bool_setting(settings.get("auto_download_by_priority", "true"))
+            else [],
+        )
+        if reason:
+            info["reason"] = reason.replace("subtitle_group", "字幕组")
+            return [], info
+
     selected_resolution = series["selected_resolution"] or ""
-    auto_download = series["auto_download"]
+    if selected_resolution:
+        candidates = [row for row in candidates if row["resolution"] == selected_resolution]
+        if not candidates:
+            info["reason"] = f"没有匹配分辨率: {selected_resolution}"
+            return [], info
+    else:
+        candidates, selected_resolution, reason = filter_by_priority(
+            candidates,
+            "resolution",
+            split_lines(settings.get("resolution_priority", ""))
+            if bool_setting(settings.get("auto_download_by_priority", "true"))
+            else [],
+        )
+        if reason:
+            info["reason"] = reason.replace("resolution", "分辨率")
+            return [], info
 
-    if not selected_group:
-        if len(groups) == 1 and bool_setting(settings["auto_download_unique"]):
-            selected_group = groups[0]
-        elif bool_setting(settings["auto_download_by_priority"]):
-            selected_group = priority_pick(groups, split_lines(settings["subtitle_priority"]))
+    candidates, selected_language, reason = filter_by_priority(
+        candidates,
+        "language",
+        split_lines(settings.get("language_priority", ""))
+        if bool_setting(settings.get("auto_download_by_priority", "true"))
+        else [],
+    )
+    if reason:
+        info["reason"] = reason.replace("language", "语言")
+        return [], info
 
-    if not selected_resolution:
-        if len(resolutions) == 1 and bool_setting(settings["auto_download_unique"]):
-            selected_resolution = resolutions[0]
-        elif bool_setting(settings["auto_download_by_priority"]):
-            selected_resolution = priority_pick(resolutions, split_lines(settings["resolution_priority"]))
+    by_episode: dict[int, list] = {}
+    for row in candidates:
+        by_episode.setdefault(row["episode_number"], []).append(row)
+    ambiguous = {
+        episode: episode_rows
+        for episode, episode_rows in by_episode.items()
+        if len(episode_rows) > 1
+    }
+    if ambiguous:
+        info["reason"] = "过滤后仍存在同集多个发布，需要手动选择"
+        return [], info
 
-    enabled = auto_download == "on" or (auto_download == "inherit" and bool_setting(settings["auto_download_unique"]))
-    return selected_group, selected_resolution, enabled
+    ids = [episode_rows[0]["id"] for _, episode_rows in sorted(by_episode.items())]
+    info.update(
+        {
+            "selected_group": selected_group,
+            "selected_resolution": selected_resolution,
+            "selected_language": selected_language,
+        }
+    )
+    return ids, info
 
 
-def mark_selected_releases(series_id: int, group: str, resolution: str) -> list[int]:
-    if not group or not resolution:
-        return []
+def mark_selected_releases(series_id: int, release_ids: list[int]) -> None:
     with connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT id FROM releases
-            WHERE series_id=? AND subtitle_group=? AND resolution=?
-            ORDER BY episode_number ASC
-            """,
-            (series_id, group, resolution),
-        ).fetchall()
-        ids = [r["id"] for r in rows]
         conn.execute("UPDATE releases SET selected=0 WHERE series_id=?", (series_id,))
-        if ids:
-            placeholders = ",".join("?" for _ in ids)
-            conn.execute(f"UPDATE releases SET selected=1 WHERE id IN ({placeholders})", ids)
-    return ids
+    if not release_ids:
+        return
+    with connect() as conn:
+        placeholders = ",".join("?" for _ in release_ids)
+        conn.execute(f"UPDATE releases SET selected=1 WHERE id IN ({placeholders})", release_ids)
 
 
 def queue_release(release_id: int, settings: dict[str, str]) -> None:
@@ -211,6 +292,12 @@ async def process_tasks(settings: dict[str, str], limit: int = 5) -> None:
     for task in rows:
         source = task["magnet"] or task["torrent_url"]
         if not source:
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE download_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
+                    ("发布缺少 magnet/torrent 链接", now(), task["id"]),
+                )
+            log("warn", f"下载任务跳过: {task['title']} - 发布缺少 magnet/torrent 链接")
             continue
         with connect() as conn:
             conn.execute(
@@ -316,12 +403,15 @@ async def scan_and_queue(settings: dict[str, str]) -> None:
             series = conn.execute("SELECT metadata_source, bangumi_id FROM series WHERE id=?", (series_id,)).fetchone()
         if series and not series["metadata_source"]:
             await refresh_series_metadata(series_id, settings.get("rss_proxy", ""))
-        group, resolution, enabled = resolve_series_choice(series_id, settings)
-        ids = mark_selected_releases(series_id, group, resolution)
-        if enabled:
-            for release_id in ids:
-                queue_release(release_id, settings)
-                queued += 1
+        ids, choice = resolve_series_choice(series_id, settings)
+        mark_selected_releases(series_id, ids)
+        if choice["reason"]:
+            with connect() as conn:
+                series_title = conn.execute("SELECT title_cn FROM series WHERE id=?", (series_id,)).fetchone()
+            log("warn", f"自动下载跳过: {series_title['title_cn'] if series_title else series_id} - {choice['reason']}")
+        for release_id in ids:
+            queue_release(release_id, settings)
+            queued += 1
         generate_nfo_for_series(series_id, settings)
 
     log("info", f"扫描完成: {len(items)} 条发布，更新 {len(touched_series)} 部番剧，队列 {queued} 条")

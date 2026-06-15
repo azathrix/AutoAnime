@@ -144,6 +144,7 @@
             <el-table-column prop="episode_number" label="集" width="70" />
             <el-table-column prop="subtitle_group" label="字幕组" width="140" />
             <el-table-column prop="resolution" label="分辨率" width="110" />
+            <el-table-column prop="language" label="语言" width="90" />
             <el-table-column prop="target_dir" label="目标目录" min-width="260" />
             <el-table-column prop="last_error" label="错误" min-width="220" />
           </el-table>
@@ -198,6 +199,7 @@
                 <div class="priority-layout">
                   <PriorityList title="字幕组优先级" v-model="settings.subtitle_priority" placeholder="添加字幕组" />
                   <PriorityList title="分辨率优先级" v-model="settings.resolution_priority" placeholder="添加分辨率" />
+                  <PriorityList title="语言优先级" v-model="settings.language_priority" placeholder="添加语言" />
                 </div>
               </el-tab-pane>
               <el-tab-pane label="PikPak">
@@ -292,6 +294,7 @@
           <el-table-column prop="episode_number" label="集" width="70" />
           <el-table-column prop="subtitle_group" label="字幕组" width="140" />
           <el-table-column prop="resolution" label="分辨率" width="100" />
+          <el-table-column prop="language" label="语言" width="90" />
           <el-table-column prop="title" label="发布标题" />
           <el-table-column label="操作" width="100">
             <template #default="{ row }"><el-button size="small" @click="downloadRelease(row.id)">下载</el-button></template>
@@ -318,7 +321,7 @@ const keyword = ref('')
 const seriesFilter = ref('全部')
 const seriesDrawer = ref(false)
 const selectedSeries = ref(null)
-const dashboard = reactive({ series: [], tasks: [], logs: [], calendar: [] })
+const dashboard = reactive({ series: [], tasks: [], logs: [], calendar: [], active_tasks: [], task_counts: {} })
 const settings = reactive({})
 
 const pageTitle = computed(() => ({
@@ -385,7 +388,11 @@ function startAutoRefresh() {
 
 async function runAction(path) {
   const result = await postAction(path)
-  ElMessage.success(result.message || '任务已提交')
+  if (result.status === 'skipped') {
+    ElMessage.warning(result.message || '没有可执行任务')
+  } else {
+    ElMessage.success(result.message || '任务已提交')
+  }
   setTimeout(reload, 800)
 }
 
@@ -407,8 +414,12 @@ async function saveCurrentSeries() {
 }
 
 async function runSeriesAction(action) {
-  await postAction(`/series/${selectedSeries.value.series.id}/${action}`)
-  ElMessage.success('操作已提交')
+  const result = await postAction(`/series/${selectedSeries.value.series.id}/${action}`)
+  if (result.status === 'skipped') {
+    ElMessage.warning(result.message || '没有可执行任务')
+  } else {
+    ElMessage.success(result.message || '操作已提交')
+  }
   setTimeout(reload, 800)
 }
 

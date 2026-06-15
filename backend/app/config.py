@@ -19,6 +19,7 @@ DEFAULT_SETTINGS = {
     "default_backfill": "none",
     "subtitle_priority": "LoliHouse\n喵萌奶茶屋\n桜都字幕组",
     "resolution_priority": "1080p\n1080\n2160p\n720p",
+    "language_priority": "简体\n繁体\n日语",
     "pikpak_auth_mode": "password",
     "pikpak_username": "",
     "pikpak_password": "",
