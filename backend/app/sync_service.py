@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import shutil
 from pathlib import Path, PurePosixPath
+
+import httpx
 
 from .db import connect, log, now
 from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
 from .metadata import generate_nfo_for_series
+from .pikpak_service import get_cloud_download_url
 
 
 def cloud_asset_path(task: dict, release: dict, series: dict, settings: dict[str, str]) -> tuple[str, str]:
@@ -75,7 +77,7 @@ def ensure_sync_rule(series_id: int, settings: dict[str, str], enabled: bool = F
                 series_id,
                 1 if enabled else 0,
                 1 if auto_sync else 0,
-                settings.get("local_library_root") or "/media/anime",
+                settings.get("local_library_root") or "/media/pikpak-anime",
                 ts,
                 ts,
             ),
@@ -83,7 +85,7 @@ def ensure_sync_rule(series_id: int, settings: dict[str, str], enabled: bool = F
 
 
 def local_episode_path(cloud_asset: dict, series: dict, settings: dict[str, str]) -> str:
-    root = Path(settings.get("local_library_root") or "/media/anime")
+    root = Path(settings.get("local_library_root") or "/media/pikpak-anime")
     series_dir = render_series_dir(series, settings)
     season_dir = render_season_dir(int(series.get("season_number") or 1), settings)
     suffix = Path(cloud_asset.get("cloud_name") or "").suffix
@@ -145,26 +147,26 @@ def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int
     return queued, f"已加入本地同步队列: {queued} 条"
 
 
-async def run_sync_command(source: str, target: str, settings: dict[str, str]) -> None:
-    template = settings.get("sync_command_template", "").strip()
-    if template:
-        command = template.format(source=source, target=target)
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            message = (stderr or stdout).decode(errors="ignore").strip()
-            raise RuntimeError(message or f"同步命令失败: {proc.returncode}")
+async def download_cloud_file_to_local(file_id: str, source: str, target: str, settings: dict[str, str]) -> None:
+    target_path = Path(target)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if file_id:
+        url = await get_cloud_download_url(settings, file_id)
+        proxy = settings.get("pikpak_proxy") or None
+        async with httpx.AsyncClient(proxy=proxy, timeout=None, follow_redirects=True) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with target_path.open("wb") as output:
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            output.write(chunk)
         return
 
     source_path = Path(source)
     target_path = Path(target)
     if not source_path.exists():
-        raise RuntimeError("未配置同步命令，且云盘路径不是本机可访问文件")
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+        raise RuntimeError("缺少云盘文件 ID，且云盘路径不是本机可访问文件")
     shutil.copy2(source_path, target_path)
 
 
@@ -172,7 +174,7 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT st.*, ca.cloud_name
+            SELECT st.*, ca.cloud_name, ca.provider_file_id
             FROM sync_tasks st
             JOIN cloud_assets ca ON ca.id=st.cloud_asset_id
             WHERE st.status IN ('pending', 'failed') AND st.attempts < 3
@@ -189,7 +191,12 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                 (now(), task["id"]),
             )
         try:
-            await run_sync_command(task["source_path"], task["target_path"], settings)
+            await download_cloud_file_to_local(
+                task["provider_file_id"],
+                task["source_path"],
+                task["target_path"],
+                settings,
+            )
         except Exception as exc:
             with connect() as conn:
                 conn.execute(
@@ -221,7 +228,7 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                 (ts, task["id"]),
             )
         nfo_settings = dict(settings)
-        nfo_settings["nfo_output_root"] = settings.get("local_library_root") or "/media/anime"
+        nfo_settings["nfo_output_root"] = settings.get("local_library_root") or "/media/pikpak-anime"
         generate_nfo_for_series(task["series_id"], nfo_settings)
         with connect() as conn:
             conn.execute(

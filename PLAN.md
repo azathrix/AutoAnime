@@ -11,6 +11,7 @@ AutoAnime 是面向 NAS 的媒体自动化应用。目标不是只做 RSS 下载
 - Jellyfin 只扫描本地真实文件，不再挂载云盘目录。
 - 取消同步只清理本地文件和本地 NFO，不删除云盘内容。
 - 云盘 provider 需要抽象化；当前先实现 PikPak，后续可能接入其他云盘。
+- 同步优先走云盘 provider API 下载到本地，不要求用户配置同步命令。
 
 目标工作流：
 
@@ -64,8 +65,9 @@ watch cache
 
 local library
   NAS 本地真实文件
-  /volume1/Assets3/Media/pikpak-anime
-  容器内建议挂载为 /media/anime
+  /volume1/Assets3/Media
+  容器内挂载为 /media
+  PikPak 默认同步到 /media/pikpak-anime
 
 jellyfin
   只扫描本地真实文件
@@ -135,24 +137,24 @@ NAS 推荐本地库路径：
 /volume1/Assets3/Media/pikpak-anime
 ```
 
-容器建议挂载：
+容器建议挂载整个媒体根目录：
 
 ```yaml
 volumes:
   - ./data:/data
-  - /volume1/Assets3/Media/pikpak-anime:/media/anime
+  - /volume1/Assets3/Media:/media
 ```
 
 UI 中本地媒体库目录设置为：
 
 ```txt
-本地媒体库目录: /media/anime
+本地媒体库目录: /media/pikpak-anime
 ```
 
 NFO 生成到本地媒体文件旁边：
 
 ```txt
-/media/anime/{title_cn} ({year}) [bangumi-{bangumi_id}]/Season 01/*.nfo
+/media/pikpak-anime/{title_cn} ({year}) [bangumi-{bangumi_id}]/Season 01/*.nfo
 ```
 
 部署路径：
@@ -197,6 +199,8 @@ docker compose up -d --build
 - 已支持手动“同步到本地”和“取消同步”。
 - 同步成功后会在本地媒体库生成 NFO。
 - 取消同步会删除本地媒体文件和单集 NFO，但保留云盘资源。
+- 同步已改为通过 PikPak API 获取下载链接并直接下载到本地。
+- 默认自动扫描间隔为 60 分钟，同时保留手动扫描和手动刷新。
 
 ### 前端
 
@@ -313,8 +317,9 @@ bangumi:{id} > tmdb:{id} > title:{normalized_title}
 
 2. Jellyfin 只扫描本地真实文件。
    - 不再挂载云盘给 Jellyfin。
-   - 本地库路径使用 `/volume1/Assets3/Media/pikpak-anime`。
-   - 容器内建议挂载为 `/media/anime`。
+   - NAS 媒体根目录使用 `/volume1/Assets3/Media`。
+   - 容器内挂载为 `/media`。
+   - PikPak 默认本地目录为 `/media/pikpak-anime`，其他云盘可指定到 `/media/baidu-anime` 等目录。
 
 3. 云盘 provider 不写死。
    - 当前 provider 是 PikPak。
@@ -384,8 +389,8 @@ access_token + refresh_token
 - 已支持手动同步到本地。
 - 需要支持追更自动同步到本地。
 - 已支持取消同步并删除本地文件，但保留云盘资源。
-- 已支持同步命令模板；未配置命令时只支持本机可访问路径复制。
-- 需要在 NAS 上验证 rclone/PikPak 实际同步命令。
+- 已支持通过 PikPak API 下载到本地。
+- 需要在 NAS 上用真实 PikPak file_id 验证下载链接和大文件稳定性。
 - Jellyfin API 刷新尚未实现。
 
 ### 补全和导入
@@ -445,14 +450,14 @@ access_token + refresh_token
 
 目标：把云盘资源复制到 NAS 本地真实目录。
 
-- 配置本地库目录，默认 `/media/anime`。
-- 配置同步执行方式，优先 rclone。
+- 配置本地库目录，默认 `/media/pikpak-anime`。
+- 同步执行方式优先使用云盘 provider API。
 - 支持手动“同步到本地”。
 - 支持“取消同步”，只删除本地文件和本地 NFO。
 - 同步成功后生成 NFO。
 - 同步成功后可触发 Jellyfin 扫描。
 
-状态：部分完成。手动同步、取消同步、同步后 NFO 已实现；Jellyfin 扫描和真实 rclone 命令需要 NAS 环境验证。
+状态：部分完成。手动同步、取消同步、同步后 NFO 已实现；Jellyfin 扫描暂缓，真实 PikPak 文件下载需要 NAS 环境验证。
 
 ### P3: 元数据优先合并
 

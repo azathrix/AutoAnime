@@ -99,3 +99,31 @@ async def rename_cloud_file(settings: dict[str, str], file_id: str, new_name: st
         return
     api = build_client(settings)
     await api.file_rename(file_id, new_name)
+
+
+async def get_cloud_download_url(settings: dict[str, str], file_id: str) -> str:
+    if not file_id:
+        raise RuntimeError("缺少云盘文件 ID")
+    api = build_client(settings)
+    data = await api.get_download_url(file_id)
+    if not isinstance(data, dict):
+        raise RuntimeError("无法获取云盘下载链接")
+    candidates = [
+        data.get("web_content_link"),
+        data.get("download_url"),
+        data.get("url"),
+        data.get("link"),
+    ]
+    file_info = data.get("file") if isinstance(data.get("file"), dict) else {}
+    candidates.extend(
+        [
+            file_info.get("web_content_link"),
+            file_info.get("download_url"),
+            file_info.get("url"),
+            file_info.get("link"),
+        ]
+    )
+    for value in candidates:
+        if value:
+            return str(value)
+    raise RuntimeError("云盘没有返回可用下载链接")

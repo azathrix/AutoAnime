@@ -11,5 +11,4 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - ./data:/data
-      # Optional: mount your rclone PikPak media path for direct NFO output.
-      # - /volume1/Assets3/Media/pikpak-anime:/media/anime
+      - /volume1/Assets3/Media:/media

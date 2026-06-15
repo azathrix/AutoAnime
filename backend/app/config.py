@@ -12,7 +12,7 @@ DB_PATH = DATA_DIR / "autoanime.db"
 DEFAULT_SETTINGS = {
     "rss_url": "",
     "rss_proxy": "",
-    "scan_interval_minutes": "10",
+    "scan_interval_minutes": "60",
     "auto_scan": "false",
     "auto_download_unique": "true",
     "auto_download_by_priority": "true",
@@ -28,8 +28,7 @@ DEFAULT_SETTINGS = {
     "pikpak_encoded_token": "",
     "pikpak_proxy": "",
     "library_root": "/Anime",
-    "local_library_root": "/media/anime",
-    "sync_command_template": "",
+    "local_library_root": "/media/pikpak-anime",
     "auto_sync_following": "false",
     "nfo_output_root": "",
     "series_dir_template": "{title_cn} ({year}) [bangumi-{bangumi_id}]",

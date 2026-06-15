@@ -25,7 +25,7 @@ scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 class SettingsPayload(BaseModel):
     rss_url: str = ""
     rss_proxy: str = ""
-    scan_interval_minutes: int = 10
+    scan_interval_minutes: int = 60
     auto_scan: bool = False
     auto_download_unique: bool = True
     auto_download_by_priority: bool = True
@@ -40,8 +40,7 @@ class SettingsPayload(BaseModel):
     pikpak_refresh_token: str = ""
     pikpak_proxy: str = ""
     library_root: str = "/Anime"
-    local_library_root: str = "/media/anime"
-    sync_command_template: str = ""
+    local_library_root: str = "/media/pikpak-anime"
     auto_sync_following: bool = False
     nfo_output_root: str = ""
     series_dir_template: str = ""
@@ -76,7 +75,7 @@ def split_setting(value: str) -> list[str]:
 def settings_response() -> dict[str, Any]:
     settings = get_settings()
     result: dict[str, Any] = dict(settings)
-    result["scan_interval_minutes"] = int(settings.get("scan_interval_minutes") or 10)
+    result["scan_interval_minutes"] = int(settings.get("scan_interval_minutes") or 60)
     result["auto_scan"] = bool_setting(settings.get("auto_scan", "false"))
     result["auto_download_unique"] = bool_setting(settings.get("auto_download_unique", "true"))
     result["auto_download_by_priority"] = bool_setting(settings.get("auto_download_by_priority", "true"))
@@ -90,7 +89,7 @@ def settings_response() -> dict[str, Any]:
 def reschedule() -> None:
     scheduler.remove_all_jobs()
     settings = get_settings()
-    minutes = max(1, int(settings.get("scan_interval_minutes") or 10))
+    minutes = max(1, int(settings.get("scan_interval_minutes") or 60))
     scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes)
 
 
@@ -243,8 +242,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "pikpak_refresh_token": payload.pikpak_refresh_token.strip(),
             "pikpak_proxy": payload.pikpak_proxy.strip(),
             "library_root": payload.library_root.strip() or "/Anime",
-            "local_library_root": payload.local_library_root.strip() or "/media/anime",
-            "sync_command_template": payload.sync_command_template.strip(),
+            "local_library_root": payload.local_library_root.strip() or "/media/pikpak-anime",
             "auto_sync_following": str(payload.auto_sync_following).lower(),
             "nfo_output_root": payload.nfo_output_root.strip(),
             "series_dir_template": payload.series_dir_template.strip(),

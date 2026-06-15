@@ -242,9 +242,8 @@
               <el-tab-pane label="媒体库">
                 <div class="form-row">
                   <el-form-item label="云盘库根目录"><el-input v-model="settings.library_root" /></el-form-item>
-                  <el-form-item label="本地媒体库目录"><el-input v-model="settings.local_library_root" placeholder="/media/anime" /></el-form-item>
+                  <el-form-item label="本地媒体库目录"><el-input v-model="settings.local_library_root" placeholder="/media/pikpak-anime" /></el-form-item>
                 </div>
-                <el-form-item label="同步命令模板"><el-input v-model="settings.sync_command_template" placeholder='rclone copy "{source}" "{target}"' /></el-form-item>
                 <el-form-item label="追更自动同步"><el-switch v-model="settings.auto_sync_following" /></el-form-item>
                 <el-form-item label="NFO 输出目录"><el-input v-model="settings.nfo_output_root" placeholder="留空；同步后默认写入本地媒体库" /></el-form-item>
                 <el-form-item label="番剧目录模板"><el-input v-model="settings.series_dir_template" /></el-form-item>
