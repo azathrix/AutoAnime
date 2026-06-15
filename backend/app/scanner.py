@@ -8,6 +8,7 @@ from .library import bool_setting, render_episode_name, target_dir
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .parser import ParsedRelease, fingerprint, parse_entry, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
+from .sync_service import ensure_sync_rule, upsert_cloud_asset
 
 
 async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
@@ -380,6 +381,8 @@ async def poll_submitted_tasks(settings: dict[str, str]) -> None:
                 await rename_cloud_file(settings, file_id, task["normalized_name"])
             except Exception as exc:
                 log("warn", f"云端重命名失败: {task['title']} - {exc}")
+        if status == "completed":
+            upsert_cloud_asset(task["id"], settings)
 
 
 async def scan_and_queue(settings: dict[str, str]) -> None:
@@ -403,6 +406,7 @@ async def scan_and_queue(settings: dict[str, str]) -> None:
             series = conn.execute("SELECT metadata_source, bangumi_id FROM series WHERE id=?", (series_id,)).fetchone()
         if series and not series["metadata_source"]:
             await refresh_series_metadata(series_id, settings.get("rss_proxy", ""))
+        ensure_sync_rule(series_id, settings)
         ids, choice = resolve_series_choice(series_id, settings)
         mark_selected_releases(series_id, ids)
         if choice["reason"]:

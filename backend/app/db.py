@@ -95,6 +95,60 @@ def init_db() -> None:
                 UNIQUE(release_id)
             );
 
+            CREATE TABLE IF NOT EXISTS cloud_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL UNIQUE,
+                release_id INTEGER NOT NULL,
+                series_id INTEGER NOT NULL,
+                episode_number INTEGER NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'pikpak',
+                provider_file_id TEXT NOT NULL DEFAULT '',
+                cloud_path TEXT NOT NULL DEFAULT '',
+                cloud_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'available',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sync_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                series_id INTEGER NOT NULL UNIQUE,
+                sync_enabled INTEGER NOT NULL DEFAULT 0,
+                auto_sync_following INTEGER NOT NULL DEFAULT 0,
+                local_root TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS local_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cloud_asset_id INTEGER NOT NULL UNIQUE,
+                release_id INTEGER NOT NULL,
+                series_id INTEGER NOT NULL,
+                episode_number INTEGER NOT NULL,
+                local_path TEXT NOT NULL,
+                nfo_status TEXT NOT NULL DEFAULT 'pending',
+                status TEXT NOT NULL DEFAULT 'synced',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sync_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cloud_asset_id INTEGER NOT NULL,
+                release_id INTEGER NOT NULL,
+                series_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                sync_direction TEXT NOT NULL DEFAULT 'cloud_to_local',
+                source_path TEXT NOT NULL DEFAULT '',
+                target_path TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(cloud_asset_id, sync_direction)
+            );
+
             CREATE TABLE IF NOT EXISTS logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 level TEXT NOT NULL,

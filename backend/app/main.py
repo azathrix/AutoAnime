@@ -118,11 +118,18 @@ def dashboard_data() -> dict[str, Any]:
               COUNT(DISTINCT r.subtitle_group) AS group_count,
               COUNT(DISTINCT r.resolution) AS resolution_count,
               COUNT(DISTINCT r.language) AS language_count,
-              COUNT(DISTINCT CASE WHEN dt.status IN ('submitted','completed') THEN dt.id END) AS downloaded_count
+              COUNT(DISTINCT CASE WHEN dt.status IN ('submitted','completed') THEN dt.id END) AS downloaded_count,
+              COUNT(DISTINCT ca.id) AS cloud_asset_count,
+              COUNT(DISTINCT la.id) AS local_asset_count,
+              COALESCE(MAX(sr.sync_enabled), 0) AS sync_enabled,
+              COALESCE(MAX(sr.auto_sync_following), 0) AS auto_sync_following
             FROM series s
             LEFT JOIN episodes e ON e.series_id=s.id
             LEFT JOIN releases r ON r.series_id=s.id
             LEFT JOIN download_tasks dt ON dt.series_id=s.id
+            LEFT JOIN cloud_assets ca ON ca.series_id=s.id
+            LEFT JOIN local_assets la ON la.series_id=s.id AND la.status='synced'
+            LEFT JOIN sync_rules sr ON sr.series_id=s.id
             GROUP BY s.id
             ORDER BY s.updated_at DESC
             """
@@ -138,6 +145,24 @@ def dashboard_data() -> dict[str, Any]:
             """
         ).fetchall()
         logs = conn.execute("SELECT * FROM logs ORDER BY id DESC LIMIT 80").fetchall()
+        cloud_assets = conn.execute(
+            """
+            SELECT ca.*, s.title_cn
+            FROM cloud_assets ca
+            JOIN series s ON s.id=ca.series_id
+            ORDER BY ca.updated_at DESC
+            LIMIT 80
+            """
+        ).fetchall()
+        sync_tasks = conn.execute(
+            """
+            SELECT st.*, s.title_cn
+            FROM sync_tasks st
+            JOIN series s ON s.id=st.series_id
+            ORDER BY st.updated_at DESC
+            LIMIT 80
+            """
+        ).fetchall()
         task_counts = conn.execute(
             "SELECT status, COUNT(*) AS count FROM download_tasks GROUP BY status"
         ).fetchall()
@@ -174,6 +199,8 @@ def dashboard_data() -> dict[str, Any]:
         "series": rows_to_dicts(series),
         "tasks": rows_to_dicts(tasks),
         "logs": rows_to_dicts(logs),
+        "cloud_assets": rows_to_dicts(cloud_assets),
+        "sync_tasks": rows_to_dicts(sync_tasks),
         "calendar": rows_to_dicts(calendar),
         "task_counts": {row["status"]: row["count"] for row in task_counts},
         "active_tasks": rows_to_dicts(active_tasks),
