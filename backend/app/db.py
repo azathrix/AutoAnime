@@ -762,6 +762,8 @@ def finish_operation(operation_id: int, status: str, message: str = "") -> None:
             """,
             (status, message[:2000], now(), operation_id),
         )
+        if status == "completed":
+            conn.execute("DELETE FROM operations WHERE id=?", (operation_id,))
 
 
 def update_operation(operation_id: int, message: str) -> None:
@@ -770,6 +772,31 @@ def update_operation(operation_id: int, message: str) -> None:
             "UPDATE operations SET message=? WHERE id=?",
             (message[:2000], operation_id),
         )
+
+
+def cleanup_operations(max_failed: int = 20) -> None:
+    ts = now()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE operations
+            SET status='failed', message='服务重启，上次运行已中断', finished_at=?
+            WHERE status='running'
+            """,
+            (ts,),
+        )
+        failed_ids = [
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM operations WHERE status='failed' ORDER BY id DESC"
+            ).fetchall()
+        ]
+        if len(failed_ids) > max_failed:
+            stale_ids = failed_ids[max_failed:]
+            conn.executemany(
+                "DELETE FROM operations WHERE id=?",
+                [(operation_id,) for operation_id in stale_ids],
+            )
 
 
 def table_count(conn: sqlite3.Connection, table: str) -> int:

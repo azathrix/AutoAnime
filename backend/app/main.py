@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import clear_runtime_data, connect, diagnostics, finish_operation, get_runtime_generation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
+from .db import cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, get_runtime_generation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import enqueue_backfill_task, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
@@ -368,6 +368,38 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
                 "SELECT status, COUNT(*) AS count FROM cloud_asset_tasks GROUP BY status"
             ).fetchall()
         }
+        selection_retry = conn.execute(
+            """
+            SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
+            FROM selection_tasks
+            WHERE status='pending' AND retry_after != '' AND retry_after > ?
+            """,
+            (now(),),
+        ).fetchone()
+        backfill_retry = conn.execute(
+            """
+            SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
+            FROM backfill_tasks
+            WHERE status='failed' AND retry_after != '' AND retry_after > ?
+            """,
+            (now(),),
+        ).fetchone()
+        cloud_asset_retry = conn.execute(
+            """
+            SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
+            FROM cloud_asset_tasks
+            WHERE status='pending' AND retry_after != '' AND retry_after > ?
+            """,
+            (now(),),
+        ).fetchone()
+        sync_retry = conn.execute(
+            """
+            SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
+            FROM sync_tasks
+            WHERE status='pending' AND retry_after != '' AND retry_after > ?
+            """,
+            (now(),),
+        ).fetchone()
         cloud_retry = conn.execute(
             """
             SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
@@ -423,6 +455,9 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "pending": selection_rows.get("pending", 0),
             "running": selection_rows.get("running", 0),
             "failed": selection_rows.get("failed", 0),
+            "waiting": selection_retry["count"] if selection_retry else 0,
+            "next_retry_after": selection_retry["next_retry_after"] if selection_retry else "",
+            "next_retry_seconds": seconds_until(selection_retry["next_retry_after"] if selection_retry else ""),
             "description": "根据字幕组、分辨率、主副字幕语言规则唯一选择发布",
         },
         {
@@ -431,6 +466,9 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "pending": backfill_rows.get("pending", 0),
             "running": backfill_rows.get("running", 0),
             "failed": backfill_rows.get("failed", 0),
+            "waiting": backfill_retry["count"] if backfill_retry else 0,
+            "next_retry_after": backfill_retry["next_retry_after"] if backfill_retry else "",
+            "next_retry_seconds": seconds_until(backfill_retry["next_retry_after"] if backfill_retry else ""),
             "description": "按补全策略补抓当季历史条目并进入候选链路",
         },
         {
@@ -466,6 +504,9 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "pending": cloud_asset_task_rows.get("pending", 0) + cloud_assets_pending,
             "running": cloud_asset_task_rows.get("running", 0),
             "failed": cloud_asset_task_rows.get("failed", 0),
+            "waiting": cloud_asset_retry["count"] if cloud_asset_retry else 0,
+            "next_retry_after": cloud_asset_retry["next_retry_after"] if cloud_asset_retry else "",
+            "next_retry_seconds": seconds_until(cloud_asset_retry["next_retry_after"] if cloud_asset_retry else ""),
             "description": "把完成的 PikPak 任务登记成云盘资源",
         },
         {
@@ -474,6 +515,9 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "pending": sync_rows.get("pending", 0),
             "running": sync_rows.get("running", 0),
             "failed": sync_rows.get("failed", 0),
+            "waiting": sync_retry["count"] if sync_retry else 0,
+            "next_retry_after": sync_retry["next_retry_after"] if sync_retry else "",
+            "next_retry_seconds": seconds_until(sync_retry["next_retry_after"] if sync_retry else ""),
             "description": "从云盘 API 下载到 NAS 本地目录",
         },
     ]
@@ -482,6 +526,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    cleanup_operations()
     reschedule()
     scheduler.start()
     yield
@@ -612,12 +657,25 @@ def dashboard_data() -> dict[str, Any]:
             FROM sync_tasks st
             JOIN series s ON s.id=st.series_id
             WHERE s.bangumi_id != ''
+              AND st.status IN ('pending', 'running', 'failed')
             ORDER BY st.updated_at DESC
             LIMIT 80
             """
         ).fetchall()
         operations = conn.execute(
-            "SELECT * FROM operations ORDER BY id DESC LIMIT 20"
+            """
+            SELECT *
+            FROM operations
+            WHERE status IN ('running', 'failed')
+            ORDER BY
+              CASE status
+                WHEN 'running' THEN 0
+                WHEN 'failed' THEN 1
+                ELSE 2
+              END,
+              id DESC
+            LIMIT 20
+            """
         ).fetchall()
         sync_rules = conn.execute(
             """
@@ -769,7 +827,13 @@ async def api_series(series_id: int) -> dict[str, Any]:
             (series_id,),
         ).fetchall()
         tasks = conn.execute(
-            "SELECT * FROM download_tasks WHERE series_id=? ORDER BY id DESC",
+            """
+            SELECT *
+            FROM download_tasks
+            WHERE series_id=?
+              AND status IN ('pending', 'running', 'submitted', 'failed')
+            ORDER BY id DESC
+            """,
             (series_id,),
         ).fetchall()
         cloud_assets = conn.execute(
@@ -921,19 +985,55 @@ async def api_process_sync_tasks() -> dict[str, str]:
 @app.post("/api/tasks/retry-failed")
 async def api_retry_failed() -> dict[str, str]:
     with connect() as conn:
+        total = 0
+        for table in [
+            "download_tasks",
+            "cloud_poll_tasks",
+            "cloud_asset_tasks",
+            "sync_tasks",
+            "selection_tasks",
+            "backfill_tasks",
+            "metadata_tasks",
+            "mikan_match_tasks",
+        ]:
+            cursor = conn.execute(
+                f"""
+                UPDATE {table}
+                SET status='pending', attempts=0, retry_after='', last_error='', updated_at=?
+                WHERE status='failed'
+                """,
+                (now(),),
+            )
+            total += cursor.rowcount
         cursor = conn.execute(
             """
-            UPDATE download_tasks
-            SET status='pending', attempts=0, retry_after='', last_error='', updated_at=?
-            WHERE status='failed'
+            UPDATE operations
+            SET status='failed', finished_at=?
+            WHERE status='running'
             """,
             (now(),),
         )
-        count = cursor.rowcount
-    log("info", f"已重置失败任务: {count} 个")
-    asyncio.create_task(process_tasks(get_settings()))
+    log("info", f"已重置失败任务: {total} 个")
+    settings = get_settings()
+    asyncio.create_task(process_mikan_match_tasks(settings))
+    asyncio.create_task(process_metadata_tasks(settings))
+    asyncio.create_task(process_selection_tasks(settings))
+    asyncio.create_task(process_backfill_tasks(settings))
+    asyncio.create_task(process_tasks(settings))
+    asyncio.create_task(poll_submitted_tasks(settings))
+    asyncio.create_task(process_cloud_asset_tasks(settings))
+    asyncio.create_task(process_sync_tasks(settings))
     trigger_queue_debounced()
-    return {"status": "started", "count": str(count), "message": "失败任务已重新入队"}
+    return {"status": "started", "count": str(total), "message": f"失败任务已重新入队: {total} 个"}
+
+
+@app.post("/api/operations/clear")
+async def api_clear_operations() -> dict[str, str]:
+    with connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM operations WHERE status IN ('completed', 'failed')"
+        )
+    return {"status": "completed", "count": str(cursor.rowcount), "message": "已清空已结束操作"}
 
 
 @app.post("/api/system/clear-data")

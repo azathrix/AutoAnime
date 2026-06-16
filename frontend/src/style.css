@@ -208,6 +208,23 @@ h1 {
   overflow: hidden;
 }
 
+.console-tabs-card {
+  min-height: 720px;
+}
+
+.console-tabs-card .el-card__body {
+  min-height: 660px;
+}
+
+.console-tabs-card .el-tabs,
+.console-tabs-card .el-tabs__content {
+  min-height: 620px;
+}
+
+.console-tabs-card .el-tab-pane {
+  min-height: 560px;
+}
+
 .scan-progress {
   background: #f8fafc;
   border: 1px solid #dbe4ef;
@@ -325,6 +342,7 @@ h1 {
 .operation-list {
   display: grid;
   gap: 10px;
+  align-content: start;
 }
 
 .active-task {
@@ -629,6 +647,16 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.maintenance-pane {
+  align-content: start;
+  min-height: 560px;
+}
+
+.maintenance-pane .el-button,
+.maintenance-pane .el-popconfirm__reference {
+  min-height: 40px;
 }
 
 @media (max-width: 1000px) {

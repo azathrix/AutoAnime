@@ -77,6 +77,7 @@
               </div>
               <p>{{ queue.description }}</p>
               <p v-if="queue.waiting" class="queue-note">等待重试 {{ queue.waiting }} 个，下次约 {{ formatCountdown(queue.next_retry_seconds) }}</p>
+              <p v-else-if="queue.pending && !queue.running" class="queue-note">{{ queuePendingHint(queue) }}</p>
               <p v-if="queue.failed && queue.key === 'selection'" class="queue-note">通常表示字幕组、分辨率或语言仍无法唯一选择</p>
               <p v-if="queue.failed && queue.key === 'backfill'" class="queue-note">通常表示 Mikan 番组页未解析到历史条目或缺少 Mikan ID</p>
               <div class="queue-counts">
@@ -88,7 +89,7 @@
           </div>
         </el-card>
 
-        <el-card class="span-4 console-card">
+        <el-card class="span-4 console-card console-tabs-card">
           <el-tabs v-model="consoleTab">
             <el-tab-pane label="待处理" name="issues">
               <el-alert
@@ -99,7 +100,7 @@
                 title="RSS 发布会先进入暂存区；只有完成 Mikan 匹配和元数据刷新后，才会出现在番剧库并继续入云盘。"
                 class="settings-alert"
               />
-              <el-table v-if="dashboard.rss_candidates.length" :data="dashboard.rss_candidates" height="420" class="candidate-table">
+              <el-table v-if="dashboard.rss_candidates.length" :data="dashboard.rss_candidates" height="500" class="candidate-table">
                 <el-table-column prop="status" label="状态" width="100">
                   <template #default="{ row }"><el-tag type="warning">{{ row.status }}</el-tag></template>
                 </el-table-column>
@@ -111,7 +112,7 @@
                 <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
                 <el-table-column prop="title" label="RSS 标题" min-width="260" show-overflow-tooltip />
               </el-table>
-              <el-table v-if="dashboard.selection_tasks?.length" :data="dashboard.selection_tasks" height="220" class="candidate-table">
+              <el-table v-if="dashboard.selection_tasks?.length" :data="dashboard.selection_tasks" height="200" class="candidate-table">
                 <el-table-column prop="status" label="选集状态" width="110">
                   <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ taskStatusText(row) }}</el-tag></template>
                 </el-table-column>
@@ -119,7 +120,7 @@
                 <el-table-column prop="reason" label="原因" min-width="240" show-overflow-tooltip />
                 <el-table-column prop="last_error" label="错误" min-width="240" show-overflow-tooltip />
               </el-table>
-              <el-table v-if="dashboard.backfill_tasks?.length" :data="dashboard.backfill_tasks" height="220" class="candidate-table">
+              <el-table v-if="dashboard.backfill_tasks?.length" :data="dashboard.backfill_tasks" height="200" class="candidate-table">
                 <el-table-column prop="status" label="补全状态" width="110">
                   <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ taskStatusText(row) }}</el-tag></template>
                 </el-table-column>
@@ -128,7 +129,7 @@
                 <el-table-column prop="last_error" label="错误" min-width="240" show-overflow-tooltip />
               </el-table>
               <el-empty v-if="!issues.length" description="当前没有需要人工处理的问题" />
-              <el-table v-else :data="issues" height="420">
+              <el-table v-else :data="issues" height="500">
                 <el-table-column prop="type" label="类型" width="130">
                   <template #default="{ row }"><el-tag :type="row.level">{{ row.type }}</el-tag></template>
                 </el-table-column>
@@ -141,7 +142,7 @@
             </el-tab-pane>
 
             <el-tab-pane label="云盘队列" name="cloud">
-              <el-table :data="runningRows" height="420">
+              <el-table :data="runningRows" height="500">
                 <el-table-column prop="status" label="状态" width="120">
                   <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ taskStatusText(row) }}</el-tag></template>
                 </el-table-column>
@@ -159,7 +160,7 @@
             </el-tab-pane>
 
             <el-tab-pane label="本地同步" name="sync">
-              <el-table :data="dashboard.sync_tasks" height="420">
+              <el-table :data="syncActiveRows" height="500">
                 <el-table-column prop="status" label="状态" width="120">
                   <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
                 </el-table-column>
@@ -186,6 +187,13 @@
             <el-tab-pane label="操作日志" name="logs">
               <div class="log-layout">
                 <div class="operation-list">
+                  <div v-if="!dashboard.operations.length" class="operation-item">
+                    <el-tag type="success">idle</el-tag>
+                    <div>
+                      <strong>当前没有运行中的操作</strong>
+                      <span>已完成的操作不会继续保留在这里。</span>
+                    </div>
+                  </div>
                   <div v-for="op in dashboard.operations.slice(0, 10)" :key="op.id" class="operation-item">
                     <el-tag :type="taskTag(op.status)">{{ op.status }}</el-tag>
                     <div>
@@ -193,13 +201,14 @@
                       <span>{{ op.message || '处理中' }}</span>
                     </div>
                   </div>
+                  <el-button v-if="dashboard.operations.length" plain @click="runAction('/operations/clear')">清空已结束操作</el-button>
                 </div>
                 <pre class="server-log">{{ serverLogText }}</pre>
               </div>
             </el-tab-pane>
 
             <el-tab-pane label="维护" name="maintenance">
-              <div class="maintenance-actions">
+              <div class="maintenance-actions maintenance-pane">
                 <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
                 <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理云盘队列</el-button>
                 <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
@@ -534,6 +543,7 @@ const issues = computed(() => {
 })
 const issueCount = computed(() => issues.value.length)
 const runningRows = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted', 'failed'].includes(t.status)))
+const syncActiveRows = computed(() => dashboard.sync_tasks.filter(t => ['pending', 'running', 'failed'].includes(t.status)))
 const scanOperation = computed(() => dashboard.operations.find(op => op.name === '扫描全部' && op.status === 'running'))
 const scanRunning = computed(() => Boolean(scanOperation.value))
 const scanProgress = computed(() => {
@@ -602,6 +612,18 @@ function queueState(queue) {
   if (Number(queue.waiting || 0) > 0) return '等待重试'
   if (Number(queue.pending || 0) > 0) return '待处理'
   return '空闲'
+}
+
+function queuePendingHint(queue) {
+  const key = String(queue?.key || '')
+  if (key === 'cloud_assets') return '待处理表示已发现完成的云盘任务，等待登记成正式云盘资源。'
+  if (key === 'sync') return '待处理表示云盘资源已就绪，等待进入本地同步。'
+  if (key === 'selection') return '待处理表示元数据已完成，等待按规则自动选择发布。'
+  if (key === 'backfill') return '待处理表示番剧已入库，等待去 Mikan 番组页补抓历史条目。'
+  if (key === 'cloud') return '待处理表示已选中发布，等待提交到 PikPak。'
+  if (key === 'metadata') return '待处理表示已拿到 Bangumi 线索，等待补全正式元数据。'
+  if (key === 'mikan_match') return '待处理表示 RSS 候选已入队，等待解析对应的 Mikan/Bangumi 关联。'
+  return '任务已入队，等待调度执行。'
 }
 
 function priorityCanResolve(item, field, priority = []) {
