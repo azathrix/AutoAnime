@@ -9,9 +9,8 @@
         </div>
       </div>
       <nav>
-        <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 流水线</button>
+        <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 控制台</button>
         <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧库</button>
-        <button :class="{ active: view === 'tasks' }" @click="view = 'tasks'"><el-icon><List /></el-icon> 问题处理</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
     </aside>
@@ -21,7 +20,7 @@
         <div>
           <p class="eyebrow">Mikan · PikPak · Local</p>
           <h1>{{ pageTitle }}</h1>
-          <p class="hero-sub">Mikan 发现新集，PikPak 自动入库，本地只同步想看的内容。</p>
+          <p class="hero-sub">队列自动轮询，手动扫描会按顺序触发完整追番处理。</p>
         </div>
         <div class="hero-actions">
           <el-switch
@@ -37,6 +36,7 @@
             <el-option label="30 秒" :value="30000" />
           </el-select>
           <el-button :icon="Refresh" @click="reload" :loading="loading">刷新状态</el-button>
+          <el-button v-if="view === 'dashboard'" type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">手动全流程扫描</el-button>
         </div>
       </header>
 
@@ -58,54 +58,100 @@
           <strong>{{ issueCount }}</strong>
         </div>
 
-        <el-card class="span-4">
-          <template #header>自动流水线</template>
-          <div class="flow-steps">
-            <div class="flow-step">
-              <span>1</span>
-              <strong>Mikan RSS</strong>
-              <small>{{ settings.auto_scan ? `${settings.scan_interval_minutes || 60} 分钟自动扫描` : '自动扫描关闭' }}</small>
+        <el-card class="span-4 console-card">
+          <template #header>队列状态</template>
+          <div v-if="scanOperation" class="scan-progress">
+            <div>
+              <strong>{{ scanOperation.name }}</strong>
+              <span>{{ scanOperation.message || '正在执行' }}</span>
             </div>
-            <div class="flow-step">
-              <span>2</span>
-              <strong>元数据确认</strong>
-              <small>{{ metadataIssueCount ? `${metadataIssueCount} 个需要确认` : '无需处理' }}</small>
-            </div>
-            <div class="flow-step">
-              <span>3</span>
-              <strong>PikPak 入库</strong>
-              <small>{{ cloudQueueCount ? `${cloudQueueCount} 个任务处理中` : '无待入库任务' }}</small>
-            </div>
-            <div class="flow-step">
-              <span>4</span>
-              <strong>本地同步</strong>
-              <small>{{ syncQueueCount ? `${syncQueueCount} 个任务处理中` : '无待同步任务' }}</small>
-            </div>
+            <el-progress :percentage="scanProgress" :status="scanOperation.status === 'failed' ? 'exception' : undefined" />
           </div>
-        </el-card>
-
-        <el-card class="span-2">
-          <template #header>最近操作</template>
-          <el-empty v-if="!dashboard.operations.length" description="还没有操作记录" />
-          <div v-else class="operation-list">
-            <div v-for="op in dashboard.operations.slice(0, 8)" :key="op.id" class="operation-item">
-              <el-tag :type="taskTag(op.status)">{{ op.status }}</el-tag>
-              <div>
-                <strong>{{ op.name }}</strong>
-                <span>{{ op.message || '处理中' }}</span>
+          <div class="queue-grid">
+            <div v-for="queue in dashboard.queue_summary" :key="queue.key" class="queue-card">
+              <div class="queue-title">
+                <strong>{{ queue.name }}</strong>
+                <el-tag size="small" :type="queue.failed ? 'danger' : queue.running ? 'warning' : queue.pending ? 'info' : 'success'">
+                  {{ queueState(queue) }}
+                </el-tag>
+              </div>
+              <p>{{ queue.description }}</p>
+              <div class="queue-counts">
+                <span>待处理 <b>{{ queue.pending }}</b></span>
+                <span>运行中 <b>{{ queue.running }}</b></span>
+                <span>失败 <b>{{ queue.failed }}</b></span>
               </div>
             </div>
           </div>
         </el-card>
 
-        <el-card class="span-2">
-          <template #header>最近日志</template>
-          <el-timeline>
-            <el-timeline-item v-for="log in dashboard.logs.slice(0, 8)" :key="log.id" :timestamp="log.created_at">
-              <el-tag size="small" :type="log.level === 'error' ? 'danger' : log.level === 'warn' ? 'warning' : 'success'">{{ log.level }}</el-tag>
-              <span class="log-message">{{ log.message }}</span>
-            </el-timeline-item>
-          </el-timeline>
+        <el-card class="span-4 console-card">
+          <el-tabs v-model="consoleTab">
+            <el-tab-pane label="待处理" name="issues">
+              <el-empty v-if="!issues.length" description="当前没有需要人工处理的问题" />
+              <el-table v-else :data="issues" height="420">
+                <el-table-column prop="type" label="类型" width="130">
+                  <template #default="{ row }"><el-tag :type="row.level">{{ row.type }}</el-tag></template>
+                </el-table-column>
+                <el-table-column prop="title" label="番剧" min-width="180" />
+                <el-table-column prop="message" label="原因" min-width="260" />
+                <el-table-column label="操作" width="120">
+                  <template #default="{ row }"><el-button size="small" @click="row.series_id && openSeries(row.series_id)">处理</el-button></template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+
+            <el-tab-pane label="云盘队列" name="cloud">
+              <el-table :data="runningRows" height="420">
+                <el-table-column prop="status" label="状态" width="120">
+                  <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
+                </el-table-column>
+                <el-table-column prop="title_cn" label="番剧" min-width="180" />
+                <el-table-column prop="episode_number" label="集" width="70" />
+                <el-table-column prop="subtitle_group" label="字幕组" width="140" />
+                <el-table-column prop="resolution" label="分辨率" width="110" />
+                <el-table-column prop="language" label="语言" width="90" />
+                <el-table-column prop="target_dir" label="目标目录" min-width="260" />
+                <el-table-column prop="last_error" label="错误" min-width="220" />
+              </el-table>
+            </el-tab-pane>
+
+            <el-tab-pane label="本地同步" name="sync">
+              <el-table :data="dashboard.sync_tasks" height="420">
+                <el-table-column prop="status" label="状态" width="120">
+                  <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
+                </el-table-column>
+                <el-table-column prop="title_cn" label="番剧" min-width="180" />
+                <el-table-column prop="source_path" label="云盘路径" min-width="260" />
+                <el-table-column prop="target_path" label="本地路径" min-width="260" />
+                <el-table-column prop="last_error" label="错误" min-width="220" />
+              </el-table>
+            </el-tab-pane>
+
+            <el-tab-pane label="操作日志" name="logs">
+              <div class="log-layout">
+                <div class="operation-list">
+                  <div v-for="op in dashboard.operations.slice(0, 10)" :key="op.id" class="operation-item">
+                    <el-tag :type="taskTag(op.status)">{{ op.status }}</el-tag>
+                    <div>
+                      <strong>{{ op.name }}</strong>
+                      <span>{{ op.message || '处理中' }}</span>
+                    </div>
+                  </div>
+                </div>
+                <pre class="server-log">{{ serverLogText }}</pre>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="维护" name="maintenance">
+              <div class="maintenance-actions">
+                <el-button type="primary" :icon="Search" @click="runAction('/scan')">手动全流程扫描</el-button>
+                <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
+                <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
+                <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
         </el-card>
       </section>
 
@@ -136,66 +182,6 @@
         </div>
       </section>
 
-      <section v-if="view === 'tasks'">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>待处理问题</span>
-            </div>
-          </template>
-          <el-empty v-if="!issues.length" description="当前没有需要人工处理的问题" />
-          <el-table v-else :data="issues" height="420">
-            <el-table-column prop="type" label="类型" width="130">
-              <template #default="{ row }"><el-tag :type="row.level">{{ row.type }}</el-tag></template>
-            </el-table-column>
-            <el-table-column prop="title" label="番剧" min-width="180" />
-            <el-table-column prop="message" label="原因" min-width="260" />
-            <el-table-column label="操作" width="120">
-              <template #default="{ row }"><el-button size="small" @click="row.series_id && openSeries(row.series_id)">处理</el-button></template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-
-        <el-card class="task-card">
-          <template #header>运行中任务</template>
-          <el-table :data="runningRows" height="300">
-            <el-table-column prop="status" label="状态" width="120">
-              <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
-            </el-table-column>
-            <el-table-column prop="title_cn" label="番剧" min-width="180" />
-            <el-table-column prop="episode_number" label="集" width="70" />
-            <el-table-column prop="subtitle_group" label="字幕组" width="140" />
-            <el-table-column prop="resolution" label="分辨率" width="110" />
-            <el-table-column prop="language" label="语言" width="90" />
-            <el-table-column prop="target_dir" label="目标目录" min-width="260" />
-            <el-table-column prop="last_error" label="错误" min-width="220" />
-          </el-table>
-        </el-card>
-
-        <el-card class="task-card">
-          <template #header>同步队列</template>
-          <el-table :data="dashboard.sync_tasks" height="360">
-            <el-table-column prop="status" label="状态" width="120">
-              <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
-            </el-table-column>
-            <el-table-column prop="title_cn" label="番剧" min-width="180" />
-            <el-table-column prop="source_path" label="云盘路径" min-width="260" />
-            <el-table-column prop="target_path" label="本地路径" min-width="260" />
-            <el-table-column prop="last_error" label="错误" min-width="220" />
-          </el-table>
-        </el-card>
-
-        <el-card class="task-card">
-          <template #header>维护操作</template>
-          <div class="maintenance-actions">
-            <el-button :icon="Search" @click="runAction('/scan')">扫描 Mikan RSS</el-button>
-            <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
-            <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
-            <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
-          </div>
-        </el-card>
-      </section>
-
       <section v-if="view === 'settings'">
         <el-card>
           <template #header>全局设置</template>
@@ -206,7 +192,7 @@
                   type="info"
                   show-icon
                   :closable="false"
-                  title="保存设置只会更新规则；要让规则作用到已扫描内容，请到问题处理里执行“扫描 Mikan RSS”。失败任务可在维护操作里重试。"
+                  title="保存设置只会更新规则；要立即执行完整处理，请回到控制台点击“手动全流程扫描”。"
                   class="settings-alert"
                 />
                 <el-form-item label="Mikan RSS"><el-input v-model="settings.rss_url" /></el-form-item>
@@ -342,13 +328,45 @@
           </el-popconfirm>
         </div>
         <el-divider />
-        <el-table :data="selectedSeries.releases" height="360">
-          <el-table-column prop="episode_number" label="集" width="70" />
-          <el-table-column prop="subtitle_group" label="字幕组" width="140" />
-          <el-table-column prop="resolution" label="分辨率" width="100" />
-          <el-table-column prop="language" label="语言" width="90" />
-          <el-table-column prop="title" label="发布标题" />
-        </el-table>
+        <el-tabs>
+          <el-tab-pane label="RSS 发布">
+            <el-table :data="selectedSeries.releases" height="320">
+              <el-table-column prop="episode_number" label="集" width="70" />
+              <el-table-column prop="subtitle_group" label="字幕组" width="140" />
+              <el-table-column prop="resolution" label="分辨率" width="100" />
+              <el-table-column prop="language" label="语言" width="90" />
+              <el-table-column prop="guid" label="GUID" min-width="220" show-overflow-tooltip />
+              <el-table-column prop="title" label="发布标题" min-width="260" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane label="云盘任务">
+            <el-table :data="selectedSeries.tasks" height="320">
+              <el-table-column prop="status" label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column prop="target_dir" label="目标目录" min-width="220" show-overflow-tooltip />
+              <el-table-column prop="pikpak_task_id" label="PikPak 任务" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="pikpak_file_id" label="文件 ID" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="last_error" label="错误" min-width="220" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane label="云盘资源">
+            <el-table :data="selectedSeries.cloud_assets" height="320">
+              <el-table-column prop="episode_number" label="集" width="70" />
+              <el-table-column prop="provider" label="云盘" width="100" />
+              <el-table-column prop="cloud_path" label="云盘路径" min-width="260" show-overflow-tooltip />
+              <el-table-column prop="provider_file_id" label="文件 ID" min-width="180" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane label="本地资源">
+            <el-table :data="selectedSeries.local_assets" height="320">
+              <el-table-column prop="episode_number" label="集" width="70" />
+              <el-table-column prop="status" label="状态" width="110" />
+              <el-table-column prop="local_path" label="本地路径" min-width="260" show-overflow-tooltip />
+              <el-table-column prop="nfo_status" label="NFO" width="110" />
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
       </template>
     </el-drawer>
   </div>
@@ -358,10 +376,11 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
-import { Collection, DataBoard, List, Refresh, Search, Setting } from '@element-plus/icons-vue'
+import { Collection, DataBoard, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { deleteAction, getDashboard, getDiagnostics, getSeries, getSettings, postAction, saveSeries, saveSettings } from './api'
 
 const view = ref('dashboard')
+const consoleTab = ref('issues')
 const loading = ref(false)
 const savingSettings = ref(false)
 const autoRefresh = ref(true)
@@ -379,6 +398,8 @@ const dashboard = reactive({
   cloud_assets: [],
   operations: [],
   logs: [],
+  server_logs: [],
+  queue_summary: [],
   calendar: [],
   active_tasks: [],
   task_counts: {}
@@ -387,9 +408,8 @@ const settings = reactive({})
 const diagnostics = reactive({ tables: {} })
 
 const pageTitle = computed(() => ({
-  dashboard: '自动流水线',
+  dashboard: '控制台',
   library: '番剧库',
-  tasks: '问题处理',
   settings: '设置中心'
 }[view.value]))
 
@@ -424,6 +444,15 @@ const issues = computed(() => {
 })
 const issueCount = computed(() => issues.value.length)
 const runningRows = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted', 'failed'].includes(t.status)))
+const scanOperation = computed(() => dashboard.operations.find(op => op.name === '手动全流程扫描' && op.status === 'running'))
+const scanRunning = computed(() => Boolean(scanOperation.value))
+const scanProgress = computed(() => {
+  const message = scanOperation.value?.message || ''
+  const match = message.match(/(\d+)\/(\d+)/)
+  if (!match) return scanRunning.value ? 12 : 0
+  return Math.min(95, Math.round(Number(match[1]) / Number(match[2]) * 100))
+})
+const serverLogText = computed(() => (dashboard.server_logs || []).join('\n'))
 const selectedSeriesStats = computed(() => {
   const id = selectedSeries.value?.series?.id
   return dashboard.series.find(item => item.id === id) || {}
@@ -459,6 +488,13 @@ function taskTag(status) {
   if (status === 'completed' || status === 'submitted' || status === 'synced') return 'success'
   if (status === 'running') return 'warning'
   return 'info'
+}
+
+function queueState(queue) {
+  if (Number(queue.failed || 0) > 0) return '失败'
+  if (Number(queue.running || 0) > 0) return '运行中'
+  if (Number(queue.pending || 0) > 0) return '待处理'
+  return '空闲'
 }
 
 function priorityCanResolve(item, field, priority = []) {
@@ -547,6 +583,8 @@ async function runAction(path) {
     const result = await postAction(path)
     if (result.status === 'skipped') {
       ElMessage.warning(result.message || '没有可执行任务')
+    } else if (result.status === 'running') {
+      ElMessage.warning(result.message || '任务正在执行')
     } else {
       ElMessage.success(result.message || '操作已提交')
     }

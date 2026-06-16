@@ -66,11 +66,7 @@ async def refresh_series_metadata(series_id: int, proxy: str = "") -> None:
     bangumi_id = series["bangumi_id"]
     try:
         if not bangumi_id:
-            results = await search_bangumi(series["title_cn"] or series["title_raw"], proxy)
-            if results:
-                bangumi_id = str(results[0]["id"])
-        if not bangumi_id:
-            log("warn", f"无法关联 Bangumi: {series['title_cn']}")
+            log("warn", f"跳过 Bangumi 元数据: {series['title_cn']} - RSS 未提供 Bangumi ID，需人工确认")
             return
         subject = await fetch_bangumi_subject(bangumi_id, proxy)
     except Exception as exc:

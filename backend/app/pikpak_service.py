@@ -40,8 +40,8 @@ def build_client(settings: dict[str, str]) -> Any:
     mode = settings.get("pikpak_auth_mode", "token")
     if mode == "password":
         return PikPakApi(
-            username=settings.get("pikpak_username") or None,
-            password=settings.get("pikpak_password") or None,
+            username=settings.get("pikpak_username") or "",
+            password=settings.get("pikpak_password") or "",
             httpx_client_args=httpx_args,
             token_refresh_callback=persist_refreshed_tokens,
         )
@@ -73,13 +73,14 @@ async def submit_offline_download(settings: dict[str, str], source: str, target_
     folders = await api.path_to_id(target_dir, create=True)
     parent_id = folders[-1]["id"] if folders else None
     await prepare_offline_captcha(api)
+    kwargs = {"parent_id": parent_id} if parent_id else {}
     try:
-        return await api.offline_download(source, parent_id=parent_id)
+        return await api.offline_download(source, **kwargs)
     except Exception as exc:
         if "Verification code is invalid" not in str(exc):
             raise
         await prepare_offline_captcha(api)
-        return await api.offline_download(source, parent_id=parent_id)
+        return await api.offline_download(source, **kwargs)
 
 
 async def list_offline_tasks(settings: dict[str, str]) -> list[dict[str, Any]]:

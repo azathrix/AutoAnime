@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import connect, diagnostics, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, save_settings, start_operation
+from .db import connect, diagnostics, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import mark_selected_releases, poll_submitted_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
@@ -106,6 +106,125 @@ async def scheduled_scan() -> None:
         await process_sync_tasks(settings)
 
 
+async def run_full_refresh(settings: dict[str, str], operation_id: int | None = None) -> str:
+    if operation_id:
+        update_operation(operation_id, "1/6 正在扫描 RSS")
+    scan_message = await scan_and_queue(settings)
+    if operation_id:
+        update_operation(operation_id, "2/6 正在处理 PikPak 入库队列")
+    await process_tasks(settings)
+    if operation_id:
+        update_operation(operation_id, "3/6 正在刷新 PikPak 任务状态")
+    await poll_submitted_tasks(settings)
+    if operation_id:
+        update_operation(operation_id, "4/6 正在登记云盘资源")
+    cloud_count = backfill_cloud_assets_from_completed_tasks(settings)
+    if operation_id:
+        update_operation(operation_id, "5/6 正在调和本地同步")
+    reconciled, queued = reconcile_sync_intents(settings)
+    if queued:
+        if operation_id:
+            update_operation(operation_id, "6/6 正在同步到本地")
+        await process_sync_tasks(settings)
+    return f"{scan_message}；补齐云盘 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+
+
+def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
+    with connect() as conn:
+        metadata_pending = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM series
+            WHERE COALESCE(hidden, 0)=0
+              AND (metadata_source='' OR (bangumi_id='' AND tmdb_id=''))
+            """
+        ).fetchone()["count"]
+        merge_pending = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM (
+              SELECT bangumi_id
+              FROM series
+              WHERE bangumi_id != '' AND COALESCE(hidden, 0)=0
+              GROUP BY bangumi_id
+              HAVING COUNT(*) > 1
+            )
+            """
+        ).fetchone()["count"]
+        cloud_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM download_tasks GROUP BY status"
+            ).fetchall()
+        }
+        sync_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM sync_tasks GROUP BY status"
+            ).fetchall()
+        }
+        cloud_assets_pending = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM download_tasks dt
+            LEFT JOIN cloud_assets ca ON ca.task_id=dt.id
+            WHERE dt.status='completed'
+              AND dt.pikpak_file_id != ''
+              AND ca.id IS NULL
+            """
+        ).fetchone()["count"]
+    return [
+        {
+            "key": "rss",
+            "name": "Mikan RSS",
+            "pending": 1 if bool_setting(settings.get("auto_scan", "false")) else 0,
+            "running": 0,
+            "failed": 0,
+            "description": "周期读取 RSS，新增发布后进入后续队列",
+        },
+        {
+            "key": "metadata",
+            "name": "元数据",
+            "pending": metadata_pending,
+            "running": 0,
+            "failed": 0,
+            "description": "缺少 Bangumi/TMDB 或元数据的番剧",
+        },
+        {
+            "key": "merge",
+            "name": "合并",
+            "pending": merge_pending,
+            "running": 0,
+            "failed": 0,
+            "description": "相同 Bangumi ID 的重复条目",
+        },
+        {
+            "key": "cloud",
+            "name": "PikPak 入库",
+            "pending": cloud_rows.get("pending", 0),
+            "running": cloud_rows.get("running", 0) + cloud_rows.get("submitted", 0),
+            "failed": cloud_rows.get("failed", 0),
+            "description": "提交离线任务并轮询 PikPak 状态",
+        },
+        {
+            "key": "cloud_assets",
+            "name": "云盘资源登记",
+            "pending": cloud_assets_pending,
+            "running": 0,
+            "failed": 0,
+            "description": "把完成的 PikPak 任务登记成云盘资源",
+        },
+        {
+            "key": "sync",
+            "name": "本地同步",
+            "pending": sync_rows.get("pending", 0),
+            "running": sync_rows.get("running", 0),
+            "failed": sync_rows.get("failed", 0),
+            "description": "从云盘 API 下载到 NAS 本地目录",
+        },
+    ]
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
@@ -134,7 +253,24 @@ def run_operation(name: str, coro_factory, start_message: str = "") -> int:
     return operation_id
 
 
+def run_progress_operation(name: str, coro_factory, start_message: str = "") -> int:
+    operation_id = start_operation(name, start_message)
+
+    async def runner() -> None:
+        try:
+            message = await coro_factory(operation_id)
+        except Exception as exc:
+            finish_operation(operation_id, "failed", str(exc))
+            log("error", f"{name} 失败: {exc}")
+            return
+        finish_operation(operation_id, "completed", str(message or "完成"))
+
+    asyncio.create_task(runner())
+    return operation_id
+
+
 def dashboard_data() -> dict[str, Any]:
+    settings = get_settings()
     with connect() as conn:
         series = conn.execute(
             """
@@ -249,6 +385,8 @@ def dashboard_data() -> dict[str, Any]:
         "calendar": rows_to_dicts(calendar),
         "task_counts": {row["status"]: row["count"] for row in task_counts},
         "active_tasks": rows_to_dicts(active_tasks),
+        "queue_summary": queue_summary(settings),
+        "server_logs": read_server_logs(160),
     }
 
 
@@ -313,8 +451,16 @@ async def api_series(series_id: int) -> dict[str, Any]:
             "SELECT * FROM download_tasks WHERE series_id=? ORDER BY id DESC",
             (series_id,),
         ).fetchall()
+        cloud_assets = conn.execute(
+            "SELECT * FROM cloud_assets WHERE series_id=? ORDER BY episode_number ASC, id DESC",
+            (series_id,),
+        ).fetchall()
+        local_assets = conn.execute(
+            "SELECT * FROM local_assets WHERE series_id=? ORDER BY episode_number ASC, id DESC",
+            (series_id,),
+        ).fetchall()
     if not series:
-        return {"series": None, "releases": [], "tasks": [], "groups": [], "resolutions": []}
+        return {"series": None, "releases": [], "tasks": [], "cloud_assets": [], "local_assets": [], "groups": [], "resolutions": [], "languages": []}
     groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
     resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
     languages = sorted({r["language"] for r in releases if r["language"]})
@@ -322,6 +468,8 @@ async def api_series(series_id: int) -> dict[str, Any]:
         "series": row_to_dict(series),
         "releases": rows_to_dicts(releases),
         "tasks": rows_to_dicts(tasks),
+        "cloud_assets": rows_to_dicts(cloud_assets),
+        "local_assets": rows_to_dicts(local_assets),
         "groups": groups,
         "resolutions": resolutions,
         "languages": languages,
@@ -377,12 +525,18 @@ async def api_delete_series(series_id: int) -> dict[str, str]:
 
 @app.post("/api/scan")
 async def api_scan() -> dict[str, str]:
-    operation_id = run_operation(
-        "RSS 扫描",
-        lambda: scan_and_queue(get_settings()),
-        "正在扫描 RSS、入云盘并调和本地同步",
+    with connect() as conn:
+        running = conn.execute(
+            "SELECT id FROM operations WHERE name='手动全流程扫描' AND status='running' LIMIT 1"
+        ).fetchone()
+    if running:
+        return {"status": "running", "operation_id": str(running["id"]), "message": "全流程扫描正在执行"}
+    operation_id = run_progress_operation(
+        "手动全流程扫描",
+        lambda op_id: run_full_refresh(get_settings(), op_id),
+        "正在依次执行 RSS、元数据、云盘入库、PikPak 状态、本地同步",
     )
-    return {"status": "started", "operation_id": str(operation_id), "message": "RSS 扫描已启动"}
+    return {"status": "started", "operation_id": str(operation_id), "message": "全流程扫描已启动"}
 
 
 @app.post("/api/tasks/process")

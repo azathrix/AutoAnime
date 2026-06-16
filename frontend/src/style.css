@@ -200,6 +200,102 @@ h1 {
   color: #64748b;
 }
 
+.console-card {
+  overflow: hidden;
+}
+
+.scan-progress {
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.scan-progress strong,
+.scan-progress span {
+  display: block;
+}
+
+.scan-progress span {
+  color: #64748b;
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.queue-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.queue-card {
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-height: 132px;
+  padding: 14px;
+}
+
+.queue-title {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.queue-card p {
+  color: #64748b;
+  font-size: 13px;
+  margin: 0;
+}
+
+.queue-counts {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.queue-counts span {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  color: #64748b;
+  font-size: 12px;
+  padding: 8px;
+}
+
+.queue-counts b {
+  color: #1f2937;
+  display: block;
+  font-size: 18px;
+  margin-top: 2px;
+}
+
+.log-layout {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(280px, 380px) 1fr;
+}
+
+.server-log {
+  background: #0f172a;
+  border-radius: 8px;
+  color: #d1d5db;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
 .module-grid {
   display: grid;
   gap: 10px;
@@ -538,7 +634,9 @@ h1 {
   .content-grid,
   .form-row,
   .priority-layout,
-  .module-grid {
+  .module-grid,
+  .queue-grid,
+  .log-layout {
     grid-template-columns: 1fr;
   }
 

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from collections import deque
 from typing import Any
 
 from .config import DATA_DIR, DB_PATH, DEFAULT_SETTINGS
+
+
+LOG_PATH = DATA_DIR / "autoanime.log"
 
 
 def now() -> str:
@@ -358,11 +362,28 @@ def save_settings(values: dict[str, Any]) -> None:
 
 
 def log(level: str, message: str) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    line = f"{now()} [{level.upper()}] {message[:2000]}\n"
+    try:
+        with LOG_PATH.open("a", encoding="utf-8") as output:
+            output.write(line)
+    except OSError:
+        pass
     with connect() as conn:
         conn.execute(
             "INSERT INTO logs (level, message, created_at) VALUES (?, ?, ?)",
             (level, message[:2000], now()),
         )
+
+
+def read_server_logs(limit: int = 200) -> list[str]:
+    if not LOG_PATH.exists():
+        return []
+    try:
+        with LOG_PATH.open("r", encoding="utf-8", errors="replace") as source:
+            return list(deque((line.rstrip("\n") for line in source), maxlen=limit))
+    except OSError:
+        return []
 
 
 def start_operation(name: str, message: str = "") -> int:
@@ -383,6 +404,14 @@ def finish_operation(operation_id: int, status: str, message: str = "") -> None:
             WHERE id=?
             """,
             (status, message[:2000], now(), operation_id),
+        )
+
+
+def update_operation(operation_id: int, message: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE operations SET message=? WHERE id=?",
+            (message[:2000], operation_id),
         )
 
 
