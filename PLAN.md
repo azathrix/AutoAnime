@@ -178,11 +178,15 @@ NFO 生成到本地媒体文件旁边：
 /volume1/docker/autoanime
 ```
 
-启动：
+启动或更新：
 
 ```sh
+cd /volume1/docker/autoanime
+docker compose down --remove-orphans
 docker compose up -d --build
 ```
+
+说明：`down --remove-orphans` 只停止并删除当前 compose 管理的容器和孤儿容器，不删除挂载的 `./data` 目录和媒体目录。不要使用 `-v`，否则会删除 Docker volume 数据。
 
 端口：
 

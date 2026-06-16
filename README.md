@@ -59,10 +59,11 @@ upload-clean.bat
 
 ```sh
 cd /volume1/docker/autoanime
+docker compose down --remove-orphans
 docker compose up -d --build
 ```
 
-重新 build 通常不需要手动停止旧容器，`docker compose up -d --build` 会重建镜像并替换服务容器。
+这会先停止并删除当前 compose 管理的容器，再重新构建启动。挂载的 `./data` 和媒体目录不会被删除。
 
 访问：
 

@@ -21,5 +21,5 @@ if %RC% GEQ 8 (
 
 echo Uploaded source to %TARGET%
 echo Deploy command on NAS:
-echo cd /volume1/docker/autoanime ^&^& docker compose up -d --build
+echo cd /volume1/docker/autoanime ^&^& docker compose down --remove-orphans ^&^& docker compose up -d --build
 exit /b 0
