@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, get_runtime_generation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
+from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, start_scheduled_job_run, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_series_choice, scan_and_queue
@@ -28,6 +28,10 @@ queue_handlers: dict[str, QueueHandler] = {}
 queue_debounce_tasks: dict[str, asyncio.Task] = {}
 queue_running: set[str] = set()
 queue_rerun_requested: set[str] = set()
+
+
+def queue_job_key(name: str) -> str:
+    return f"{name}_dispatch"
 
 
 class SettingsPayload(BaseModel):
@@ -402,6 +406,8 @@ async def handle_download_queue() -> None:
         trigger_queue("cloud_poll")
     if ready_count_cloud_asset() > 0:
         trigger_queue("cloud_asset")
+    if ready_count_sync_plan() > 0:
+        trigger_queue("sync_plan")
     if ready_count_download() > 0:
         trigger_queue("download")
 
@@ -422,6 +428,8 @@ async def handle_cloud_poll_queue() -> None:
             break
     if ready_count_cloud_asset() > 0:
         trigger_queue("cloud_asset")
+    if ready_count_sync_plan() > 0:
+        trigger_queue("sync_plan")
     if ready_count_cloud_poll() > 0:
         trigger_queue("cloud_poll")
 
@@ -441,6 +449,8 @@ async def handle_cloud_asset_queue() -> None:
         if after <= 0:
             break
     trigger_queue("sync_plan")
+    if ready_count_sync() > 0:
+        trigger_queue("sync")
     if ready_count_cloud_asset() > 0:
         trigger_queue("cloud_asset")
 
@@ -448,8 +458,9 @@ async def handle_cloud_asset_queue() -> None:
 async def handle_sync_plan_queue() -> None:
     settings = get_settings()
     reconciled, queued = reconcile_sync_intents(settings)
-    if queued:
-        log("info", f"同步计划已更新: {reconciled} 部番剧，新增同步任务 {queued} 个")
+    if queued or reconciled:
+        log("info", f"同步计划已更新: 调和 {reconciled} 部番剧，新增同步任务 {queued} 个")
+    if ready_count_sync() > 0:
         trigger_queue("sync")
     if ready_count_sync_plan() > 0:
         trigger_queue("sync_plan")
@@ -469,6 +480,28 @@ async def handle_sync_queue() -> None:
             break
     if ready_count_sync() > 0:
         trigger_queue("sync")
+
+
+async def run_scan_source(settings: dict[str, str], operation_id: int | None = None) -> str:
+    generation = get_runtime_generation()
+    reclaimed_mikan = reclaim_mikan_match_tasks(now())
+    if operation_id:
+        update_operation(operation_id, "1/2 正在扫描 RSS")
+    log("info", "扫描全部: 1/2 开始扫描 RSS")
+    scan_message = await scan_and_queue(settings)
+    repaired_mikan = enqueue_missing_mikan_match_tasks(now())
+    if not runtime_generation_alive(generation):
+        return "运行数据已重置，本次扫描已中止"
+    if operation_id:
+        update_operation(operation_id, "2/2 已触发后续队列")
+    trigger_queue("mikan_match", delay=0)
+    trigger_queue("cloud_poll", delay=0)
+    trigger_queue("cloud_asset", delay=0)
+    trigger_queue("sync_plan", delay=0)
+    trigger_queue("sync", delay=0)
+    message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续队列已自动触发"
+    log("info", f"扫描全部: RSS 完成，{message}")
+    return message
 
 
 def ensure_queue_handlers() -> None:
@@ -494,15 +527,23 @@ async def run_queue(name: str) -> None:
         return
     if name in queue_running:
         queue_rerun_requested.add(name)
+        mark_scheduled_job(queue_job_key(name), last_status="rerun_pending", updated_at=now())
         return
     queue_debounce_tasks.pop(name, None)
     queue_running.add(name)
+    run_id = start_scheduled_job_run(queue_job_key(name), "event", f"执行队列 {name}")
+    run_status = "completed"
+    run_message = f"队列 {name} 执行完成"
     try:
         await handler()
     except Exception as exc:
         log("error", f"队列处理失败[{name}]: {exc}")
+        run_status = "failed"
+        run_message = str(exc)
     finally:
         queue_running.discard(name)
+        if run_id:
+            finish_scheduled_job_run(run_id, run_status, run_message)
         if name in queue_rerun_requested:
             queue_rerun_requested.discard(name)
             trigger_queue(name)
@@ -517,11 +558,18 @@ def trigger_queue(name: str, delay: float | None = None) -> None:
         return
     if name in queue_running:
         queue_rerun_requested.add(name)
+        mark_scheduled_job(queue_job_key(name), last_status="rerun_pending", debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
         return
     pending_task = queue_debounce_tasks.get(name)
     if pending_task and not pending_task.done():
         pending_task.cancel()
     actual_delay = QUEUE_DEBOUNCE_SECONDS if delay is None else max(0.0, delay)
+    mark_scheduled_job(
+        queue_job_key(name),
+        last_status="debouncing" if actual_delay > 0 else "queued",
+        debounce_seconds=int(actual_delay),
+        updated_at=now(),
+    )
 
     async def runner() -> None:
         try:
@@ -529,6 +577,7 @@ def trigger_queue(name: str, delay: float | None = None) -> None:
                 await asyncio.sleep(actual_delay)
             await run_queue(name)
         except asyncio.CancelledError:
+            mark_scheduled_job(queue_job_key(name), last_status="debouncing", updated_at=now())
             return
 
     queue_debounce_tasks[name] = loop.create_task(runner())
@@ -544,7 +593,14 @@ def trigger_queues(names: list[str], delay: float | None = None) -> None:
 
 
 async def dispatch_ready_queues() -> None:
-    trigger_queues(ready_queue_names(), delay=0)
+    run_id = start_scheduled_job_run("queue_dispatch", "system", "定时检查可执行队列")
+    try:
+        names = ready_queue_names()
+        trigger_queues(names, delay=0)
+        finish_scheduled_job_run(run_id, "completed", f"已触发队列: {', '.join(names) if names else '无'}")
+    except Exception as exc:
+        finish_scheduled_job_run(run_id, "failed", str(exc))
+        raise
 
 
 def reschedule() -> None:
@@ -552,6 +608,10 @@ def reschedule() -> None:
     ensure_queue_handlers()
     settings = get_settings()
     minutes = max(1, int(settings.get("scan_interval_minutes") or 60))
+    mark_scheduled_job("rss_scan", interval_minutes=minutes, updated_at=now())
+    mark_scheduled_job("queue_dispatch", interval_minutes=1, debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
+    for name in queue_handlers:
+        mark_scheduled_job(queue_job_key(name), debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
     scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes, id="rss_scan")
     scheduler.add_job(lambda: asyncio.create_task(dispatch_ready_queues()), "interval", minutes=1, id="queue_dispatch")
 
@@ -561,107 +621,18 @@ def runtime_generation_alive(expected: str) -> bool:
 
 
 async def scheduled_scan() -> None:
+    run_id = start_scheduled_job_run("rss_scan", "system", "定时 RSS 扫描")
     settings = get_settings()
-    if bool_setting(settings.get("auto_scan", "false")):
-        await scan_and_queue(settings)
-    trigger_queue("mikan_match", delay=0)
-
-
-async def run_full_refresh(settings: dict[str, str], operation_id: int | None = None) -> str:
-    generation = get_runtime_generation()
-    with connect() as conn:
-        for table in ["mikan_match_tasks", "metadata_tasks", "selection_tasks", "backfill_tasks", "download_tasks", "cloud_poll_tasks", "cloud_asset_tasks", "sync_tasks"]:
-            conn.execute(f"UPDATE {table} SET retry_after='', updated_at=?", (now(),))
-    reclaimed_mikan = reclaim_mikan_match_tasks(now())
-    if operation_id:
-        update_operation(operation_id, "1/8 正在扫描 RSS")
-    log("info", "扫描全部: 1/8 开始扫描 RSS")
-    scan_message = await scan_and_queue(settings)
-    repaired_mikan = enqueue_missing_mikan_match_tasks(now())
-    log("info", f"扫描全部: RSS 完成，{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个")
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "2/8 正在匹配 Mikan Bangumi")
-    log("info", "扫描全部: 2/8 开始匹配 Mikan Bangumi")
-    mikan_done, mikan_failed = await process_mikan_match_tasks(settings)
-    repaired_series_mikan = repair_series_mikan_ids(now())
-    log("info", f"扫描全部: Mikan 匹配完成，成功 {mikan_done} 个，失败 {mikan_failed} 个；回填番剧 Mikan ID {repaired_series_mikan} 个")
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "3/10 正在处理元数据队列")
-    log("info", "扫描全部: 3/10 开始处理元数据队列")
-    metadata_done, metadata_failed = await process_metadata_tasks(settings)
-    log("info", f"扫描全部: 元数据完成，成功 {metadata_done} 个，失败 {metadata_failed} 个")
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "4/10 正在处理自动选集/补全")
-    log("info", "扫描全部: 4/10 开始处理自动选集和整季补全")
-    selection_done, selection_failed = await process_selection_tasks(settings)
-    backfill_done, backfill_failed = await process_backfill_tasks(settings)
-    log("info", f"扫描全部: 选集完成，成功 {selection_done} 个，失败 {selection_failed} 个；补全完成，成功 {backfill_done} 个，失败 {backfill_failed} 个")
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-
-    if operation_id:
-        update_operation(operation_id, "5/10 正在处理补全后新增的 Mikan/元数据")
-    log("info", "扫描全部: 5/10 开始处理补全后新增的 Mikan/元数据")
-    replay_repaired_mikan = enqueue_missing_mikan_match_tasks(now())
-    replay_mikan_done, replay_mikan_failed = await process_mikan_match_tasks(settings)
-    replay_series_mikan = repair_series_mikan_ids(now())
-    replay_metadata_done, replay_metadata_failed = await process_metadata_tasks(settings)
-    log(
-        "info",
-        f"扫描全部: 补全回灌完成，补排 Mikan {replay_repaired_mikan} 个；"
-        f"Mikan 成功 {replay_mikan_done} 个，失败 {replay_mikan_failed} 个；"
-        f"回填番剧 Mikan ID {replay_series_mikan} 个；"
-        f"元数据成功 {replay_metadata_done} 个，失败 {replay_metadata_failed} 个",
-    )
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-
-    if operation_id:
-        update_operation(operation_id, "6/10 正在重跑自动选集")
-    log("info", "扫描全部: 6/10 开始重跑自动选集")
-    replay_selection_done, replay_selection_failed = await process_selection_tasks(settings)
-    log("info", f"扫描全部: 重跑选集完成，成功 {replay_selection_done} 个，失败 {replay_selection_failed} 个")
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "7/10 正在处理 PikPak 入库队列")
-    log("info", "扫描全部: 7/10 开始处理 PikPak 入库队列")
-    await process_tasks(settings)
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "8/10 正在刷新 PikPak 任务状态")
-    log("info", "扫描全部: 8/10 开始刷新 PikPak 任务状态")
-    rclone_done, rclone_missing = await reconcile_rclone_submitted_tasks(settings)
-    poll_done, poll_failed = await poll_submitted_tasks(settings)
-    log("info", f"扫描全部: 云盘状态刷新完成，rclone 已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，失败 {poll_failed} 个")
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "9/10 正在登记云盘资源")
-    log("info", "扫描全部: 9/10 开始登记云盘资源")
-    cloud_done, cloud_failed = await process_cloud_asset_tasks(settings)
-    cloud_count = backfill_cloud_assets_from_completed_tasks(settings)
-    log("info", f"扫描全部: 云盘资源登记完成，登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个")
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "10/10 正在调和本地同步")
-    log("info", "扫描全部: 10/10 开始调和本地同步")
-    reconciled, queued = reconcile_sync_intents(settings)
-    if queued:
-        if operation_id:
-            update_operation(operation_id, "10/10 正在同步到本地")
-        log("info", f"扫描全部: 本地同步排队 {queued} 个，开始执行同步")
-        await process_sync_tasks(settings)
-    trigger_queues(ready_queue_names(), delay=0)
-    return f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；回填番剧 Mikan ID {repaired_series_mikan} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；选集成功 {selection_done} 个，失败 {selection_failed} 个；补全成功 {backfill_done} 个，失败 {backfill_failed} 个；补全回灌补排 Mikan {replay_repaired_mikan} 个；补全回灌 Mikan 成功 {replay_mikan_done} 个，失败 {replay_mikan_failed} 个；补全回灌回填番剧 Mikan ID {replay_series_mikan} 个；补全回灌元数据成功 {replay_metadata_done} 个，失败 {replay_metadata_failed} 个；重跑选集成功 {replay_selection_done} 个，失败 {replay_selection_failed} 个；rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+    try:
+        if bool_setting(settings.get("auto_scan", "false")):
+            message = await scan_and_queue(settings)
+            trigger_queue("mikan_match", delay=0)
+            finish_scheduled_job_run(run_id, "completed", message)
+        else:
+            finish_scheduled_job_run(run_id, "completed", "已关闭自动 RSS 扫描")
+    except Exception as exc:
+        finish_scheduled_job_run(run_id, "failed", str(exc))
+        raise
 
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
@@ -779,7 +750,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
               AND ca.id IS NULL
             """
         ).fetchone()["count"]
-    return [
+    items = [
         {
             "key": "rss",
             "name": "Mikan RSS",
@@ -787,6 +758,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "running": 0,
             "failed": 0,
             "description": "周期读取 RSS，新增发布后进入后续队列",
+            "queue_state": "scheduled" if bool_setting(settings.get("auto_scan", "false")) else "disabled",
         },
         {
             "key": "mikan_match",
@@ -876,6 +848,68 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "description": "从云盘 API 下载到 NAS 本地目录",
         },
     ]
+    for item in items:
+        key = str(item["key"])
+        running = int(item.get("running", 0) or 0)
+        pending = int(item.get("pending", 0) or 0)
+        failed = int(item.get("failed", 0) or 0)
+        waiting = int(item.get("waiting", 0) or 0)
+        if key in queue_running or running > 0:
+            item["queue_state"] = "running"
+            item["state_reason"] = "队列正在处理当前批次任务"
+        elif key in queue_rerun_requested:
+            item["queue_state"] = "rerun_pending"
+            item["state_reason"] = "当前批次结束后会立刻重跑"
+        elif pending > 0:
+            task = queue_debounce_tasks.get(key)
+            if task and not task.done():
+                item["queue_state"] = "debouncing"
+                item["state_reason"] = f"检测到新任务，等待 {int(QUEUE_DEBOUNCE_SECONDS)} 秒聚合后自动执行"
+            else:
+                item["queue_state"] = "ready"
+                item["state_reason"] = "已有待处理任务，可立即执行"
+        elif waiting > 0:
+            item["queue_state"] = "cooldown"
+            next_retry_seconds = int(item.get("next_retry_seconds", 0) or 0)
+            item["state_reason"] = f"任务正在等待重试，最近一次将在 {next_retry_seconds} 秒后恢复"
+        elif failed > 0:
+            item["queue_state"] = "failed"
+            item["state_reason"] = "存在失败任务，等待重试或人工处理"
+        else:
+            item["queue_state"] = item.get("queue_state", "idle")
+            item["state_reason"] = "当前没有可处理任务"
+    return items
+
+
+def scheduled_jobs_summary() -> list[dict[str, Any]]:
+    with connect() as conn:
+        jobs = conn.execute(
+            """
+            SELECT *
+            FROM scheduled_jobs
+            ORDER BY job_key ASC
+            """
+        ).fetchall()
+        latest_runs = conn.execute(
+            """
+            SELECT r.*
+            FROM scheduled_job_runs r
+            JOIN (
+              SELECT job_id, MAX(id) AS max_id
+              FROM scheduled_job_runs
+              GROUP BY job_id
+            ) latest ON latest.max_id=r.id
+            ORDER BY r.id DESC
+            """
+        ).fetchall()
+    run_map = {int(row["job_id"]): dict(row) for row in latest_runs}
+    result = []
+    for job in jobs:
+        item = dict(job)
+        latest = run_map.get(int(job["id"]), {})
+        item["latest_run"] = latest
+        result.append(item)
+    return result
 
 
 @asynccontextmanager
@@ -1036,6 +1070,15 @@ def dashboard_data() -> dict[str, Any]:
             LIMIT 20
             """
         ).fetchall()
+        scheduled_runs = conn.execute(
+            """
+            SELECT r.*, j.job_key, j.job_type
+            FROM scheduled_job_runs r
+            JOIN scheduled_jobs j ON j.id=r.job_id
+            ORDER BY r.id DESC
+            LIMIT 40
+            """
+        ).fetchall()
         sync_rules = conn.execute(
             """
             SELECT sr.*, s.title_cn
@@ -1091,6 +1134,8 @@ def dashboard_data() -> dict[str, Any]:
         "sync_rules": rows_to_dicts(sync_rules),
         "sync_tasks": enrich_retry_rows(sync_tasks),
         "operations": rows_to_dicts(operations),
+        "scheduled_jobs": scheduled_jobs_summary(),
+        "scheduled_runs": rows_to_dicts(scheduled_runs),
         "calendar": rows_to_dicts(calendar),
         "task_counts": {row["status"]: row["count"] for row in task_counts},
         "active_tasks": enrich_download_tasks(active_tasks),
@@ -1280,17 +1325,25 @@ async def api_scan() -> dict[str, str]:
         return {"status": "running", "operation_id": str(running["id"]), "message": "扫描全部正在执行"}
     operation_id = run_progress_operation(
         "扫描全部",
-        lambda op_id: run_full_refresh(get_settings(), op_id),
-        "正在依次执行 RSS、Mikan 匹配、元数据、云盘入库、PikPak 状态、本地同步",
+        lambda op_id: run_scan_source(get_settings(), op_id),
+        "正在扫描 RSS，并触发 Mikan 匹配、元数据、入云盘和本地同步队列",
     )
     return {"status": "started", "operation_id": str(operation_id), "message": "扫描全部已启动"}
 
 
 @app.post("/api/tasks/process")
 async def api_process_tasks(force: bool = Query(False)) -> dict[str, str]:
+    async def run() -> str:
+        settings = get_settings()
+        await process_tasks(settings, force=force)
+        trigger_queue("cloud_poll", delay=0)
+        trigger_queue("cloud_asset", delay=0)
+        trigger_queue("sync_plan", delay=0)
+        return "已触发云盘提交，并继续触发云盘状态、资源登记和本地同步计划"
+
     operation_id = run_operation(
         "云盘队列立即处理" if force else "云盘队列处理",
-        lambda: process_tasks(get_settings(), force=force),
+        run,
         "正在立即提交 PikPak 云盘任务" if force else "正在提交 PikPak 云盘任务",
     )
     trigger_queue("download", delay=0)
@@ -1308,6 +1361,9 @@ async def api_poll_tasks() -> dict[str, str]:
         reconciled, queued = reconcile_sync_intents(settings)
         if queued:
             await process_sync_tasks(settings)
+        trigger_queue("cloud_asset", delay=0)
+        trigger_queue("sync_plan", delay=0)
+        trigger_queue("sync", delay=0)
         return f"rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘登记 {cloud_done} 个，失败 {cloud_failed} 个；补齐云盘 {count} 个，调和 {reconciled} 部，同步排队 {queued} 个"
 
     operation_id = run_operation("刷新云盘状态", run, "正在刷新 PikPak 任务和同步状态")
@@ -1333,6 +1389,8 @@ async def api_process_sync_tasks() -> dict[str, str]:
     async def run() -> str:
         reconciled, queued = reconcile_sync_intents(settings)
         await process_sync_tasks(settings)
+        trigger_queue("sync_plan", delay=0)
+        trigger_queue("sync", delay=0)
         return f"调和 {reconciled} 部，同步排队 {queued} 个"
 
     operation_id = run_operation("本地同步", run, "正在把云盘资源同步到本地")

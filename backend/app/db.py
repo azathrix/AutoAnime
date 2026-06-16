@@ -301,6 +301,33 @@ def init_db() -> None:
                 finished_at TEXT NOT NULL DEFAULT ''
             );
 
+            CREATE TABLE IF NOT EXISTS scheduled_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_key TEXT NOT NULL UNIQUE,
+                job_type TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                interval_minutes INTEGER NOT NULL DEFAULT 0,
+                debounce_seconds INTEGER NOT NULL DEFAULT 10,
+                max_concurrency INTEGER NOT NULL DEFAULT 1,
+                last_run_at TEXT NOT NULL DEFAULT '',
+                next_run_at TEXT NOT NULL DEFAULT '',
+                last_status TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                trigger_source TEXT NOT NULL DEFAULT 'system',
+                message TEXT NOT NULL DEFAULT '',
+                stats_json TEXT NOT NULL DEFAULT '',
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL DEFAULT ''
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
             ON cloud_assets(provider, provider_file_id)
             WHERE provider_file_id != '';
@@ -485,6 +512,39 @@ def migrate(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS scheduled_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_key TEXT NOT NULL UNIQUE,
+            job_type TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            interval_minutes INTEGER NOT NULL DEFAULT 0,
+            debounce_seconds INTEGER NOT NULL DEFAULT 10,
+            max_concurrency INTEGER NOT NULL DEFAULT 1,
+            last_run_at TEXT NOT NULL DEFAULT '',
+            next_run_at TEXT NOT NULL DEFAULT '',
+            last_status TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            trigger_source TEXT NOT NULL DEFAULT 'system',
+            message TEXT NOT NULL DEFAULT '',
+            stats_json TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS rss_candidates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             guid TEXT NOT NULL UNIQUE,
@@ -585,6 +645,39 @@ def migrate(conn: sqlite3.Connection) -> None:
         if column not in sync_task_columns:
             conn.execute(f"ALTER TABLE sync_tasks ADD COLUMN {column} {ddl}")
     merge_duplicate_series(conn)
+    ensure_scheduled_jobs(conn)
+
+
+def ensure_scheduled_jobs(conn: sqlite3.Connection) -> None:
+    ts = now()
+    jobs = [
+        ("rss_scan", "rss_scan", 60, 0, 1),
+        ("queue_dispatch", "queue_dispatch", 1, 10, 1),
+        ("mikan_match_dispatch", "queue_dispatch", 0, 10, 1),
+        ("metadata_dispatch", "queue_dispatch", 0, 10, 1),
+        ("selection_dispatch", "queue_dispatch", 0, 10, 1),
+        ("backfill_dispatch", "queue_dispatch", 0, 10, 1),
+        ("download_dispatch", "queue_dispatch", 0, 10, 1),
+        ("cloud_poll_dispatch", "queue_dispatch", 0, 10, 1),
+        ("cloud_asset_dispatch", "queue_dispatch", 0, 10, 1),
+        ("sync_plan_dispatch", "queue_dispatch", 0, 10, 1),
+        ("sync_dispatch", "queue_dispatch", 0, 10, 1),
+    ]
+    for job_key, job_type, interval_minutes, debounce_seconds, max_concurrency in jobs:
+        conn.execute(
+            """
+            INSERT INTO scheduled_jobs
+              (job_key, job_type, enabled, interval_minutes, debounce_seconds, max_concurrency, created_at, updated_at)
+            VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+            ON CONFLICT(job_key) DO UPDATE SET
+              job_type=excluded.job_type,
+              interval_minutes=excluded.interval_minutes,
+              debounce_seconds=excluded.debounce_seconds,
+              max_concurrency=excluded.max_concurrency,
+              updated_at=excluded.updated_at
+            """,
+            (job_key, job_type, interval_minutes, debounce_seconds, max_concurrency, ts, ts),
+        )
 
 
 def merge_duplicate_series(conn: sqlite3.Connection) -> None:
@@ -796,6 +889,91 @@ def cleanup_operations(max_failed: int = 20) -> None:
             conn.executemany(
                 "DELETE FROM operations WHERE id=?",
                 [(operation_id,) for operation_id in stale_ids],
+            )
+
+
+def mark_scheduled_job(job_key: str, **fields: Any) -> None:
+    if not fields:
+        return
+    allowed = {
+        "enabled",
+        "interval_minutes",
+        "debounce_seconds",
+        "max_concurrency",
+        "last_run_at",
+        "next_run_at",
+        "last_status",
+        "last_error",
+        "updated_at",
+    }
+    updates = [(key, value) for key, value in fields.items() if key in allowed]
+    if not updates:
+        return
+    sql = ", ".join(f"{key}=?" for key, _ in updates)
+    params = [value for _, value in updates]
+    params.append(job_key)
+    with connect() as conn:
+        conn.execute(f"UPDATE scheduled_jobs SET {sql} WHERE job_key=?", params)
+
+
+def start_scheduled_job_run(job_key: str, trigger_source: str = "system", message: str = "") -> int:
+    ts = now()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM scheduled_jobs WHERE job_key=?",
+            (job_key,),
+        ).fetchone()
+        if not row:
+            return 0
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduled_job_runs
+              (job_id, status, trigger_source, message, stats_json, started_at, finished_at)
+            VALUES (?, 'running', ?, ?, '', ?, '')
+            """,
+            (int(row["id"]), trigger_source, message[:2000], ts),
+        )
+        conn.execute(
+            """
+            UPDATE scheduled_jobs
+            SET last_run_at=?, last_status='running', last_error='', updated_at=?
+            WHERE id=?
+            """,
+            (ts, ts, int(row["id"])),
+        )
+        return int(cursor.lastrowid)
+
+
+def finish_scheduled_job_run(run_id: int, status: str, message: str = "", stats_json: str = "") -> None:
+    if not run_id:
+        return
+    ts = now()
+    with connect() as conn:
+        run = conn.execute(
+            "SELECT job_id FROM scheduled_job_runs WHERE id=?",
+            (run_id,),
+        ).fetchone()
+        conn.execute(
+            """
+            UPDATE scheduled_job_runs
+            SET status=?, message=?, stats_json=?, finished_at=?
+            WHERE id=?
+            """,
+            (status, message[:2000], stats_json[:4000], ts, run_id),
+        )
+        if run:
+            conn.execute(
+                """
+                UPDATE scheduled_jobs
+                SET last_status=?, last_error=?, updated_at=?
+                WHERE id=?
+                """,
+                (
+                    status,
+                    "" if status == "completed" else message[:2000],
+                    ts,
+                    int(run["job_id"]),
+                ),
             )
 
 
