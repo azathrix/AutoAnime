@@ -170,6 +170,11 @@ h1 {
   gap: 10px;
 }
 
+.operation-list {
+  display: grid;
+  gap: 10px;
+}
+
 .active-task {
   align-items: flex-start;
   background: #f8fafc;
@@ -196,6 +201,28 @@ h1 {
 .active-task small {
   color: #dc2626;
   margin-top: 5px;
+}
+
+.operation-item {
+  align-items: flex-start;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 94px 1fr;
+  padding: 10px;
+}
+
+.operation-item strong,
+.operation-item span {
+  display: block;
+}
+
+.operation-item span {
+  color: #64748b;
+  font-size: 13px;
+  margin-top: 3px;
 }
 
 .module-grid div {

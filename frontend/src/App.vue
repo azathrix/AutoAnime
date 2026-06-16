@@ -82,6 +82,20 @@
         </el-card>
 
         <el-card class="span-2">
+          <template #header>最近操作</template>
+          <el-empty v-if="!dashboard.operations.length" description="还没有操作记录" />
+          <div v-else class="operation-list">
+            <div v-for="op in dashboard.operations.slice(0, 8)" :key="op.id" class="operation-item">
+              <el-tag :type="taskTag(op.status)">{{ op.status }}</el-tag>
+              <div>
+                <strong>{{ op.name }}</strong>
+                <span>{{ op.message || '处理中' }}</span>
+              </div>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card class="span-2">
           <template #header>功能板块</template>
           <div class="module-grid">
             <div><b>新番追更</b><span>已启用：Mikan RSS -> PikPak</span></div>
@@ -317,9 +331,9 @@
           <el-button v-if="!seriesHasCloud" @click="runSeriesAction('download')">存入云盘</el-button>
           <el-button @click="runSeriesAction('metadata')">刷新元数据</el-button>
           <el-button @click="runSeriesAction('nfo')">生成 NFO</el-button>
-          <el-popconfirm title="只删除本应用里的误识别条目，不删除云盘文件。确定删除？" @confirm="deleteCurrentSeries">
+          <el-popconfirm title="只从列表隐藏这个误识别条目，保留关联记录。确定隐藏？" @confirm="deleteCurrentSeries">
             <template #reference>
-              <el-button type="danger" plain>删除误识别</el-button>
+              <el-button type="danger" plain>隐藏误识别</el-button>
             </template>
           </el-popconfirm>
         </div>
@@ -361,6 +375,7 @@ const dashboard = reactive({
   sync_tasks: [],
   sync_rules: [],
   cloud_assets: [],
+  operations: [],
   logs: [],
   calendar: [],
   active_tasks: [],

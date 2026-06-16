@@ -145,6 +145,7 @@ def parse_language(title: str) -> str:
 
 def parse_episode(title: str) -> int:
     patterns = [
+        r"S\d{1,2}E(\d{1,3})",
         r"(?:第|EP|E|Episode|#)\s*(\d{1,3})(?:[话話集])?",
         r"\s-\s(\d{1,3})(?:\s|v\d|\[|$)",
         r"\[(\d{1,3})\]",

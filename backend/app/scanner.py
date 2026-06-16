@@ -8,7 +8,7 @@ from .library import bool_setting, render_episode_name, target_dir
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .parser import ParsedRelease, fingerprint, parse_entry, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
-from .sync_service import ensure_sync_rule, process_sync_tasks, queue_sync_for_series, upsert_cloud_asset
+from .sync_service import ensure_sync_rule, process_sync_tasks, reconcile_sync_intents, upsert_cloud_asset
 
 
 async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
@@ -28,7 +28,7 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
             """
             INSERT INTO series
               (fingerprint, title_raw, title_cn, bangumi_id, year, hidden, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               title_raw=excluded.title_raw,
               title_cn=CASE WHEN series.title_cn='' THEN excluded.title_cn ELSE series.title_cn END,
@@ -413,26 +413,20 @@ async def poll_submitted_tasks(settings: dict[str, str]) -> None:
         if status == "completed":
             asset_id = upsert_cloud_asset(task["id"], settings)
             if asset_id:
-                with connect() as conn:
-                    rule = conn.execute(
-                        "SELECT * FROM sync_rules WHERE series_id=?",
-                        (task["series_id"],),
-                    ).fetchone()
-                if rule and rule["sync_enabled"] and rule["auto_sync_following"]:
-                    queued, _ = queue_sync_for_series(task["series_id"], settings)
-                    if queued:
-                        await process_sync_tasks(settings)
+                _, queued = reconcile_sync_intents(settings)
+                if queued:
+                    await process_sync_tasks(settings)
 
 
-async def scan_and_queue(settings: dict[str, str]) -> None:
+async def scan_and_queue(settings: dict[str, str]) -> str:
     if not settings.get("rss_url"):
         log("warn", "未配置 Mikan RSS")
-        return
+        return "未配置 Mikan RSS"
     try:
         items = await fetch_entries(settings)
     except Exception as exc:
         log("error", f"RSS 扫描失败: {exc}")
-        return
+        return f"RSS 扫描失败: {exc}"
 
     touched_release_ids: set[int] = set()
     for item in items:
@@ -470,11 +464,6 @@ async def scan_and_queue(settings: dict[str, str]) -> None:
             queue_release(release_id, settings)
             queued += 1
         generate_nfo_for_series(series_id, settings)
-        with connect() as conn:
-            conn.execute(
-                "UPDATE series SET hidden=0, updated_at=? WHERE id=?",
-                (now(), series_id),
-            )
 
     log("info", f"扫描完成: {len(items)} 条发布，更新 {len(touched_series)} 部番剧，队列 {queued} 条")
     await process_tasks(settings)
@@ -486,3 +475,9 @@ async def scan_and_queue(settings: dict[str, str]) -> None:
             log("info", f"云盘库扫描完成: 入库 {imported} 个，跳过 {skipped} 个")
     except Exception as exc:
         log("warn", f"云盘库扫描跳过: {exc}")
+        imported = 0
+        skipped = 0
+    reconciled, sync_queued = reconcile_sync_intents(settings)
+    if sync_queued:
+        await process_sync_tasks(settings)
+    return f"RSS {len(items)} 条，更新 {len(touched_series)} 部，云盘队列 {queued} 条，云盘入库 {imported} 个，同步排队 {sync_queued} 个"

@@ -12,11 +12,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import connect, get_settings, init_db, log, merge_duplicate_series, now, save_settings
+from .db import connect, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, restore_visible_series, save_settings, start_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import mark_selected_releases, poll_submitted_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
-from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series, scan_cloud_library
+from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series, reconcile_sync_intents, scan_cloud_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -104,6 +104,10 @@ async def scheduled_scan() -> None:
             log("info", f"云盘库扫描完成: 入库 {imported} 个，跳过 {skipped} 个")
     except Exception as exc:
         log("warn", f"云盘库扫描跳过: {exc}")
+    reconciled, queued = reconcile_sync_intents(settings)
+    if queued:
+        log("info", f"周期任务已排本地同步: {reconciled} 部番剧，{queued} 个任务")
+        await process_sync_tasks(settings)
 
 
 @asynccontextmanager
@@ -118,12 +122,29 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AutoAnime", lifespan=lifespan)
 
 
+def run_operation(name: str, coro_factory, start_message: str = "") -> int:
+    operation_id = start_operation(name, start_message)
+
+    async def runner() -> None:
+        try:
+            message = await coro_factory()
+        except Exception as exc:
+            finish_operation(operation_id, "failed", str(exc))
+            log("error", f"{name} 失败: {exc}")
+            return
+        finish_operation(operation_id, "completed", str(message or "完成"))
+
+    asyncio.create_task(runner())
+    return operation_id
+
+
 def dashboard_data() -> dict[str, Any]:
     settings = get_settings()
     backfilled = backfill_cloud_assets_from_completed_tasks(settings)
     if backfilled:
         log("info", f"已补齐云盘资源状态: {backfilled} 个")
     with connect() as conn:
+        restored = restore_visible_series(conn)
         series = conn.execute(
             """
             SELECT s.*,
@@ -178,6 +199,9 @@ def dashboard_data() -> dict[str, Any]:
             LIMIT 80
             """
         ).fetchall()
+        operations = conn.execute(
+            "SELECT * FROM operations ORDER BY id DESC LIMIT 20"
+        ).fetchall()
         sync_rules = conn.execute(
             """
             SELECT sr.*, s.title_cn
@@ -220,6 +244,8 @@ def dashboard_data() -> dict[str, Any]:
             LIMIT 80
             """
         ).fetchall()
+    if restored:
+        log("warn", f"已恢复被隐藏但仍有资源的番剧: {restored} 部")
     return {
         "series": rows_to_dicts(series),
         "tasks": rows_to_dicts(tasks),
@@ -227,6 +253,7 @@ def dashboard_data() -> dict[str, Any]:
         "cloud_assets": rows_to_dicts(cloud_assets),
         "sync_rules": rows_to_dicts(sync_rules),
         "sync_tasks": rows_to_dicts(sync_tasks),
+        "operations": rows_to_dicts(operations),
         "calendar": rows_to_dicts(calendar),
         "task_counts": {row["status"]: row["count"] for row in task_counts},
         "active_tasks": rows_to_dicts(active_tasks),
@@ -343,62 +370,71 @@ async def api_delete_series(series_id: int) -> dict[str, str]:
             return {"status": "not_found", "message": "番剧不存在"}
         title = series["title_cn"]
         ts = now()
-        conn.execute("DELETE FROM releases WHERE series_id=?", (series_id,))
-        conn.execute("DELETE FROM episodes WHERE series_id=?", (series_id,))
-        conn.execute("DELETE FROM download_tasks WHERE series_id=?", (series_id,))
-        conn.execute("DELETE FROM cloud_assets WHERE series_id=?", (series_id,))
-        conn.execute("DELETE FROM sync_tasks WHERE series_id=?", (series_id,))
-        conn.execute("DELETE FROM local_assets WHERE series_id=?", (series_id,))
-        conn.execute("DELETE FROM sync_rules WHERE series_id=?", (series_id,))
         conn.execute(
             "UPDATE series SET hidden=1, updated_at=? WHERE id=?",
             (ts, series_id),
         )
-    log("warn", f"已删除误识别番剧: {title}")
-    return {"status": "completed", "message": "已删除误识别番剧和关联记录"}
+    log("warn", f"已隐藏误识别番剧: {title}")
+    return {"status": "completed", "message": "已隐藏误识别番剧，关联记录已保留"}
 
 
 @app.post("/api/scan")
 async def api_scan() -> dict[str, str]:
-    asyncio.create_task(scan_and_queue(get_settings()))
-    return {"status": "started"}
+    operation_id = run_operation(
+        "RSS 扫描",
+        lambda: scan_and_queue(get_settings()),
+        "正在扫描 RSS、入云盘并调和本地同步",
+    )
+    return {"status": "started", "operation_id": str(operation_id), "message": "RSS 扫描已启动"}
 
 
 @app.post("/api/tasks/process")
 async def api_process_tasks() -> dict[str, str]:
-    asyncio.create_task(process_tasks(get_settings()))
-    return {"status": "started", "message": "队列处理已启动"}
+    operation_id = run_operation(
+        "云盘队列处理",
+        lambda: process_tasks(get_settings()),
+        "正在提交 PikPak 云盘任务",
+    )
+    return {"status": "started", "operation_id": str(operation_id), "message": "队列处理已启动"}
 
 
 @app.post("/api/tasks/poll")
 async def api_poll_tasks() -> dict[str, str]:
     settings = get_settings()
-    asyncio.create_task(poll_submitted_tasks(settings))
-    count = backfill_cloud_assets_from_completed_tasks(settings)
-    if count:
-        log("info", f"已补齐云盘资源状态: {count} 个")
-    return {"status": "started", "message": "状态刷新已启动"}
+    async def run() -> str:
+        await poll_submitted_tasks(settings)
+        count = backfill_cloud_assets_from_completed_tasks(settings)
+        reconciled, queued = reconcile_sync_intents(settings)
+        if queued:
+            await process_sync_tasks(settings)
+        return f"补齐云盘 {count} 个，调和 {reconciled} 部，同步排队 {queued} 个"
+
+    operation_id = run_operation("刷新云盘状态", run, "正在刷新 PikPak 任务和同步状态")
+    return {"status": "started", "operation_id": str(operation_id), "message": "状态刷新已启动"}
 
 
 @app.post("/api/cloud/scan")
 async def api_scan_cloud() -> dict[str, str]:
-    async def run() -> None:
+    async def run() -> str:
         settings = get_settings()
-        try:
-            imported, skipped = await scan_cloud_library(settings)
-        except Exception as exc:
-            log("error", f"云盘库扫描失败: {exc}")
-            return
+        imported, skipped = await scan_cloud_library(settings)
         log("info", f"云盘库扫描完成: 入库 {imported} 个，跳过 {skipped} 个")
+        return f"入库 {imported} 个，跳过 {skipped} 个"
 
-    asyncio.create_task(run())
-    return {"status": "started", "message": "云盘库扫描已启动"}
+    operation_id = run_operation("扫描云盘库", run, "正在扫描 PikPak 云盘库")
+    return {"status": "started", "operation_id": str(operation_id), "message": "云盘库扫描已启动"}
 
 
 @app.post("/api/sync/tasks/process")
 async def api_process_sync_tasks() -> dict[str, str]:
-    asyncio.create_task(process_sync_tasks(get_settings()))
-    return {"status": "started", "message": "本地同步处理已启动"}
+    settings = get_settings()
+    async def run() -> str:
+        reconciled, queued = reconcile_sync_intents(settings)
+        await process_sync_tasks(settings)
+        return f"调和 {reconciled} 部，同步排队 {queued} 个"
+
+    operation_id = run_operation("本地同步", run, "正在把云盘资源同步到本地")
+    return {"status": "started", "operation_id": str(operation_id), "message": "本地同步处理已启动"}
 
 
 @app.post("/api/tasks/retry-failed")

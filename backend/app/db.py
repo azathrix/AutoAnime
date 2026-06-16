@@ -157,6 +157,15 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS operations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                message TEXT NOT NULL DEFAULT '',
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL DEFAULT ''
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
             ON cloud_assets(provider, provider_file_id)
             WHERE provider_file_id != '';
@@ -212,12 +221,25 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in release_additions.items():
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
+    restore_visible_series(conn)
     merge_duplicate_series(conn)
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
         ON cloud_assets(provider, provider_file_id)
         WHERE provider_file_id != ''
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS operations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            message TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL DEFAULT ''
+        )
         """
     )
 
@@ -283,6 +305,24 @@ def merge_duplicate_series(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM series WHERE id=?", (old_id,))
 
 
+def restore_visible_series(conn: sqlite3.Connection) -> int:
+    cursor = conn.execute(
+        """
+        UPDATE series
+        SET hidden=0, updated_at=?
+        WHERE COALESCE(hidden, 0)=1
+          AND (
+            id IN (SELECT DISTINCT series_id FROM releases)
+            OR id IN (SELECT DISTINCT series_id FROM download_tasks)
+            OR id IN (SELECT DISTINCT series_id FROM cloud_assets)
+            OR id IN (SELECT DISTINCT series_id FROM local_assets)
+          )
+        """,
+        (now(),),
+    )
+    return cursor.rowcount
+
+
 def hide_orphan_series(conn: sqlite3.Connection) -> int:
     cursor = conn.execute(
         """
@@ -323,4 +363,25 @@ def log(level: str, message: str) -> None:
         conn.execute(
             "INSERT INTO logs (level, message, created_at) VALUES (?, ?, ?)",
             (level, message[:2000], now()),
+        )
+
+
+def start_operation(name: str, message: str = "") -> int:
+    with connect() as conn:
+        cursor = conn.execute(
+            "INSERT INTO operations (name, status, message, started_at) VALUES (?, 'running', ?, ?)",
+            (name, message[:2000], now()),
+        )
+        return int(cursor.lastrowid)
+
+
+def finish_operation(operation_id: int, status: str, message: str = "") -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE operations
+            SET status=?, message=?, finished_at=?
+            WHERE id=?
+            """,
+            (status, message[:2000], now(), operation_id),
         )

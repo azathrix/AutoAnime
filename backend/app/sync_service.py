@@ -147,8 +147,42 @@ def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int
                     ts,
                 ),
             )
-            queued += 1
+            task_row = conn.execute(
+                """
+                SELECT status
+                FROM sync_tasks
+                WHERE cloud_asset_id=? AND sync_direction='cloud_to_local'
+                """,
+                (asset["id"],),
+            ).fetchone()
+            if task_row and task_row["status"] != "synced":
+                queued += 1
     return queued, f"已加入本地同步队列: {queued} 条"
+
+
+def reconcile_sync_intents(settings: dict[str, str]) -> tuple[int, int]:
+    auto_sync = settings.get("auto_sync_following", "true").lower() == "true"
+    with connect() as conn:
+        series_ids = [
+            int(row["series_id"])
+            for row in conn.execute(
+                """
+                SELECT DISTINCT ca.series_id
+                FROM cloud_assets ca
+                JOIN series s ON s.id=ca.series_id
+                LEFT JOIN sync_rules sr ON sr.series_id=ca.series_id
+                WHERE ca.status='available'
+                  AND COALESCE(s.hidden, 0)=0
+                  AND (COALESCE(sr.sync_enabled, 0)=1 OR ?=1)
+                """,
+                (1 if auto_sync else 0,),
+            ).fetchall()
+        ]
+    queued_total = 0
+    for series_id in series_ids:
+        queued, _ = queue_sync_for_series(series_id, settings)
+        queued_total += queued
+    return len(series_ids), queued_total
 
 
 def backfill_cloud_assets_from_completed_tasks(settings: dict[str, str]) -> int:
@@ -226,6 +260,40 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
             (series["id"], episode_number),
         ).fetchone()
         if not release:
+            guid = f"cloud-import:pikpak:{file_id}"
+            conn.execute(
+                """
+                INSERT INTO episodes
+                  (series_id, episode_number, title, status, created_at, updated_at)
+                VALUES (?, ?, ?, 'downloaded', ?, ?)
+                ON CONFLICT(series_id, episode_number) DO UPDATE SET
+                  status='downloaded',
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    series["id"],
+                    episode_number,
+                    f"第{episode_number:02d}话",
+                    now(),
+                    now(),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO releases
+                  (series_id, episode_number, guid, title, subtitle_group, resolution,
+                   language, torrent_url, magnet, published_at, selected, created_at, updated_at)
+                VALUES (?, ?, ?, ?, '云盘导入', '', '', '', '', '', 1, ?, ?)
+                ON CONFLICT(guid) DO UPDATE SET
+                  series_id=excluded.series_id,
+                  episode_number=excluded.episode_number,
+                  title=excluded.title,
+                  updated_at=excluded.updated_at
+                """,
+                (series["id"], episode_number, guid, name, now(), now()),
+            )
+            release = conn.execute("SELECT * FROM releases WHERE guid=?", (guid,)).fetchone()
+        if not release:
             return None
         ts = now()
         existing = conn.execute(
@@ -300,8 +368,17 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
             synced_series.add(int(series["id"]))
     for series_id in synced_series:
         queue_sync_for_series(series_id, settings)
+    if not synced_series:
+        reconcile_sync_intents(settings)
     if synced_series:
         await process_sync_tasks(settings)
+    else:
+        with connect() as conn:
+            pending = conn.execute(
+                "SELECT COUNT(*) AS count FROM sync_tasks WHERE status IN ('pending','failed') AND attempts < 3"
+            ).fetchone()["count"]
+        if pending:
+            await process_sync_tasks(settings)
     return imported, skipped
 
 
