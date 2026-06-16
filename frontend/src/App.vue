@@ -90,10 +90,10 @@
             <el-tab-pane label="待处理" name="issues">
               <el-alert
                 v-if="dashboard.rss_candidates.length"
-                type="warning"
+                type="info"
                 show-icon
                 :closable="false"
-                title="以下 RSS 发布缺少 Bangumi ID，不会进入番剧库，也不会自动入 PikPak。"
+                title="RSS 发布会先进入暂存区；只有完成 Mikan 匹配和元数据刷新后，才会出现在番剧库并继续入云盘。"
                 class="settings-alert"
               />
               <el-table v-if="dashboard.rss_candidates.length" :data="dashboard.rss_candidates" height="260" class="candidate-table">
@@ -447,7 +447,9 @@ const metadataIssueCount = computed(() => dashboard.rss_candidates.length)
 const issues = computed(() => {
   const rows = []
   for (const item of dashboard.rss_candidates) {
-    rows.push({ type: 'RSS 候选', level: 'warning', title: item.series_title || item.title, message: item.reason || '缺少 Bangumi ID', series_id: null })
+    if (item.status === 'failed') {
+      rows.push({ type: 'RSS 候选', level: 'warning', title: item.series_title || item.title, message: item.reason || '候选处理失败', series_id: null })
+    }
   }
   for (const item of dashboard.series) {
     if (!item.bangumi_id && !item.tmdb_id) {

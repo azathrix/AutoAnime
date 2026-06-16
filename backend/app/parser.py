@@ -18,6 +18,8 @@ class ParsedRelease:
     year: int
     torrent_url: str
     magnet: str
+    page_url: str
+    mikan_bangumi_id: str
     published_at: str
 
 
@@ -182,7 +184,7 @@ def entry_value(entry: Any, candidates: list[str]) -> str:
     return ""
 
 
-def parse_bangumi_id(entry: Any, link: str, title: str) -> str:
+def parse_mikan_bangumi_id(entry: Any, link: str) -> str:
     rss_value = entry_value(
         entry,
         [
@@ -197,11 +199,22 @@ def parse_bangumi_id(entry: Any, link: str, title: str) -> str:
     match = re.search(r"\d+", rss_value)
     if match:
         return match.group(0)
-    match = re.search(r"[?&](?:bangumiId|bangumi_id)=(\d+)", link, re.I)
+    match = re.search(r"/Home/Bangumi/(\d+)", link, re.I)
     if match:
         return match.group(1)
-    match = re.search(r"bangumi[-_ ]?(\d+)", title, re.I)
+    match = re.search(r"[?&](?:bangumiId|bangumi_id)=(\d+)", link, re.I)
     return match.group(1) if match else ""
+
+
+def parse_bangumi_id(entry: Any, link: str, title: str) -> str:
+    explicit_value = entry_value(entry, ["bgm_subject_id", "bangumi_subject_id", "subject_id"])
+    if re.fullmatch(r"\d+", explicit_value or ""):
+        return explicit_value
+    for value in [link, title, explicit_value]:
+        match = re.search(r"(?:bgm\.tv|bangumi\.tv)/subject/(\d+)", value or "", re.I)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def parse_series_title(title: str) -> str:
@@ -247,5 +260,7 @@ def parse_entry(entry: Any) -> ParsedRelease:
         year=parse_year(title, published),
         torrent_url=torrent_url,
         magnet=magnet,
+        page_url=link,
+        mikan_bangumi_id=parse_mikan_bangumi_id(entry, link),
         published_at=published,
     )

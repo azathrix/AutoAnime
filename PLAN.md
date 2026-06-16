@@ -29,8 +29,8 @@ Mikan RSS / Nyaa 搜索 / 其他补番索引器
 当前第一阶段仍以 Mikan RSS + PikPak 为主：
 
 ```txt
-Mikan RSS -> 读取 Mikan bangumiId -> 番剧聚合与旧数据修复 -> Bangumi/TMDB 匹配
--> 字幕组/分辨率/语言自动选择 -> PikPak 离线下载
+Mikan RSS -> RSS 候选暂存 -> Mikan 页面匹配 bgm.tv subject ID -> Bangumi/TMDB 元数据刷新
+-> 正式番剧入库与合并 -> 字幕组/分辨率/语言自动选择 -> PikPak 离线下载
 -> 云盘状态轮询 -> 按同步意图自动同步到 NAS 本地
 -> 本地 NFO -> Jellyfin 本地库
 ```
@@ -80,9 +80,12 @@ jellyfin
 - 失败只停在当前任务表，写 `failed` 和 `last_error`，不能继续入库。
 - 成功并且字段齐全后，才允许写入下一阶段。
 - 正式 `series/releases` 只保存已经通过元数据门槛的数据。
-- RSS 扫描只写 `rss_candidates` 和 `metadata_tasks`，不直接写正式番剧库。
+- RSS 扫描只写 `rss_candidates` 和后续匹配任务，不直接写正式番剧库。
+- Mikan RSS 里的 `bangumiId` 是 Mikan 自己的番组 ID，不等于 Bangumi.tv subject ID，不能直接写入 `series.bangumi_id`。
+- Mikan 匹配由 `mikan_match_tasks` 独立维护：先读取 RSS 条目页里的 `/Home/Bangumi/{id}`，再读取番组页里的 `https://bgm.tv/subject/{id}`，拿到 subject ID 后才写入 `metadata_tasks`。
 - 元数据任务成功后才创建正式 `series/releases`，再进入 PikPak 入库队列。
-- 云盘状态同步、本地状态同步、全量审计等操作后续都必须独立建表，不能复用别的队列状态。
+- 云盘入库、PikPak 状态同步、云盘资源登记、本地状态同步、本地同步、NFO 生成、全量审计等操作都必须独立建表，不能复用别的队列状态。
+- 到下一阶段的数据必须完整；例如 `metadata_tasks` 失败时不能写 `series/releases`，`mikan_match_tasks` 失败时不能写 `metadata_tasks`。
 - 用户点击“扫描全部”只是按顺序立即触发各队列处理器；日常运行仍由各队列自动触发或定时触发。
 
 ### 当前代码结构
@@ -193,9 +196,9 @@ docker compose up -d --build
 
 - FastAPI JSON API 已创建。
 - SQLite 保存配置、番剧、集数、RSS 发布、下载任务和日志。
-- Mikan RSS 扫描、番剧聚合、发布入库已实现。
-- Mikan RSS 的 `bangumiId` 已按 Bangumi.tv subject ID 读取，并优先作为稳定身份。
-- RSS 扫描不做隐藏式暂存；发现的候选应先进入候选/待确认状态，完整入库需要稳定元数据身份。
+- Mikan RSS 扫描已实现，扫描结果先写入 `rss_candidates`。
+- Mikan RSS 不直接提供 Bangumi.tv subject ID；当前通过 `mikan_match_tasks` 读取 Mikan 条目页/番组页解析 `bgm.tv/subject/{id}`。
+- RSS 扫描不做隐藏式暂存；发现的候选先进入候选/待确认状态，完整入库需要稳定元数据身份。
 - 旧 release 如果在重扫时解析到正确 Bangumi ID，会迁回正确番剧；原错误空壳会自动隐藏。
 - 标题指纹归一化已实现：
   - 处理常见简繁差异。
@@ -418,7 +421,7 @@ access_token + refresh_token
 
 - 现有 `download_tasks` 仍是旧云盘下载任务表，已经补充 `cloud_assets`，但还没有完全重命名为 `cloud_tasks`。
 - 扫描阶段仍会生成一份旧 NFO，后续应彻底移除扫描后生成 NFO 的行为，只保留同步完成后本地 NFO。
-- 目前还没有真正的“候选暂存队列”和“正式入库标准”表，RSS 发现仍会直接写入 `series/releases`；下一阶段需要拆分。
+- 已建立 `rss_candidates`、`mikan_match_tasks`、`metadata_tasks` 三段入库前队列；后续还需要继续把云盘状态、本地状态、NFO 等拆成更细任务表。
 - 真实 PikPak 端到端提交、云盘目录扫描和云盘文件直链下载尚未在 NAS 上完整验证。
 - PikPak 任务 ID 和 file ID 提取逻辑需要对照真实响应确认。
 - 云端重命名依赖有效 `file_id`，缺失时只能先标记完成并等待后续补拿。
@@ -564,16 +567,16 @@ access_token + refresh_token
 
 目标：扫描时尽早建立稳定身份。
 
-- Mikan RSS `bangumiId` 已作为稳定 ID 使用。
-- RSS 扫描应先进入候选/待确认队列，元数据完整后才正式入库。
+- Mikan RSS 的 `bangumiId` 只作为 Mikan 番组页线索，不作为稳定媒体身份。
+- RSS 扫描先进入候选/待确认队列，Mikan 匹配拿到 Bangumi.tv subject ID 且元数据完整后才正式入库。
 - 增加 TMDB 匹配。
 - 增加匹配候选 UI。
 - 建立 `identity_key`。
 - 按 Bangumi/TMDB ID 合并重复媒体。
 
-状态：部分完成。Mikan `bangumiId` 稳定合并、旧错归 release 修复已实现；候选暂存队列、正式入库门槛、TMDB、候选 UI 和完整 `identity_key` 仍待实现。
+状态：部分完成。候选暂存队列和 Mikan 页面匹配队列已接入；正式入库门槛已改为必须经过元数据任务。TMDB、候选确认 UI 和完整 `identity_key` 仍待实现。
 
-修正：RSS 没有提供 `bangumiId` 时，不再自动按标题搜索 Bangumi 并绑定第一个结果，避免误识别为无关番剧；该情况进入待处理，由用户确认。
+修正：RSS 没有提供 Bangumi.tv subject ID 时，不再自动按标题搜索 Bangumi 并绑定第一个结果，避免误识别为无关番剧；Mikan 来源先通过 Mikan 页面解析 subject ID，失败时停在 `mikan_match_tasks`。
 
 ### P5: 语言过滤和三维自动选择
 
@@ -602,7 +605,7 @@ access_token + refresh_token
 目标：让 Mikan RSS 新集自动进入 PikPak，并按同步意图落到本地。
 
 - Mikan RSS 周期扫描，默认 60 分钟。
-- Mikan `bangumiId` 稳定识别番剧。
+- Mikan 页面解析 `bgm.tv/subject/{id}` 稳定识别番剧。
 - RSS 扫描只处理新增/变更发布，不触发云盘库全量扫描。
 - 唯一候选自动入 PikPak。
 - 多字幕组/分辨率/语言时按优先级选择，不唯一则进入需要处理。

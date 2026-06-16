@@ -15,7 +15,7 @@ from .config import APP_DIR
 from .db import clear_runtime_data, connect, diagnostics, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
-from .scanner import mark_selected_releases, poll_submitted_tasks, process_metadata_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
+from .scanner import mark_selected_releases, poll_submitted_tasks, process_metadata_tasks, process_mikan_match_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
 from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series, reconcile_sync_intents, scan_cloud_library
 
 
@@ -97,6 +97,7 @@ async def scheduled_scan() -> None:
     settings = get_settings()
     if bool_setting(settings.get("auto_scan", "false")):
         await scan_and_queue(settings)
+    await process_mikan_match_tasks(settings)
     await process_metadata_tasks(settings)
     await process_tasks(settings)
     await poll_submitted_tasks(settings)
@@ -109,28 +110,31 @@ async def scheduled_scan() -> None:
 
 async def run_full_refresh(settings: dict[str, str], operation_id: int | None = None) -> str:
     if operation_id:
-        update_operation(operation_id, "1/6 正在扫描 RSS")
+        update_operation(operation_id, "1/8 正在扫描 RSS")
     scan_message = await scan_and_queue(settings)
     if operation_id:
-        update_operation(operation_id, "2/7 正在处理元数据队列")
+        update_operation(operation_id, "2/8 正在匹配 Mikan Bangumi")
+    mikan_done, mikan_failed = await process_mikan_match_tasks(settings)
+    if operation_id:
+        update_operation(operation_id, "3/8 正在处理元数据队列")
     metadata_done, metadata_failed = await process_metadata_tasks(settings)
     if operation_id:
-        update_operation(operation_id, "3/7 正在处理 PikPak 入库队列")
+        update_operation(operation_id, "4/8 正在处理 PikPak 入库队列")
     await process_tasks(settings)
     if operation_id:
-        update_operation(operation_id, "4/7 正在刷新 PikPak 任务状态")
+        update_operation(operation_id, "5/8 正在刷新 PikPak 任务状态")
     await poll_submitted_tasks(settings)
     if operation_id:
-        update_operation(operation_id, "5/7 正在登记云盘资源")
+        update_operation(operation_id, "6/8 正在登记云盘资源")
     cloud_count = backfill_cloud_assets_from_completed_tasks(settings)
     if operation_id:
-        update_operation(operation_id, "6/7 正在调和本地同步")
+        update_operation(operation_id, "7/8 正在调和本地同步")
     reconciled, queued = reconcile_sync_intents(settings)
     if queued:
         if operation_id:
-            update_operation(operation_id, "7/7 正在同步到本地")
+            update_operation(operation_id, "8/8 正在同步到本地")
         await process_sync_tasks(settings)
-    return f"{scan_message}；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；补齐云盘 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+    return f"{scan_message}；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；补齐云盘 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
 
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
@@ -141,13 +145,12 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
                 "SELECT status, COUNT(*) AS count FROM metadata_tasks GROUP BY status"
             ).fetchall()
         }
-        candidate_pending = conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM rss_candidates
-            WHERE status IN ('pending', 'failed') AND bangumi_id=''
-            """
-        ).fetchone()["count"]
+        mikan_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM mikan_match_tasks GROUP BY status"
+            ).fetchall()
+        }
         merge_pending = conn.execute(
             """
             SELECT COUNT(*) AS count
@@ -192,9 +195,17 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "description": "周期读取 RSS，新增发布后进入后续队列",
         },
         {
+            "key": "mikan_match",
+            "name": "Mikan 匹配",
+            "pending": mikan_rows.get("pending", 0),
+            "running": mikan_rows.get("running", 0),
+            "failed": mikan_rows.get("failed", 0),
+            "description": "从 Mikan 条目页/番组页解析 bgm.tv subject ID",
+        },
+        {
             "key": "metadata",
             "name": "元数据",
-            "pending": metadata_rows.get("pending", 0) + candidate_pending,
+            "pending": metadata_rows.get("pending", 0),
             "running": metadata_rows.get("running", 0),
             "failed": metadata_rows.get("failed", 0),
             "description": "候选必须获取完整元数据后才进入正式库",
@@ -314,7 +325,7 @@ def dashboard_data() -> dict[str, Any]:
             """
             SELECT *
             FROM rss_candidates
-            WHERE status IN ('pending', 'failed')
+            WHERE status IN ('pending', 'pending_metadata', 'failed')
             ORDER BY updated_at DESC
             LIMIT 120
             """
@@ -559,7 +570,7 @@ async def api_scan() -> dict[str, str]:
     operation_id = run_progress_operation(
         "扫描全部",
         lambda op_id: run_full_refresh(get_settings(), op_id),
-        "正在依次执行 RSS、元数据、云盘入库、PikPak 状态、本地同步",
+        "正在依次执行 RSS、Mikan 匹配、元数据、云盘入库、PikPak 状态、本地同步",
     )
     return {"status": "started", "operation_id": str(operation_id), "message": "扫描全部已启动"}
 

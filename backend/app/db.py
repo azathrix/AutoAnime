@@ -96,6 +96,7 @@ def init_db() -> None:
                 bangumi_id TEXT NOT NULL DEFAULT '',
                 torrent_url TEXT NOT NULL DEFAULT '',
                 magnet TEXT NOT NULL DEFAULT '',
+                page_url TEXT NOT NULL DEFAULT '',
                 published_at TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
                 reason TEXT NOT NULL DEFAULT '',
@@ -124,6 +125,19 @@ def init_db() -> None:
                 candidate_id INTEGER NOT NULL UNIQUE,
                 status TEXT NOT NULL DEFAULT 'pending',
                 attempts INTEGER NOT NULL DEFAULT 0,
+                bangumi_id TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS mikan_match_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                mikan_url TEXT NOT NULL DEFAULT '',
+                mikan_bangumi_id TEXT NOT NULL DEFAULT '',
                 bangumi_id TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
@@ -255,7 +269,6 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in release_additions.items():
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
-    merge_duplicate_series(conn)
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
@@ -289,6 +302,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             bangumi_id TEXT NOT NULL DEFAULT '',
             torrent_url TEXT NOT NULL DEFAULT '',
             magnet TEXT NOT NULL DEFAULT '',
+            page_url TEXT NOT NULL DEFAULT '',
             published_at TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
             reason TEXT NOT NULL DEFAULT '',
@@ -297,6 +311,16 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    rss_candidate_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(rss_candidates)").fetchall()
+    }
+    rss_candidate_additions = {
+        "page_url": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in rss_candidate_additions.items():
+        if column not in rss_candidate_columns:
+            conn.execute(f"ALTER TABLE rss_candidates ADD COLUMN {column} {ddl}")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS metadata_tasks (
@@ -311,6 +335,35 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mikan_match_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id INTEGER NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            mikan_url TEXT NOT NULL DEFAULT '',
+            mikan_bangumi_id TEXT NOT NULL DEFAULT '',
+            bangumi_id TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    mikan_match_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(mikan_match_tasks)").fetchall()
+    }
+    mikan_match_additions = {
+        "mikan_url": "TEXT NOT NULL DEFAULT ''",
+        "mikan_bangumi_id": "TEXT NOT NULL DEFAULT ''",
+        "bangumi_id": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in mikan_match_additions.items():
+        if column not in mikan_match_columns:
+            conn.execute(f"ALTER TABLE mikan_match_tasks ADD COLUMN {column} {ddl}")
+    merge_duplicate_series(conn)
 
 
 def merge_duplicate_series(conn: sqlite3.Connection) -> None:
@@ -517,6 +570,7 @@ def diagnostics() -> dict[str, Any]:
             "episodes",
             "releases",
             "rss_candidates",
+            "mikan_match_tasks",
             "metadata_tasks",
             "download_tasks",
             "cloud_assets",
@@ -552,6 +606,7 @@ def clear_runtime_data() -> None:
             "cloud_assets",
             "download_tasks",
             "metadata_tasks",
+            "mikan_match_tasks",
             "rss_candidates",
             "releases",
             "episodes",
@@ -560,7 +615,7 @@ def clear_runtime_data() -> None:
             "logs",
         ]:
             conn.execute(f"DELETE FROM {table}")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','download_tasks','metadata_tasks','rss_candidates','releases','episodes','series','operations','logs')")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','download_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','releases','episodes','series','operations','logs')")
     try:
         LOG_PATH.unlink(missing_ok=True)
     except OSError:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from urllib.parse import urljoin
+
 import httpx
 import feedparser
 
@@ -18,6 +21,37 @@ async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
         resp.raise_for_status()
     parsed = feedparser.parse(resp.text)
     return [parse_entry(entry) for entry in parsed.entries]
+
+
+def mikan_absolute_url(path_or_url: str) -> str:
+    return urljoin("https://mikanani.me", path_or_url or "")
+
+
+def parse_mikan_ids(html: str) -> tuple[str, str]:
+    bangumi_match = re.search(r"https?://(?:bgm\.tv|bangumi\.tv)/subject/(\d+)", html, re.I)
+    mikan_match = re.search(r"/Home/Bangumi/(\d+)", html, re.I)
+    return (bangumi_match.group(1) if bangumi_match else "", mikan_match.group(1) if mikan_match else "")
+
+
+async def fetch_mikan_match(settings: dict[str, str], page_url: str, mikan_bangumi_id: str = "") -> tuple[str, str]:
+    if not page_url and not mikan_bangumi_id:
+        return "", ""
+    proxy = settings.get("rss_proxy") or None
+    first_url = mikan_absolute_url(page_url or f"/Home/Bangumi/{mikan_bangumi_id}")
+    async with httpx.AsyncClient(proxy=proxy, timeout=30, follow_redirects=True) as client:
+        resp = await client.get(first_url)
+        resp.raise_for_status()
+        bangumi_id, mikan_id = parse_mikan_ids(resp.text)
+        mikan_id = mikan_id or mikan_bangumi_id
+        if bangumi_id:
+            return bangumi_id, mikan_id
+        if mikan_id:
+            bgm_url = mikan_absolute_url(f"/Home/Bangumi/{mikan_id}")
+            bgm_resp = await client.get(bgm_url)
+            bgm_resp.raise_for_status()
+            bangumi_id, _ = parse_mikan_ids(bgm_resp.text)
+            return bangumi_id, mikan_id
+    return "", ""
 
 
 def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[int, int]:
@@ -125,9 +159,9 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
             """
             INSERT INTO rss_candidates
               (guid, title, series_title, episode_number, subtitle_group, resolution,
-               language, bangumi_id, torrent_url, magnet, published_at, status,
+               language, bangumi_id, torrent_url, magnet, page_url, published_at, status,
                reason, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
               title=excluded.title,
               series_title=excluded.series_title,
@@ -138,6 +172,7 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
               bangumi_id=excluded.bangumi_id,
               torrent_url=excluded.torrent_url,
               magnet=excluded.magnet,
+              page_url=excluded.page_url,
               published_at=excluded.published_at,
               status=CASE WHEN rss_candidates.status='completed' THEN rss_candidates.status ELSE excluded.status END,
               reason=excluded.reason,
@@ -154,6 +189,7 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
                 item.bangumi_id,
                 item.torrent_url,
                 item.magnet,
+                item.page_url,
                 item.published_at,
                 status,
                 reason,
@@ -164,20 +200,39 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
         row = conn.execute("SELECT id FROM rss_candidates WHERE guid=?", (item.guid,)).fetchone()
         candidate_id = int(row["id"])
         if item.bangumi_id:
+            enqueue_metadata_task(conn, candidate_id, item.bangumi_id, ts)
+        else:
             conn.execute(
                 """
-                INSERT INTO metadata_tasks
-                  (candidate_id, status, bangumi_id, created_at, updated_at)
-                VALUES (?, 'pending', ?, ?, ?)
+                INSERT INTO mikan_match_tasks
+                  (candidate_id, status, mikan_url, mikan_bangumi_id, created_at, updated_at)
+                VALUES (?, 'pending', ?, ?, ?, ?)
                 ON CONFLICT(candidate_id) DO UPDATE SET
-                  status=CASE WHEN metadata_tasks.status='completed' THEN metadata_tasks.status ELSE 'pending' END,
-                  bangumi_id=excluded.bangumi_id,
+                  status=CASE WHEN mikan_match_tasks.status='completed' THEN mikan_match_tasks.status ELSE 'pending' END,
+                  mikan_url=excluded.mikan_url,
+                  mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE mikan_match_tasks.mikan_bangumi_id END,
                   last_error='',
                   updated_at=excluded.updated_at
                 """,
-                (candidate_id, item.bangumi_id, ts, ts),
+                (candidate_id, item.page_url, item.mikan_bangumi_id, ts, ts),
             )
         return candidate_id
+
+
+def enqueue_metadata_task(conn, candidate_id: int, bangumi_id: str, ts: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO metadata_tasks
+          (candidate_id, status, bangumi_id, created_at, updated_at)
+        VALUES (?, 'pending', ?, ?, ?)
+        ON CONFLICT(candidate_id) DO UPDATE SET
+          status=CASE WHEN metadata_tasks.status='completed' THEN metadata_tasks.status ELSE 'pending' END,
+          bangumi_id=excluded.bangumi_id,
+          last_error='',
+          updated_at=excluded.updated_at
+        """,
+        (candidate_id, bangumi_id, ts, ts),
+    )
 
 
 def candidate_to_parsed_release(candidate) -> ParsedRelease:
@@ -193,8 +248,76 @@ def candidate_to_parsed_release(candidate) -> ParsedRelease:
         year=0,
         torrent_url=candidate["torrent_url"],
         magnet=candidate["magnet"],
+        page_url=candidate["page_url"],
+        mikan_bangumi_id="",
         published_at=candidate["published_at"],
     )
+
+
+async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT mt.*, rc.title, rc.page_url
+            FROM mikan_match_tasks mt
+            JOIN rss_candidates rc ON rc.id=mt.candidate_id
+            WHERE mt.status IN ('pending', 'failed') AND mt.attempts < 3
+            ORDER BY mt.id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    completed = 0
+    failed = 0
+    for row in rows:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE mikan_match_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                (now(), row["id"]),
+            )
+        try:
+            bangumi_id, mikan_id = await fetch_mikan_match(
+                settings,
+                row["page_url"] or row["mikan_url"],
+                row["mikan_bangumi_id"] or "",
+            )
+            if not bangumi_id:
+                raise RuntimeError("Mikan 页面未找到 Bangumi subject 链接")
+        except Exception as exc:
+            error = str(exc)[:2000]
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE mikan_match_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
+                    (error, now(), row["id"]),
+                )
+                conn.execute(
+                    "UPDATE rss_candidates SET status='failed', reason=?, updated_at=? WHERE id=?",
+                    (error, now(), row["candidate_id"]),
+                )
+            failed += 1
+            log("warn", f"Mikan 匹配失败: {row['title']} - {error}")
+            continue
+        with connect() as conn:
+            ts = now()
+            conn.execute(
+                """
+                UPDATE mikan_match_tasks
+                SET status='completed', bangumi_id=?, mikan_bangumi_id=?, last_error='', updated_at=?
+                WHERE id=?
+                """,
+                (bangumi_id, mikan_id, ts, row["id"]),
+            )
+            conn.execute(
+                """
+                UPDATE rss_candidates
+                SET status='pending_metadata', bangumi_id=?, reason='等待元数据刷新', updated_at=?
+                WHERE id=?
+                """,
+                (bangumi_id, ts, row["candidate_id"]),
+            )
+            enqueue_metadata_task(conn, row["candidate_id"], bangumi_id, ts)
+        completed += 1
+    return completed, failed
 
 
 async def process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
