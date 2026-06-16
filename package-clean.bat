@@ -25,5 +25,5 @@ if errorlevel 1 (
 popd
 
 echo Created:
-echo %ZIP%
+echo !ZIP!
 endlocal
