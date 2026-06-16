@@ -29,33 +29,62 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
         series = conn.execute("SELECT * FROM series WHERE id=?", (task["series_id"],)).fetchone()
         if not release or not series:
             return None
+        if not series["bangumi_id"]:
+            log("warn", f"云盘资源登记跳过: {series['title_cn']} - 缺少 Bangumi ID")
+            return None
         cloud_path, cloud_name = cloud_asset_path(dict(task), dict(release), dict(series), settings)
         ts = now()
-        conn.execute(
-            """
-            INSERT INTO cloud_assets
-              (task_id, release_id, series_id, episode_number, provider, provider_file_id,
-               cloud_path, cloud_name, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
-            ON CONFLICT(task_id) DO UPDATE SET
-              provider_file_id=excluded.provider_file_id,
-              cloud_path=excluded.cloud_path,
-              cloud_name=excluded.cloud_name,
-              status='available',
-              updated_at=excluded.updated_at
-            """,
-            (
-                task["id"],
-                task["release_id"],
-                task["series_id"],
-                release["episode_number"],
-                task["pikpak_file_id"],
-                cloud_path,
-                cloud_name,
-                ts,
-                ts,
-            ),
-        )
+        existing_by_file = None
+        if task["pikpak_file_id"]:
+            existing_by_file = conn.execute(
+                "SELECT id FROM cloud_assets WHERE provider='pikpak' AND provider_file_id=?",
+                (task["pikpak_file_id"],),
+            ).fetchone()
+        if existing_by_file:
+            conn.execute(
+                """
+                UPDATE cloud_assets
+                SET task_id=?, release_id=?, series_id=?, episode_number=?,
+                    cloud_path=?, cloud_name=?, status='available', updated_at=?
+                WHERE id=?
+                """,
+                (
+                    task["id"],
+                    task["release_id"],
+                    task["series_id"],
+                    release["episode_number"],
+                    cloud_path,
+                    cloud_name,
+                    ts,
+                    existing_by_file["id"],
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO cloud_assets
+                  (task_id, release_id, series_id, episode_number, provider, provider_file_id,
+                   cloud_path, cloud_name, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                  provider_file_id=excluded.provider_file_id,
+                  cloud_path=excluded.cloud_path,
+                  cloud_name=excluded.cloud_name,
+                  status='available',
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    task["id"],
+                    task["release_id"],
+                    task["series_id"],
+                    release["episode_number"],
+                    task["pikpak_file_id"],
+                    cloud_path,
+                    cloud_name,
+                    ts,
+                    ts,
+                ),
+            )
         asset = conn.execute("SELECT id FROM cloud_assets WHERE task_id=?", (task["id"],)).fetchone()
     if asset:
         log("info", f"云盘资源已入库: {cloud_name}")
@@ -173,6 +202,7 @@ def reconcile_sync_intents(settings: dict[str, str]) -> tuple[int, int]:
                 LEFT JOIN sync_rules sr ON sr.series_id=ca.series_id
                 WHERE ca.status='available'
                   AND COALESCE(s.hidden, 0)=0
+                  AND s.bangumi_id != ''
                   AND (COALESCE(sr.sync_enabled, 0)=1 OR ?=1)
                 """,
                 (1 if auto_sync else 0,),
@@ -340,7 +370,7 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
         series_rows = [
             dict(row)
             for row in conn.execute(
-                "SELECT * FROM series WHERE COALESCE(hidden, 0)=0"
+                "SELECT * FROM series WHERE COALESCE(hidden, 0)=0 AND bangumi_id != ''"
             ).fetchall()
         ]
     imported = 0

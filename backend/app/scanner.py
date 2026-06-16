@@ -5,10 +5,10 @@ import feedparser
 
 from .db import connect, hide_orphan_series, log, merge_duplicate_series, now
 from .library import bool_setting, render_episode_name, target_dir
-from .metadata import refresh_series_metadata
+from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, parse_entry, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
-from .sync_service import ensure_sync_rule, process_sync_tasks, reconcile_sync_intents, upsert_cloud_asset
+from .sync_service import process_sync_tasks, reconcile_sync_intents, upsert_cloud_asset
 
 
 async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
@@ -20,23 +20,38 @@ async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
     return [parse_entry(entry) for entry in parsed.entries]
 
 
-def upsert_release(item: ParsedRelease) -> tuple[int, int]:
+def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[int, int]:
     fp = fingerprint(item.series_title or item.title, item.bangumi_id)
+    metadata = metadata or {}
     with connect() as conn:
         ts = now()
         conn.execute(
             """
             INSERT INTO series
-              (fingerprint, title_raw, title_cn, bangumi_id, year, hidden, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+              (fingerprint, title_raw, title_cn, bangumi_id, year, poster_url, summary,
+               metadata_source, hidden, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'bangumi', 0, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               title_raw=excluded.title_raw,
-              title_cn=CASE WHEN series.title_cn='' THEN excluded.title_cn ELSE series.title_cn END,
+              title_cn=CASE WHEN excluded.title_cn!='' THEN excluded.title_cn ELSE series.title_cn END,
               bangumi_id=CASE WHEN series.bangumi_id='' THEN excluded.bangumi_id ELSE series.bangumi_id END,
-              year=CASE WHEN series.year=0 THEN excluded.year ELSE series.year END,
+              year=CASE WHEN excluded.year!=0 THEN excluded.year ELSE series.year END,
+              poster_url=CASE WHEN excluded.poster_url!='' THEN excluded.poster_url ELSE series.poster_url END,
+              summary=CASE WHEN excluded.summary!='' THEN excluded.summary ELSE series.summary END,
+              metadata_source='bangumi',
               updated_at=excluded.updated_at
             """,
-            (fp, item.series_title, item.series_title, item.bangumi_id, item.year, ts, ts),
+            (
+                fp,
+                item.series_title,
+                metadata.get("title_cn") or item.series_title,
+                item.bangumi_id,
+                metadata.get("year") or item.year,
+                metadata.get("poster_url") or "",
+                metadata.get("summary") or "",
+                ts,
+                ts,
+            ),
         )
         series_id = conn.execute("SELECT id FROM series WHERE fingerprint=?", (fp,)).fetchone()["id"]
         if item.episode_number:
@@ -99,6 +114,158 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
             (series_id, release_id),
         )
     return series_id, release_id
+
+
+def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
+    with connect() as conn:
+        ts = now()
+        status = "pending_metadata" if item.bangumi_id else "pending"
+        reason = reason or ("等待元数据刷新" if item.bangumi_id else "RSS 未提供 Bangumi ID")
+        conn.execute(
+            """
+            INSERT INTO rss_candidates
+              (guid, title, series_title, episode_number, subtitle_group, resolution,
+               language, bangumi_id, torrent_url, magnet, published_at, status,
+               reason, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guid) DO UPDATE SET
+              title=excluded.title,
+              series_title=excluded.series_title,
+              episode_number=excluded.episode_number,
+              subtitle_group=excluded.subtitle_group,
+              resolution=excluded.resolution,
+              language=excluded.language,
+              bangumi_id=excluded.bangumi_id,
+              torrent_url=excluded.torrent_url,
+              magnet=excluded.magnet,
+              published_at=excluded.published_at,
+              status=CASE WHEN rss_candidates.status='completed' THEN rss_candidates.status ELSE excluded.status END,
+              reason=excluded.reason,
+              updated_at=excluded.updated_at
+            """,
+            (
+                item.guid,
+                item.title,
+                item.series_title,
+                item.episode_number,
+                item.subtitle_group,
+                item.resolution,
+                item.language,
+                item.bangumi_id,
+                item.torrent_url,
+                item.magnet,
+                item.published_at,
+                status,
+                reason,
+                ts,
+                ts,
+            ),
+        )
+        row = conn.execute("SELECT id FROM rss_candidates WHERE guid=?", (item.guid,)).fetchone()
+        candidate_id = int(row["id"])
+        if item.bangumi_id:
+            conn.execute(
+                """
+                INSERT INTO metadata_tasks
+                  (candidate_id, status, bangumi_id, created_at, updated_at)
+                VALUES (?, 'pending', ?, ?, ?)
+                ON CONFLICT(candidate_id) DO UPDATE SET
+                  status=CASE WHEN metadata_tasks.status='completed' THEN metadata_tasks.status ELSE 'pending' END,
+                  bangumi_id=excluded.bangumi_id,
+                  last_error='',
+                  updated_at=excluded.updated_at
+                """,
+                (candidate_id, item.bangumi_id, ts, ts),
+            )
+        return candidate_id
+
+
+def candidate_to_parsed_release(candidate) -> ParsedRelease:
+    return ParsedRelease(
+        guid=candidate["guid"],
+        title=candidate["title"],
+        series_title=candidate["series_title"],
+        episode_number=candidate["episode_number"],
+        subtitle_group=candidate["subtitle_group"],
+        resolution=candidate["resolution"],
+        language=candidate["language"],
+        bangumi_id=candidate["bangumi_id"],
+        year=0,
+        torrent_url=candidate["torrent_url"],
+        magnet=candidate["magnet"],
+        published_at=candidate["published_at"],
+    )
+
+
+async def process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT mt.*, rc.*
+            FROM metadata_tasks mt
+            JOIN rss_candidates rc ON rc.id=mt.candidate_id
+            WHERE mt.status IN ('pending', 'failed') AND mt.attempts < 3
+            ORDER BY mt.id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    completed = 0
+    failed = 0
+    for row in rows:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE metadata_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                (now(), row["id"]),
+            )
+        if not row["bangumi_id"]:
+            error = "缺少 Bangumi ID"
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE metadata_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
+                    (error, now(), row["id"]),
+                )
+                conn.execute(
+                    "UPDATE rss_candidates SET status='failed', reason=?, updated_at=? WHERE id=?",
+                    (error, now(), row["candidate_id"]),
+                )
+            failed += 1
+            continue
+        try:
+            metadata = await fetch_bangumi_metadata(row["bangumi_id"], settings.get("rss_proxy", ""))
+            release = candidate_to_parsed_release(row)
+            series_id, release_id = upsert_release(release, metadata)
+        except Exception as exc:
+            error = str(exc)[:2000]
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE metadata_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
+                    (error, now(), row["id"]),
+                )
+                conn.execute(
+                    "UPDATE rss_candidates SET status='failed', reason=?, updated_at=? WHERE id=?",
+                    (error, now(), row["candidate_id"]),
+                )
+            log("error", f"元数据刷新失败: {row['title']} - {error}")
+            failed += 1
+            continue
+        with connect() as conn:
+            conn.execute(
+                "UPDATE metadata_tasks SET status='completed', last_error='', updated_at=? WHERE id=?",
+                (now(), row["id"]),
+            )
+            conn.execute(
+                "UPDATE rss_candidates SET status='completed', reason='', updated_at=? WHERE id=?",
+                (now(), row["candidate_id"]),
+            )
+        ids, choice = resolve_series_choice(series_id, settings)
+        mark_selected_releases(series_id, ids)
+        if choice["reason"]:
+            log("warn", f"自动入库跳过: {metadata.get('title_cn') or row['series_title']} - {choice['reason']}")
+        for selected_release_id in ids:
+            queue_release(selected_release_id, settings)
+        completed += 1
+    return completed, failed
 
 
 def priority_match(value: str, preferred: str, field: str = "") -> bool:
@@ -183,6 +350,9 @@ def resolve_series_choice(series_id: int, settings: dict[str, str]) -> tuple[lis
     }
     if not series:
         info["reason"] = "番剧不存在"
+        return [], info
+    if not series["bangumi_id"]:
+        info["reason"] = "缺少 Bangumi ID，不能进入自动入库"
         return [], info
     if not rows:
         info["reason"] = "没有可下载发布"
@@ -275,7 +445,14 @@ def mark_selected_releases(series_id: int, release_ids: list[int]) -> None:
 def queue_release(release_id: int, settings: dict[str, str]) -> None:
     with connect() as conn:
         release = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
+        if not release:
+            return
         series = conn.execute("SELECT * FROM series WHERE id=?", (release["series_id"],)).fetchone()
+        if not series:
+            return
+        if not series["bangumi_id"]:
+            log("warn", f"云盘入库跳过: {series['title_cn']} - 缺少 Bangumi ID")
+            return
         series_dict = dict(series)
         target = target_dir(series_dict, settings)
         name = render_episode_name(series_dict, release["episode_number"], "", settings)
@@ -333,7 +510,9 @@ async def process_tasks(settings: dict[str, str], limit: int = 5) -> None:
             SELECT dt.*, r.magnet, r.torrent_url, r.title
             FROM download_tasks dt
             JOIN releases r ON r.id = dt.release_id
+            JOIN series s ON s.id = dt.series_id
             WHERE dt.status IN ('pending', 'failed') AND dt.attempts < 3
+              AND s.bangumi_id != ''
             ORDER BY dt.id ASC
             LIMIT ?
             """,
@@ -386,8 +565,10 @@ async def poll_submitted_tasks(settings: dict[str, str]) -> None:
             SELECT dt.*, r.title
             FROM download_tasks dt
             JOIN releases r ON r.id=dt.release_id
+            JOIN series s ON s.id=dt.series_id
             WHERE dt.status IN ('submitted', 'running')
               AND (dt.pikpak_task_id != '' OR dt.pikpak_file_id != '')
+              AND s.bangumi_id != ''
             """
         ).fetchall()
     if not local_tasks:
@@ -449,44 +630,9 @@ async def scan_and_queue(settings: dict[str, str]) -> str:
         log("error", f"RSS 扫描失败: {exc}")
         return f"RSS 扫描失败: {exc}"
 
-    touched_release_ids: set[int] = set()
+    candidate_count = 0
     for item in items:
-        _, release_id = upsert_release(item)
-        touched_release_ids.add(release_id)
-    with connect() as conn:
-        merge_duplicate_series(conn)
-        hidden = hide_orphan_series(conn)
-        if hidden:
-            log("info", f"已隐藏无资源临时条目: {hidden} 个")
-
-    queued = 0
-    with connect() as conn:
-        placeholders = ",".join("?" for _ in touched_release_ids)
-        touched_series = {
-            row["series_id"]
-            for row in conn.execute(
-                f"SELECT DISTINCT series_id FROM releases WHERE id IN ({placeholders})",
-                list(touched_release_ids),
-            ).fetchall()
-        } if touched_release_ids else set()
-    for series_id in touched_series:
-        with connect() as conn:
-            series = conn.execute("SELECT metadata_source, bangumi_id FROM series WHERE id=?", (series_id,)).fetchone()
-        if series and not series["metadata_source"]:
-            await refresh_series_metadata(series_id, settings.get("rss_proxy", ""))
-        ensure_sync_rule(series_id, settings)
-        ids, choice = resolve_series_choice(series_id, settings)
-        mark_selected_releases(series_id, ids)
-        if choice["reason"]:
-            with connect() as conn:
-                series_title = conn.execute("SELECT title_cn FROM series WHERE id=?", (series_id,)).fetchone()
-            log("warn", f"自动下载跳过: {series_title['title_cn'] if series_title else series_id} - {choice['reason']}")
-        for release_id in ids:
-            queue_release(release_id, settings)
-            queued += 1
-    log("info", f"扫描完成: {len(items)} 条发布，更新 {len(touched_series)} 部番剧，队列 {queued} 条")
-    await process_tasks(settings)
-    reconciled, sync_queued = reconcile_sync_intents(settings)
-    if sync_queued:
-        await process_sync_tasks(settings)
-    return f"RSS {len(items)} 条，更新 {len(touched_series)} 部，云盘队列 {queued} 条，同步排队 {sync_queued} 个"
+        upsert_rss_candidate(item)
+        candidate_count += 1
+    log("info", f"RSS 扫描完成: {len(items)} 条发布，写入候选 {candidate_count} 条")
+    return f"RSS {len(items)} 条，写入候选 {candidate_count} 条"

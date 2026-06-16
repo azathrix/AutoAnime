@@ -88,6 +88,26 @@
         <el-card class="span-4 console-card">
           <el-tabs v-model="consoleTab">
             <el-tab-pane label="待处理" name="issues">
+              <el-alert
+                v-if="dashboard.rss_candidates.length"
+                type="warning"
+                show-icon
+                :closable="false"
+                title="以下 RSS 发布缺少 Bangumi ID，不会进入番剧库，也不会自动入 PikPak。"
+                class="settings-alert"
+              />
+              <el-table v-if="dashboard.rss_candidates.length" :data="dashboard.rss_candidates" height="260" class="candidate-table">
+                <el-table-column prop="status" label="状态" width="100">
+                  <template #default="{ row }"><el-tag type="warning">{{ row.status }}</el-tag></template>
+                </el-table-column>
+                <el-table-column prop="series_title" label="解析标题" min-width="220" show-overflow-tooltip />
+                <el-table-column prop="episode_number" label="集" width="70" />
+                <el-table-column prop="subtitle_group" label="字幕组" width="130" show-overflow-tooltip />
+                <el-table-column prop="resolution" label="分辨率" width="100" />
+                <el-table-column prop="language" label="语言" width="90" />
+                <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
+                <el-table-column prop="title" label="RSS 标题" min-width="260" show-overflow-tooltip />
+              </el-table>
               <el-empty v-if="!issues.length" description="当前没有需要人工处理的问题" />
               <el-table v-else :data="issues" height="420">
                 <el-table-column prop="type" label="类型" width="130">
@@ -149,6 +169,11 @@
                 <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
                 <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
                 <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
+                <el-popconfirm title="会清空番剧、候选、任务、云盘资源、本地同步记录和日志。确定？" @confirm="runAction('/system/clear-data')">
+                  <template #reference>
+                    <el-button type="danger" plain>清除所有数据</el-button>
+                  </template>
+                </el-popconfirm>
               </div>
             </el-tab-pane>
           </el-tabs>
@@ -392,6 +417,7 @@ const seriesDrawer = ref(false)
 const selectedSeries = ref(null)
 const dashboard = reactive({
   series: [],
+  rss_candidates: [],
   tasks: [],
   sync_tasks: [],
   sync_rules: [],
@@ -417,9 +443,12 @@ const cloudAssetTotal = computed(() => dashboard.series.reduce((sum, item) => su
 const localAssetTotal = computed(() => dashboard.series.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
 const cloudQueueCount = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted'].includes(t.status)).length)
 const syncQueueCount = computed(() => dashboard.sync_tasks.filter(t => ['pending', 'running', 'failed'].includes(t.status)).length)
-const metadataIssueCount = computed(() => dashboard.series.filter(item => !item.bangumi_id && !item.tmdb_id).length)
+const metadataIssueCount = computed(() => dashboard.rss_candidates.length)
 const issues = computed(() => {
   const rows = []
+  for (const item of dashboard.rss_candidates) {
+    rows.push({ type: 'RSS 候选', level: 'warning', title: item.series_title || item.title, message: item.reason || '缺少 Bangumi ID', series_id: null })
+  }
   for (const item of dashboard.series) {
     if (!item.bangumi_id && !item.tmdb_id) {
       rows.push({ type: '元数据', level: 'warning', title: item.title_cn, message: '缺少 Bangumi/TMDB 绑定，不能可靠入库', series_id: item.id })

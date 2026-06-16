@@ -147,6 +147,8 @@ async def rename_cloud_file(settings: dict[str, str], file_id: str, new_name: st
     if not file_id:
         return
     api = build_client(settings)
+    if settings.get("pikpak_auth_mode") == "password":
+        await api.login()
     await api.file_rename(file_id, new_name)
 
 
@@ -154,6 +156,8 @@ async def get_cloud_download_url(settings: dict[str, str], file_id: str) -> str:
     if not file_id:
         raise RuntimeError("缺少云盘文件 ID")
     api = build_client(settings)
+    if settings.get("pikpak_auth_mode") == "password":
+        await api.login()
     data = await api.get_download_url(file_id)
     if not isinstance(data, dict):
         raise RuntimeError("无法获取云盘下载链接")

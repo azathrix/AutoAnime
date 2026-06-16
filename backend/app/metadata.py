@@ -28,6 +28,18 @@ async def fetch_bangumi_subject(subject_id: str, proxy: str = "") -> dict[str, A
         return resp.json()
 
 
+async def fetch_bangumi_metadata(subject_id: str, proxy: str = "") -> dict[str, Any]:
+    subject = await fetch_bangumi_subject(subject_id, proxy)
+    title_cn = subject_cn_name(subject) or subject.get("name") or ""
+    images = subject.get("images") or {}
+    return {
+        "title_cn": title_cn,
+        "poster_url": images.get("large") or images.get("common") or images.get("medium") or "",
+        "summary": subject.get("summary") or "",
+        "year": subject_year(subject),
+    }
+
+
 async def search_bangumi(keyword: str, proxy: str = "") -> list[dict[str, Any]]:
     payload = {"keyword": keyword, "filter": {"type": [2]}}
     async with httpx.AsyncClient(

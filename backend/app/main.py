@@ -12,10 +12,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import connect, diagnostics, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
+from .db import clear_runtime_data, connect, diagnostics, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
-from .scanner import mark_selected_releases, poll_submitted_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
+from .scanner import mark_selected_releases, poll_submitted_tasks, process_metadata_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
 from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series, reconcile_sync_intents, scan_cloud_library
 
 
@@ -97,6 +97,7 @@ async def scheduled_scan() -> None:
     settings = get_settings()
     if bool_setting(settings.get("auto_scan", "false")):
         await scan_and_queue(settings)
+    await process_metadata_tasks(settings)
     await process_tasks(settings)
     await poll_submitted_tasks(settings)
     backfill_cloud_assets_from_completed_tasks(settings)
@@ -111,32 +112,40 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
         update_operation(operation_id, "1/6 正在扫描 RSS")
     scan_message = await scan_and_queue(settings)
     if operation_id:
-        update_operation(operation_id, "2/6 正在处理 PikPak 入库队列")
+        update_operation(operation_id, "2/7 正在处理元数据队列")
+    metadata_done, metadata_failed = await process_metadata_tasks(settings)
+    if operation_id:
+        update_operation(operation_id, "3/7 正在处理 PikPak 入库队列")
     await process_tasks(settings)
     if operation_id:
-        update_operation(operation_id, "3/6 正在刷新 PikPak 任务状态")
+        update_operation(operation_id, "4/7 正在刷新 PikPak 任务状态")
     await poll_submitted_tasks(settings)
     if operation_id:
-        update_operation(operation_id, "4/6 正在登记云盘资源")
+        update_operation(operation_id, "5/7 正在登记云盘资源")
     cloud_count = backfill_cloud_assets_from_completed_tasks(settings)
     if operation_id:
-        update_operation(operation_id, "5/6 正在调和本地同步")
+        update_operation(operation_id, "6/7 正在调和本地同步")
     reconciled, queued = reconcile_sync_intents(settings)
     if queued:
         if operation_id:
-            update_operation(operation_id, "6/6 正在同步到本地")
+            update_operation(operation_id, "7/7 正在同步到本地")
         await process_sync_tasks(settings)
-    return f"{scan_message}；补齐云盘 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+    return f"{scan_message}；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；补齐云盘 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
 
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
     with connect() as conn:
-        metadata_pending = conn.execute(
+        metadata_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM metadata_tasks GROUP BY status"
+            ).fetchall()
+        }
+        candidate_pending = conn.execute(
             """
             SELECT COUNT(*) AS count
-            FROM series
-            WHERE COALESCE(hidden, 0)=0
-              AND (metadata_source='' OR (bangumi_id='' AND tmdb_id=''))
+            FROM rss_candidates
+            WHERE status IN ('pending', 'failed') AND bangumi_id=''
             """
         ).fetchone()["count"]
         merge_pending = conn.execute(
@@ -185,10 +194,10 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         {
             "key": "metadata",
             "name": "元数据",
-            "pending": metadata_pending,
-            "running": 0,
-            "failed": 0,
-            "description": "缺少 Bangumi/TMDB 或元数据的番剧",
+            "pending": metadata_rows.get("pending", 0) + candidate_pending,
+            "running": metadata_rows.get("running", 0),
+            "failed": metadata_rows.get("failed", 0),
+            "description": "候选必须获取完整元数据后才进入正式库",
         },
         {
             "key": "merge",
@@ -296,8 +305,18 @@ def dashboard_data() -> dict[str, Any]:
             LEFT JOIN local_assets la ON la.series_id=s.id AND la.status='synced'
             LEFT JOIN sync_rules sr ON sr.series_id=s.id
             WHERE COALESCE(s.hidden, 0)=0
+              AND s.bangumi_id != ''
             GROUP BY s.id
             ORDER BY s.updated_at DESC
+            """
+        ).fetchall()
+        rss_candidates = conn.execute(
+            """
+            SELECT *
+            FROM rss_candidates
+            WHERE status IN ('pending', 'failed')
+            ORDER BY updated_at DESC
+            LIMIT 120
             """
         ).fetchall()
         tasks = conn.execute(
@@ -306,6 +325,7 @@ def dashboard_data() -> dict[str, Any]:
             FROM download_tasks dt
             JOIN series s ON s.id=dt.series_id
             JOIN releases r ON r.id=dt.release_id
+            WHERE s.bangumi_id != ''
             ORDER BY dt.id DESC
             LIMIT 80
             """
@@ -316,6 +336,7 @@ def dashboard_data() -> dict[str, Any]:
             SELECT ca.*, s.title_cn
             FROM cloud_assets ca
             JOIN series s ON s.id=ca.series_id
+            WHERE s.bangumi_id != ''
             ORDER BY ca.updated_at DESC
             LIMIT 80
             """
@@ -325,6 +346,7 @@ def dashboard_data() -> dict[str, Any]:
             SELECT st.*, s.title_cn
             FROM sync_tasks st
             JOIN series s ON s.id=st.series_id
+            WHERE s.bangumi_id != ''
             ORDER BY st.updated_at DESC
             LIMIT 80
             """
@@ -338,6 +360,7 @@ def dashboard_data() -> dict[str, Any]:
             FROM sync_rules sr
             JOIN series s ON s.id=sr.series_id
             WHERE COALESCE(s.hidden, 0)=0
+              AND s.bangumi_id != ''
             ORDER BY sr.updated_at DESC
             LIMIT 200
             """
@@ -352,6 +375,7 @@ def dashboard_data() -> dict[str, Any]:
             JOIN series s ON s.id=dt.series_id
             JOIN releases r ON r.id=dt.release_id
             WHERE dt.status IN ('pending', 'running', 'submitted', 'failed')
+              AND s.bangumi_id != ''
             ORDER BY
               CASE dt.status
                 WHEN 'running' THEN 0
@@ -376,6 +400,7 @@ def dashboard_data() -> dict[str, Any]:
         ).fetchall()
     return {
         "series": rows_to_dicts(series),
+        "rss_candidates": rows_to_dicts(rss_candidates),
         "tasks": rows_to_dicts(tasks),
         "logs": rows_to_dicts(logs),
         "cloud_assets": rows_to_dicts(cloud_assets),
@@ -603,6 +628,13 @@ async def api_retry_failed() -> dict[str, str]:
     log("info", f"已重置失败任务: {count} 个")
     asyncio.create_task(process_tasks(get_settings()))
     return {"status": "started", "count": str(count), "message": "失败任务已重新入队"}
+
+
+@app.post("/api/system/clear-data")
+async def api_clear_data() -> dict[str, str]:
+    clear_runtime_data()
+    log("warn", "已清除所有运行数据")
+    return {"status": "completed", "message": "已清除所有运行数据"}
 
 
 @app.post("/api/series/{series_id}/download")

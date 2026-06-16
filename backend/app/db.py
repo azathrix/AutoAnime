@@ -84,6 +84,25 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS rss_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guid TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                series_title TEXT NOT NULL DEFAULT '',
+                episode_number INTEGER NOT NULL DEFAULT 0,
+                subtitle_group TEXT NOT NULL DEFAULT '',
+                resolution TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                bangumi_id TEXT NOT NULL DEFAULT '',
+                torrent_url TEXT NOT NULL DEFAULT '',
+                magnet TEXT NOT NULL DEFAULT '',
+                published_at TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS download_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 release_id INTEGER NOT NULL,
@@ -98,6 +117,17 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(release_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS metadata_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                bangumi_id TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS cloud_assets (
@@ -242,6 +272,42 @@ def migrate(conn: sqlite3.Connection) -> None:
             message TEXT NOT NULL DEFAULT '',
             started_at TEXT NOT NULL,
             finished_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rss_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guid TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            series_title TEXT NOT NULL DEFAULT '',
+            episode_number INTEGER NOT NULL DEFAULT 0,
+            subtitle_group TEXT NOT NULL DEFAULT '',
+            resolution TEXT NOT NULL DEFAULT '',
+            language TEXT NOT NULL DEFAULT '',
+            bangumi_id TEXT NOT NULL DEFAULT '',
+            torrent_url TEXT NOT NULL DEFAULT '',
+            magnet TEXT NOT NULL DEFAULT '',
+            published_at TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            reason TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS metadata_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id INTEGER NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            bangumi_id TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
         """
     )
@@ -450,6 +516,8 @@ def diagnostics() -> dict[str, Any]:
             "series",
             "episodes",
             "releases",
+            "rss_candidates",
+            "metadata_tasks",
             "download_tasks",
             "cloud_assets",
             "sync_rules",
@@ -473,3 +541,27 @@ def table_count_visible_series(conn: sqlite3.Connection) -> int:
     except sqlite3.Error:
         return 0
     return int(row["count"]) if row else 0
+
+
+def clear_runtime_data() -> None:
+    with connect() as conn:
+        for table in [
+            "sync_tasks",
+            "local_assets",
+            "sync_rules",
+            "cloud_assets",
+            "download_tasks",
+            "metadata_tasks",
+            "rss_candidates",
+            "releases",
+            "episodes",
+            "series",
+            "operations",
+            "logs",
+        ]:
+            conn.execute(f"DELETE FROM {table}")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','download_tasks','metadata_tasks','rss_candidates','releases','episodes','series','operations','logs')")
+    try:
+        LOG_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
