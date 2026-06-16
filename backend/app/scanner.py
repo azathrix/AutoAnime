@@ -702,6 +702,7 @@ async def _process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> 
             """,
             (now(), limit),
         ).fetchall()
+    log("info", f"元数据队列: 本轮可执行 {len(rows)} 个")
     async def handle(row) -> tuple[int, int]:
         with connect() as conn:
             conn.execute(

@@ -323,6 +323,7 @@ h1 {
 .log-console {
   display: grid;
   gap: 10px;
+  min-height: 360px;
   min-width: 0;
 }
 
@@ -341,6 +342,7 @@ h1 {
   line-height: 1.6;
   margin: 0;
   max-height: 420px;
+  min-height: 320px;
   overflow: auto;
   padding: 14px;
   white-space: pre-wrap;

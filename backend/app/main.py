@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +22,12 @@ from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_syn
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
-queue_debounce_task: asyncio.Task | None = None
-queue_tick_running = False
+QUEUE_DEBOUNCE_SECONDS = 10.0
+QueueHandler = Callable[[], Awaitable[None]]
+queue_handlers: dict[str, QueueHandler] = {}
+queue_debounce_tasks: dict[str, asyncio.Task] = {}
+queue_running: set[str] = set()
+queue_rerun_requested: set[str] = set()
 
 
 class SettingsPayload(BaseModel):
@@ -125,12 +130,430 @@ def settings_response() -> dict[str, Any]:
     return result
 
 
+def count_ready(query: str, params: tuple[Any, ...] = ()) -> int:
+    with connect() as conn:
+        row = conn.execute(query, params).fetchone()
+    return int(row["count"] or 0) if row else 0
+
+
+def ready_count_mikan_match() -> int:
+    ts = now()
+    with connect() as conn:
+        pending_tasks = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM mikan_match_tasks
+            WHERE status IN ('pending', 'failed')
+              AND (retry_after='' OR retry_after <= ?)
+            """,
+            (ts,),
+        ).fetchone()["count"]
+        missing_tasks = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM rss_candidates rc
+            LEFT JOIN mikan_match_tasks mt ON mt.candidate_id=rc.id
+            WHERE rc.page_url != ''
+              AND (
+                    rc.bangumi_id = ''
+                 OR rc.mikan_bangumi_id = ''
+                 OR mt.id IS NULL
+                 OR mt.mikan_bangumi_id = ''
+                 OR mt.bangumi_id = ''
+                 OR mt.status IN ('failed', 'pending')
+              )
+            """,
+        ).fetchone()["count"]
+    return int(pending_tasks or 0) + int(missing_tasks or 0)
+
+
+def ready_count_metadata() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM metadata_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
+def ready_count_selection() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM selection_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
+def ready_count_backfill() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM backfill_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
+def ready_count_download() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM download_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
+def ready_count_cloud_poll() -> int:
+    ts = now()
+    with connect() as conn:
+        task_rows = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM cloud_poll_tasks
+            WHERE status IN ('pending', 'failed')
+              AND (retry_after='' OR retry_after <= ?)
+            """,
+            (ts,),
+        ).fetchone()["count"]
+        submitted_rows = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM download_tasks dt
+            JOIN cloud_submissions cs ON cs.download_task_id=dt.id
+            JOIN series s ON s.id=dt.series_id
+            WHERE dt.status='submitted'
+              AND s.bangumi_id != ''
+              AND cs.provider='pikpak'
+              AND cs.status='submitted'
+              AND (dt.retry_after='' OR dt.retry_after <= ?)
+            """,
+            (ts,),
+        ).fetchone()["count"]
+    return int(task_rows or 0) + int(submitted_rows or 0)
+
+
+def ready_count_cloud_asset() -> int:
+    ts = now()
+    with connect() as conn:
+        task_rows = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM cloud_asset_tasks
+            WHERE status IN ('pending', 'failed')
+              AND (retry_after='' OR retry_after <= ?)
+            """,
+            (ts,),
+        ).fetchone()["count"]
+        completed_rows = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM download_tasks dt
+            JOIN cloud_submissions cs ON cs.download_task_id=dt.id
+            LEFT JOIN cloud_assets ca ON ca.task_id=dt.id
+            WHERE dt.status='completed'
+              AND dt.pikpak_file_id != ''
+              AND cs.provider='pikpak'
+              AND cs.status='completed'
+              AND ca.id IS NULL
+            """,
+        ).fetchone()["count"]
+    return int(task_rows or 0) + int(completed_rows or 0)
+
+
+def ready_count_sync_plan() -> int:
+    auto_sync = bool_setting(get_settings().get("auto_sync_following", "true"))
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT ca.series_id) AS count
+            FROM cloud_assets ca
+            JOIN series s ON s.id=ca.series_id
+            LEFT JOIN sync_rules sr ON sr.series_id=ca.series_id
+            WHERE ca.status='available'
+              AND COALESCE(s.hidden, 0)=0
+              AND s.bangumi_id != ''
+              AND (COALESCE(sr.sync_enabled, 0)=1 OR ?=1)
+            """,
+            (1 if auto_sync else 0,),
+        ).fetchone()
+    return int(row["count"] or 0) if row else 0
+
+
+def ready_count_sync() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM sync_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
+def ready_queue_names() -> list[str]:
+    checks = [
+        ("mikan_match", ready_count_mikan_match),
+        ("metadata", ready_count_metadata),
+        ("selection", ready_count_selection),
+        ("backfill", ready_count_backfill),
+        ("download", ready_count_download),
+        ("cloud_poll", ready_count_cloud_poll),
+        ("cloud_asset", ready_count_cloud_asset),
+        ("sync_plan", ready_count_sync_plan),
+        ("sync", ready_count_sync),
+    ]
+    return [name for name, fn in checks if fn() > 0]
+
+
+async def handle_mikan_match_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        repaired = enqueue_missing_mikan_match_tasks(now())
+        done, failed = await process_mikan_match_tasks(get_settings())
+        repair_series_mikan_ids(now())
+        if not runtime_generation_alive(generation):
+            return
+        if repaired == 0 and done == 0 and failed == 0:
+            break
+        if ready_count_mikan_match() <= 0:
+            break
+    if ready_count_metadata() > 0:
+        trigger_queue("metadata")
+    if ready_count_mikan_match() > 0:
+        trigger_queue("mikan_match")
+
+
+async def handle_metadata_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        done, failed = await process_metadata_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        if done == 0 and failed == 0:
+            break
+        if ready_count_metadata() <= 0:
+            break
+    if ready_count_selection() > 0:
+        trigger_queue("selection")
+    if ready_count_backfill() > 0:
+        trigger_queue("backfill")
+    if ready_count_metadata() > 0:
+        trigger_queue("metadata")
+
+
+async def handle_selection_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        done, failed = await process_selection_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        if done == 0 and failed == 0:
+            break
+        if ready_count_selection() <= 0:
+            break
+    if ready_count_download() > 0:
+        trigger_queue("download")
+    if ready_count_selection() > 0:
+        trigger_queue("selection")
+
+
+async def handle_backfill_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        done, failed = await process_backfill_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        if done == 0 and failed == 0:
+            break
+        if ready_count_backfill() <= 0:
+            break
+    if ready_count_mikan_match() > 0:
+        trigger_queue("mikan_match")
+    if ready_count_backfill() > 0:
+        trigger_queue("backfill")
+
+
+async def handle_download_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        before = ready_count_download()
+        await process_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        after = ready_count_download()
+        if before == 0 or after >= before:
+            break
+        if after <= 0:
+            break
+    if ready_count_cloud_poll() > 0:
+        trigger_queue("cloud_poll")
+    if ready_count_cloud_asset() > 0:
+        trigger_queue("cloud_asset")
+    if ready_count_download() > 0:
+        trigger_queue("download")
+
+
+async def handle_cloud_poll_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        before = ready_count_cloud_poll()
+        settings = get_settings()
+        await reconcile_rclone_submitted_tasks(settings)
+        await poll_submitted_tasks(settings)
+        if not runtime_generation_alive(generation):
+            return
+        after = ready_count_cloud_poll()
+        if before == 0 or after >= before:
+            break
+        if after <= 0:
+            break
+    if ready_count_cloud_asset() > 0:
+        trigger_queue("cloud_asset")
+    if ready_count_cloud_poll() > 0:
+        trigger_queue("cloud_poll")
+
+
+async def handle_cloud_asset_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        before = ready_count_cloud_asset()
+        settings = get_settings()
+        await process_cloud_asset_tasks(settings)
+        backfill_cloud_assets_from_completed_tasks(settings)
+        if not runtime_generation_alive(generation):
+            return
+        after = ready_count_cloud_asset()
+        if before == 0 or after >= before:
+            break
+        if after <= 0:
+            break
+    trigger_queue("sync_plan")
+    if ready_count_cloud_asset() > 0:
+        trigger_queue("cloud_asset")
+
+
+async def handle_sync_plan_queue() -> None:
+    settings = get_settings()
+    reconciled, queued = reconcile_sync_intents(settings)
+    if queued:
+        log("info", f"同步计划已更新: {reconciled} 部番剧，新增同步任务 {queued} 个")
+        trigger_queue("sync")
+    if ready_count_sync_plan() > 0:
+        trigger_queue("sync_plan")
+
+
+async def handle_sync_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        before = ready_count_sync()
+        await process_sync_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        after = ready_count_sync()
+        if before == 0 or after >= before:
+            break
+        if after <= 0:
+            break
+    if ready_count_sync() > 0:
+        trigger_queue("sync")
+
+
+def ensure_queue_handlers() -> None:
+    queue_handlers.clear()
+    queue_handlers.update(
+        {
+            "mikan_match": handle_mikan_match_queue,
+            "metadata": handle_metadata_queue,
+            "selection": handle_selection_queue,
+            "backfill": handle_backfill_queue,
+            "download": handle_download_queue,
+            "cloud_poll": handle_cloud_poll_queue,
+            "cloud_asset": handle_cloud_asset_queue,
+            "sync_plan": handle_sync_plan_queue,
+            "sync": handle_sync_queue,
+        }
+    )
+
+
+async def run_queue(name: str) -> None:
+    handler = queue_handlers.get(name)
+    if not handler:
+        return
+    if name in queue_running:
+        queue_rerun_requested.add(name)
+        return
+    queue_debounce_tasks.pop(name, None)
+    queue_running.add(name)
+    try:
+        await handler()
+    except Exception as exc:
+        log("error", f"队列处理失败[{name}]: {exc}")
+    finally:
+        queue_running.discard(name)
+        if name in queue_rerun_requested:
+            queue_rerun_requested.discard(name)
+            trigger_queue(name)
+
+
+def trigger_queue(name: str, delay: float | None = None) -> None:
+    if name not in queue_handlers:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if name in queue_running:
+        queue_rerun_requested.add(name)
+        return
+    pending_task = queue_debounce_tasks.get(name)
+    if pending_task and not pending_task.done():
+        pending_task.cancel()
+    actual_delay = QUEUE_DEBOUNCE_SECONDS if delay is None else max(0.0, delay)
+
+    async def runner() -> None:
+        try:
+            if actual_delay > 0:
+                await asyncio.sleep(actual_delay)
+            await run_queue(name)
+        except asyncio.CancelledError:
+            return
+
+    queue_debounce_tasks[name] = loop.create_task(runner())
+
+
+def trigger_queues(names: list[str], delay: float | None = None) -> None:
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        trigger_queue(name, delay=delay)
+
+
+async def dispatch_ready_queues() -> None:
+    trigger_queues(ready_queue_names(), delay=0)
+
+
 def reschedule() -> None:
     scheduler.remove_all_jobs()
+    ensure_queue_handlers()
     settings = get_settings()
     minutes = max(1, int(settings.get("scan_interval_minutes") or 60))
     scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes, id="rss_scan")
-    scheduler.add_job(lambda: asyncio.create_task(scheduled_queue_tick()), "interval", minutes=1, id="queue_tick")
+    scheduler.add_job(lambda: asyncio.create_task(dispatch_ready_queues()), "interval", minutes=1, id="queue_dispatch")
 
 
 def runtime_generation_alive(expected: str) -> bool:
@@ -141,119 +564,7 @@ async def scheduled_scan() -> None:
     settings = get_settings()
     if bool_setting(settings.get("auto_scan", "false")):
         await scan_and_queue(settings)
-    await scheduled_queue_tick()
-
-
-async def scheduled_queue_tick() -> None:
-    global queue_tick_running
-    if queue_tick_running:
-        return
-    queue_tick_running = True
-    settings = get_settings()
-    generation = get_runtime_generation()
-    try:
-        enqueue_missing_mikan_match_tasks(now())
-        if not runtime_generation_alive(generation):
-            return
-        await process_mikan_match_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        await process_metadata_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        await process_selection_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        await process_backfill_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        await process_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        await reconcile_rclone_submitted_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        await poll_submitted_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        await process_cloud_asset_tasks(settings)
-        if not runtime_generation_alive(generation):
-            return
-        backfill_cloud_assets_from_completed_tasks(settings)
-        reconciled, queued = reconcile_sync_intents(settings)
-        if queued:
-            log("info", f"周期任务已排本地同步: {reconciled} 部番剧，{queued} 个任务")
-            await process_sync_tasks(settings)
-        if has_ready_queue_work():
-            trigger_queue_debounced()
-    finally:
-        queue_tick_running = False
-
-
-def has_ready_queue_work() -> bool:
-    ts = now()
-    with connect() as conn:
-        checks = [
-            (
-                "mikan_match_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-            (
-                "metadata_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-            (
-                "selection_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-            (
-                "backfill_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-            (
-                "download_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-            (
-                "cloud_poll_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-            (
-                "cloud_asset_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-            (
-                "sync_tasks",
-                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
-            ),
-        ]
-        for table, where in checks:
-            row = conn.execute(
-                f"SELECT COUNT(*) AS count FROM {table} WHERE {where}",
-                (ts,),
-            ).fetchone()
-            if row and int(row["count"] or 0) > 0:
-                return True
-    return False
-
-
-def trigger_queue_debounced(delay: float = 10.0) -> None:
-    global queue_debounce_task
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    if queue_debounce_task and not queue_debounce_task.done():
-        queue_debounce_task.cancel()
-
-    async def runner() -> None:
-        try:
-            await asyncio.sleep(delay)
-            await scheduled_queue_tick()
-        except asyncio.CancelledError:
-            return
-
-    queue_debounce_task = loop.create_task(runner())
+    trigger_queue("mikan_match", delay=0)
 
 
 async def run_full_refresh(settings: dict[str, str], operation_id: int | None = None) -> str:
@@ -279,56 +590,78 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
-        update_operation(operation_id, "3/8 正在处理元数据队列")
-    log("info", "扫描全部: 3/8 开始处理元数据队列")
+        update_operation(operation_id, "3/10 正在处理元数据队列")
+    log("info", "扫描全部: 3/10 开始处理元数据队列")
     metadata_done, metadata_failed = await process_metadata_tasks(settings)
     log("info", f"扫描全部: 元数据完成，成功 {metadata_done} 个，失败 {metadata_failed} 个")
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
-        update_operation(operation_id, "4/8 正在处理自动选集/补全")
-    log("info", "扫描全部: 4/8 开始处理自动选集和整季补全")
+        update_operation(operation_id, "4/10 正在处理自动选集/补全")
+    log("info", "扫描全部: 4/10 开始处理自动选集和整季补全")
     selection_done, selection_failed = await process_selection_tasks(settings)
     backfill_done, backfill_failed = await process_backfill_tasks(settings)
     log("info", f"扫描全部: 选集完成，成功 {selection_done} 个，失败 {selection_failed} 个；补全完成，成功 {backfill_done} 个，失败 {backfill_failed} 个")
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
+
     if operation_id:
-        update_operation(operation_id, "5/8 正在处理 PikPak 入库队列")
-    log("info", "扫描全部: 5/8 开始处理 PikPak 入库队列")
+        update_operation(operation_id, "5/10 正在处理补全后新增的 Mikan/元数据")
+    log("info", "扫描全部: 5/10 开始处理补全后新增的 Mikan/元数据")
+    replay_repaired_mikan = enqueue_missing_mikan_match_tasks(now())
+    replay_mikan_done, replay_mikan_failed = await process_mikan_match_tasks(settings)
+    replay_series_mikan = repair_series_mikan_ids(now())
+    replay_metadata_done, replay_metadata_failed = await process_metadata_tasks(settings)
+    log(
+        "info",
+        f"扫描全部: 补全回灌完成，补排 Mikan {replay_repaired_mikan} 个；"
+        f"Mikan 成功 {replay_mikan_done} 个，失败 {replay_mikan_failed} 个；"
+        f"回填番剧 Mikan ID {replay_series_mikan} 个；"
+        f"元数据成功 {replay_metadata_done} 个，失败 {replay_metadata_failed} 个",
+    )
+    if not runtime_generation_alive(generation):
+        return "运行数据已重置，本次扫描已中止"
+
+    if operation_id:
+        update_operation(operation_id, "6/10 正在重跑自动选集")
+    log("info", "扫描全部: 6/10 开始重跑自动选集")
+    replay_selection_done, replay_selection_failed = await process_selection_tasks(settings)
+    log("info", f"扫描全部: 重跑选集完成，成功 {replay_selection_done} 个，失败 {replay_selection_failed} 个")
+    if not runtime_generation_alive(generation):
+        return "运行数据已重置，本次扫描已中止"
+    if operation_id:
+        update_operation(operation_id, "7/10 正在处理 PikPak 入库队列")
+    log("info", "扫描全部: 7/10 开始处理 PikPak 入库队列")
     await process_tasks(settings)
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
-        update_operation(operation_id, "6/8 正在刷新 PikPak 任务状态")
-    log("info", "扫描全部: 6/8 开始刷新 PikPak 任务状态")
+        update_operation(operation_id, "8/10 正在刷新 PikPak 任务状态")
+    log("info", "扫描全部: 8/10 开始刷新 PikPak 任务状态")
     rclone_done, rclone_missing = await reconcile_rclone_submitted_tasks(settings)
     poll_done, poll_failed = await poll_submitted_tasks(settings)
     log("info", f"扫描全部: 云盘状态刷新完成，rclone 已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，失败 {poll_failed} 个")
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
-        update_operation(operation_id, "7/8 正在登记云盘资源")
-    log("info", "扫描全部: 7/8 开始登记云盘资源")
+        update_operation(operation_id, "9/10 正在登记云盘资源")
+    log("info", "扫描全部: 9/10 开始登记云盘资源")
     cloud_done, cloud_failed = await process_cloud_asset_tasks(settings)
     cloud_count = backfill_cloud_assets_from_completed_tasks(settings)
     log("info", f"扫描全部: 云盘资源登记完成，登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个")
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
-        update_operation(operation_id, "8/8 正在调和本地同步")
-    log("info", "扫描全部: 8/8 开始调和本地同步")
+        update_operation(operation_id, "10/10 正在调和本地同步")
+    log("info", "扫描全部: 10/10 开始调和本地同步")
     reconciled, queued = reconcile_sync_intents(settings)
     if queued:
         if operation_id:
-            update_operation(operation_id, "8/8 正在同步到本地")
+            update_operation(operation_id, "10/10 正在同步到本地")
         log("info", f"扫描全部: 本地同步排队 {queued} 个，开始执行同步")
         await process_sync_tasks(settings)
-    global queue_debounce_task
-    if queue_debounce_task and not queue_debounce_task.done():
-        queue_debounce_task.cancel()
-        queue_debounce_task = None
-    return f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；回填番剧 Mikan ID {repaired_series_mikan} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；选集成功 {selection_done} 个，失败 {selection_failed} 个；补全成功 {backfill_done} 个，失败 {backfill_failed} 个；rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+    trigger_queues(ready_queue_names(), delay=0)
+    return f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；回填番剧 Mikan ID {repaired_series_mikan} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；选集成功 {selection_done} 个，失败 {selection_failed} 个；补全成功 {backfill_done} 个，失败 {backfill_failed} 个；补全回灌补排 Mikan {replay_repaired_mikan} 个；补全回灌 Mikan 成功 {replay_mikan_done} 个，失败 {replay_mikan_failed} 个；补全回灌回填番剧 Mikan ID {replay_series_mikan} 个；补全回灌元数据成功 {replay_metadata_done} 个，失败 {replay_metadata_failed} 个；重跑选集成功 {replay_selection_done} 个，失败 {replay_selection_failed} 个；rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
 
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
@@ -839,7 +1172,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
                 enqueue_selection_task(conn, int(row["id"]), ts, "全局规则变更，重新计算自动选集")
                 enqueue_backfill_task(conn, int(row["id"]), current, ts)
     reschedule()
-    trigger_queue_debounced()
+    trigger_queues(["selection", "backfill"])
     log("info", "全局设置已保存")
     return settings_response()
 
@@ -950,7 +1283,6 @@ async def api_scan() -> dict[str, str]:
         lambda op_id: run_full_refresh(get_settings(), op_id),
         "正在依次执行 RSS、Mikan 匹配、元数据、云盘入库、PikPak 状态、本地同步",
     )
-    trigger_queue_debounced()
     return {"status": "started", "operation_id": str(operation_id), "message": "扫描全部已启动"}
 
 
@@ -961,7 +1293,7 @@ async def api_process_tasks(force: bool = Query(False)) -> dict[str, str]:
         lambda: process_tasks(get_settings(), force=force),
         "正在立即提交 PikPak 云盘任务" if force else "正在提交 PikPak 云盘任务",
     )
-    trigger_queue_debounced()
+    trigger_queue("download", delay=0)
     return {"status": "started", "operation_id": str(operation_id), "message": "云盘队列已立即触发" if force else "队列处理已启动"}
 
 
@@ -991,7 +1323,7 @@ async def api_scan_cloud() -> dict[str, str]:
         return f"入库 {imported} 个，跳过 {skipped} 个"
 
     operation_id = run_operation("扫描云盘库", run, "正在扫描 PikPak 云盘库")
-    trigger_queue_debounced()
+    trigger_queues(["sync_plan", "sync"])
     return {"status": "started", "operation_id": str(operation_id), "message": "云盘库扫描已启动"}
 
 
@@ -1004,7 +1336,7 @@ async def api_process_sync_tasks() -> dict[str, str]:
         return f"调和 {reconciled} 部，同步排队 {queued} 个"
 
     operation_id = run_operation("本地同步", run, "正在把云盘资源同步到本地")
-    trigger_queue_debounced()
+    trigger_queues(["sync_plan", "sync"], delay=0)
     return {"status": "started", "operation_id": str(operation_id), "message": "本地同步处理已启动"}
 
 
@@ -1040,16 +1372,7 @@ async def api_retry_failed() -> dict[str, str]:
             (now(),),
         )
     log("info", f"已重置失败任务: {total} 个")
-    settings = get_settings()
-    asyncio.create_task(process_mikan_match_tasks(settings))
-    asyncio.create_task(process_metadata_tasks(settings))
-    asyncio.create_task(process_selection_tasks(settings))
-    asyncio.create_task(process_backfill_tasks(settings))
-    asyncio.create_task(process_tasks(settings))
-    asyncio.create_task(poll_submitted_tasks(settings))
-    asyncio.create_task(process_cloud_asset_tasks(settings))
-    asyncio.create_task(process_sync_tasks(settings))
-    trigger_queue_debounced()
+    trigger_queues(["mikan_match", "metadata", "selection", "backfill", "download", "cloud_poll", "cloud_asset", "sync_plan", "sync"], delay=0)
     return {"status": "started", "count": str(total), "message": f"失败任务已重新入队: {total} 个"}
 
 
@@ -1095,15 +1418,14 @@ async def api_download_series(series_id: int) -> dict[str, str]:
         return {"status": "skipped", "count": "0", "message": message}
     for release_id in ids:
         queue_release(release_id, settings)
-    asyncio.create_task(process_tasks(settings))
+    trigger_queue("download", delay=0)
     return {"status": "queued", "count": str(len(ids)), "message": f"已加入云盘队列: {len(ids)} 条"}
 
 
 @app.post("/api/releases/{release_id}/download")
 async def api_download_release(release_id: int) -> dict[str, str]:
-    settings = get_settings()
-    queue_release(release_id, settings)
-    asyncio.create_task(process_tasks(settings))
+    queue_release(release_id, get_settings())
+    trigger_queue("download", delay=0)
     return {"status": "queued"}
 
 
@@ -1125,7 +1447,7 @@ async def api_sync_series(series_id: int) -> dict[str, str]:
     settings = get_settings()
     count, message = queue_sync_for_series(series_id, settings)
     if count > 0:
-        asyncio.create_task(process_sync_tasks(settings))
+        trigger_queue("sync", delay=0)
         return {"status": "queued", "count": str(count), "message": message}
     return {"status": "completed", "count": "0", "message": message}
 

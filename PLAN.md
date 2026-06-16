@@ -94,6 +94,318 @@ jellyfin
   - `cloud_poll_tasks`: 只负责轮询 PikPak 离线任务状态；rclone 模式下没有任务 ID 时，通过扫描目标目录判断是否已完成。
   - `cloud_asset_tasks`: 只负责把完成的 PikPak 任务登记为 `cloud_assets`。
 
+### 调度模型修订
+
+当前项目后续不再继续朝“单次扫描串行跑完整条流水线”演进，而是明确切换为“触发式队列 + 独立 worker + 定时任务独立维护”的模型。
+
+核心原则：
+
+- `扫描全部` 只是一个触发入口，不是主流程编排器。
+- `扫描全部` 触发的实际动作只需要是 RSS 源头扫描；后续 `Mikan -> 元数据 -> 选集 -> 补全 -> 云盘 -> 同步 -> NFO` 全部由任务触发自动推进。
+- 每种任务表由自己的 worker 处理，收到新任务后自动触发，不依赖“回头再跑一遍总流程”。
+- 上游任务成功后，只负责写下一阶段任务；是否执行由下一阶段 worker 自己决定。
+- 任务之间是 DAG 式单向依赖，不是单线程流水线。
+- 允许多个队列并行推进；同一队列内部允许设置 worker 并发数。
+- 每个 task 必须继续细拆，尽量做到“一个 task 只专心干一件事”，不要把多种职责揉在一个处理器里。
+- 所有队列都支持 10 秒防抖触发：
+  - 新任务进入时，启动一个 10 秒倒计时。
+  - 倒计时期间如果继续有新任务进入，则重置 10 秒。
+  - 到时后批量处理当前可执行任务。
+  - worker 正在处理时新任务进入，只加入下一批，不打断当前批次。
+- 失败任务不能阻塞队列：
+  - 单项失败后立刻记录 `last_error`、`retry_after`。
+  - worker 继续处理后续任务。
+  - 冷却结束后该任务自动重新进入可执行状态。
+
+反对继续使用的旧模式：
+
+- 不再使用“RSS -> Mikan -> 元数据 -> 选集 -> 补全 -> 云盘 -> 同步”这种一次性串到底的扫描式流程作为主模型。
+- 不再依赖单个 `scheduled_queue_tick()` 顺序扫描所有队列表来推进系统。
+- 不再把“队列状态”与“定时任务状态”混在一个视图或一个逻辑里。
+
+推荐的新触发链路：
+
+```txt
+RSS 定时任务 / 手动扫描
+-> rss_candidates
+-> mikan_match_tasks
+-> metadata_tasks
+-> series/releases 正式入库
+-> selection_tasks
+-> backfill_tasks
+-> cloud_presence_tasks
+-> download_enqueue_tasks
+-> download_tasks
+-> cloud_poll_tasks
+-> cloud_asset_tasks
+-> sync_plan_tasks
+-> sync_tasks
+-> nfo_tasks
+```
+
+补全链路必须是自我闭环的：
+
+```txt
+backfill_tasks
+-> 新增 rss_candidates
+-> 新增 mikan_match_tasks
+-> 新增 metadata_tasks
+-> 新增 selection_tasks
+-> 新增 download_tasks
+```
+
+这意味着整季补全产生的新候选，不允许等待下一次“扫描全部”才继续处理；它们必须自动触发下游 worker。
+
+### Task 细拆原则
+
+后续所有任务表统一遵循“单职责 task”原则。每个 task 只做一件事，不允许一个 task 同时承担“判断 + 提交 + 轮询 + 入库 + 同步”多种动作。
+
+建议拆分方向：
+
+- `rss_fetch_tasks`
+  - 只负责拉 RSS feed
+- `rss_candidate_tasks`
+  - 只负责把 RSS item 写入候选
+- `mikan_match_tasks`
+  - 只负责 `Episode -> Mikan Bangumi -> Bangumi subject`
+- `metadata_tasks`
+  - 只负责拉 Bangumi 元数据
+- `library_merge_tasks`
+  - 只负责把通过门槛的数据正式写入 `series/releases`
+- `selection_tasks`
+  - 只负责根据规则选中候选发布
+- `backfill_tasks`
+  - 只负责根据 Mikan Bangumi 页面补整季候选
+- `cloud_presence_tasks`
+  - 只负责检查云盘是否已存在该集，避免重复提交
+- `download_enqueue_tasks`
+  - 只负责判断是否需要提交云盘任务
+- `download_tasks`
+  - 只负责向云盘提交下载
+- `cloud_poll_tasks`
+  - 只负责轮询远端任务状态
+- `cloud_asset_tasks`
+  - 只负责把云盘完成结果登记为 `cloud_assets`
+- `sync_plan_tasks`
+  - 只负责根据同步意图和资源状态生成同步计划
+- `sync_tasks`
+  - 只负责把云盘文件拉到本地
+- `local_presence_tasks`
+  - 只负责检查本地文件是否存在
+- `nfo_tasks`
+  - 只负责生成或刷新 NFO
+- `cleanup_tasks`
+  - 只负责清理已完成任务、过期记录、孤儿状态
+
+注意：
+
+- “检查云盘是否已存在”必须从提交下载里拆出去，避免重复下载。
+- “判断是否需要同步”和“真正执行同步”必须拆开。
+- “生成 NFO”不能挂在同步函数里顺手做，必须是单独任务。
+- 后续若增加“归档完结番”“移动目录”“重建文件名”等动作，也必须各自独立建表。
+
+### 定时任务模型
+
+定时任务不再通过写死的 APScheduler job 名称直接绑定业务函数，而是引入独立调度表，例如：
+
+- `scheduled_jobs`
+- `scheduled_job_runs`
+
+建议字段：
+
+`scheduled_jobs`
+
+- `id`
+- `job_key`
+- `job_type`
+- `enabled`
+- `cron_expr` 或 `interval_minutes`
+- `debounce_seconds`
+- `max_concurrency`
+- `last_run_at`
+- `next_run_at`
+- `last_status`
+- `last_error`
+- `created_at`
+- `updated_at`
+
+`scheduled_job_runs`
+
+- `id`
+- `job_id`
+- `status`
+- `trigger_source` (`system/manual`)
+- `started_at`
+- `finished_at`
+- `message`
+- `stats_json`
+
+首批拆分的定时任务类型：
+
+- `rss_scan`
+- `mikan_match_dispatch`
+- `metadata_dispatch`
+- `selection_dispatch`
+- `backfill_dispatch`
+- `download_dispatch`
+- `cloud_poll_dispatch`
+- `cloud_asset_dispatch`
+- `sync_dispatch`
+- `cloud_reconcile`
+- `local_reconcile`
+- `cleanup`
+- `archive_completed_series`（后续）
+
+原则：
+
+- 定时任务负责“定期触发某类队列处理”，不是直接代表队列本身。
+- 队列有没有待处理，由各任务表实时决定。
+- 控制台里定时任务应作为单独一组信息展示，而不是塞进队列状态里。
+
+### 控制台重构方向
+
+控制台页面后续按“左侧总览 + 右侧详情”的模型重做，不再以当前这种大杂烩表格堆叠为主。
+
+目标布局：
+
+- 左侧：任务域导航 / 队列摘要 / 定时任务摘要
+- 右侧：当前选中项详情
+
+左侧一级分组建议：
+
+- 队列
+- 定时任务
+- 系统日志
+- 维护
+
+`队列` 下动态显示当前存在的任务队列，例如：
+
+- RSS 候选
+- RSS 拉取
+- Mikan 匹配
+- 元数据
+- 正式入库
+- 自动选集
+- 整季补全
+- 云盘存在性检查
+- 云盘提交准备
+- 云盘提交
+- 云盘轮询
+- 云盘入库
+- 同步计划
+- 本地同步
+- 本地存在性检查
+- NFO
+
+每个队列列表项至少展示：
+
+- 队列名
+- `pending/running/failed/cooling/completed` 数量
+- 当前是否有 worker 正在处理
+- 下次自动触发时间
+- 最近一次错误摘要
+
+右侧队列详情应展示：
+
+- 队列说明
+- 处理规则
+- 当前运行 worker 数
+- 并发上限
+- 防抖时间
+- 最近一次启动时间
+- 最近一次完成时间
+- 最近一次批次统计
+- 当前批次正在处理的 item
+- 待处理 item 列表
+- 失败 item 列表
+- 完成 item 列表（支持自动清理或手动清空）
+
+item 级详情至少包括：
+
+- `id`
+- `status`
+- `reason`
+- `attempts`
+- `retry_after`
+- `last_error`
+- `created_at`
+- `updated_at`
+- 与上下游的关联 id
+
+例如：
+
+- `candidate_id`
+- `series_id`
+- `release_id`
+- `download_task_id`
+- `provider_file_id`
+
+交互要求：
+
+- 左侧点击一个队列，右侧只显示这个队列的详情。
+- 队列详情中的待处理、失败、运行中、已完成通过 Tab 切换，不要全部堆一起。
+- 所有详情窗体高度固定，避免点击不同队列时布局一长一短。
+- 已完成 item 默认只保留短时间，之后自动清理；同时保留“清空已完成”按钮。
+- 失败 item 支持单条重试、批量重试。
+- 卡在冷却中的 item 要清楚显示剩余等待时间，避免用户误以为卡死。
+
+控制台不再依赖“操作日志”理解系统状态：
+
+- 用户应当主要通过队列本身看到系统当前在做什么。
+- 每个队列项必须直接展示：
+  - 当前正在处理什么
+  - 为什么在等待
+  - 为什么失败
+  - 下次什么时候重试
+- 因此后续可以逐步弱化甚至移除现有 `operations` 在控制台中的中心地位。
+- `operations` 若继续保留，也只作为后台批次记录和排障辅助，不作为主视图。
+
+系统日志区域仍然保留，但它只是细节补充，不承担主流程解释责任。
+
+### 维护与观察性
+
+维护页不再承担主流程操作，只放补救动作：
+
+- 手动扫描 RSS
+- 手动触发指定队列
+- 重试失败任务
+- 扫描云盘库
+- 全量审计云盘状态
+- 全量审计本地状态
+- 清理已完成任务
+- 清除运行数据
+
+日志和操作分开：
+
+- `operations` 后续降级为辅助记录，主观察性来自各队列自身状态。
+- 服务日志用于细粒度输出每个 worker、每批任务、每个失败项的详细原因。
+- 控制台日志页需要支持：
+  - 搜索
+  - 清空日志
+  - 按队列过滤
+  - 按级别过滤
+  - 最低显示高度，避免内容少时界面塌陷
+
+### 后续实施顺序
+
+后续重构建议按下面顺序推进：
+
+1. 移除“串行扫描推进主流程”的依赖，保留 `扫描全部` 仅作为 RSS 源头触发。
+2. 继续把 task 拆细，补齐单职责任务表，尤其是：
+   - `cloud_presence_tasks`
+   - `download_enqueue_tasks`
+   - `sync_plan_tasks`
+   - `nfo_tasks`
+3. 抽象队列 worker 注册表：
+   - 每个队列定义自己的 `fetch/handle/schedule/summary`。
+4. 抽象触发中心：
+   - 新任务写入后调用统一 `trigger_queue(queue_name)`。
+5. 抽出定时任务表与定时任务执行记录。
+6. 控制台改成“队列树 + 详情面板”。
+7. 让控制台从“操作日志视角”切到“队列状态视角”。
+8. 为每个队列补充详细 item 状态与运行批次日志。
+9. 再做多 worker 并发参数化和任务限流配置。
+
 ### 当前代码结构
 
 ```txt
@@ -494,7 +806,50 @@ access_token + refresh_token
 
 当前路线图只围绕“追番/补番 -> PikPak -> 本地同步”。电影、美剧、收藏导入和 Jellyfin API 暂停，避免主线过散。
 
-### P0: 可观测任务和数据安全
+优先级原则：
+
+- 系统重构 > 调度重构 > 数据正确性 > 自动化闭环 > 控制台重构 > 小型 UI 优化
+- 能影响“任务是否正确推进”的问题，优先级永远高于展示细节
+- 样式、最小高度、按钮文案、版面微调等都归为后置优化
+
+### P0: 触发式调度重构
+
+目标：彻底把当前“串行扫描推进全流程”的模式切换成“源头触发 + 独立队列自动推进”。
+
+- 移除 `scheduled_queue_tick()` 作为主编排器的职责。
+- `扫描全部` 只触发 RSS 扫描，不再顺序强推全链路。
+- 建立统一的 `trigger_queue(queue_name)` 调度中心。
+- 每个队列收到新任务后 10 秒防抖触发。
+- 每个队列支持独立 worker 和并发配置。
+- 同一队列失败项不阻塞其他项。
+- 补全后新增的任务自动触发下游队列，而不是等待下一次扫描。
+
+状态：未开始。当前系统已有部分防抖和独立任务表，但主调度仍是串行模型。
+
+### P1: 任务表继续细拆
+
+目标：让每种 task 只做一件事，降低串扰和状态混乱。
+
+- 从现有任务表继续拆出：
+  - `cloud_presence_tasks`
+  - `download_enqueue_tasks`
+  - `sync_plan_tasks`
+  - `local_presence_tasks`
+  - `nfo_tasks`
+  - `cleanup_tasks`
+- 检查、规划、执行分开，不允许一个 task 混做多件事。
+- 为每种 task 建立统一字段：
+  - `status`
+  - `attempts`
+  - `retry_after`
+  - `last_error`
+  - `created_at`
+  - `updated_at`
+  - `batch_id`
+
+状态：未开始。现有 `mikan_match_tasks`、`metadata_tasks`、`cloud_poll_tasks` 已形成基础，但还不够细。
+
+### P2: 可观测任务和数据安全
 
 目标：先解决“点了没反应”和“看起来数据被清空”的问题。
 
@@ -518,25 +873,24 @@ access_token + refresh_token
 
 状态：部分完成。`operations`、系统诊断、设置保存错误提示已接入；后续还需要把所有旧按钮统一成更清晰的流程入口。
 
-### P0.5: 控制台 UI 收敛
+### P3: 控制台重构
 
-目标：界面围绕队列控制台，而不是“流水线”或让用户手动点下载/同步。
+目标：界面围绕“队列自身状态”，而不是“流水线”或“操作日志”。
 
 - 侧边栏收敛为：
   - 控制台
   - 番剧库
   - 设置
-- 控制台展示 RSS、元数据、合并、PikPak 入库、云盘资源登记、本地同步等队列状态。
-- 问题处理合并到控制台 Tab，展示元数据缺失、字幕组冲突、分辨率冲突、语言冲突、云盘失败、本地同步失败。
-- 日常界面不显示“存入云盘”“处理同步”“处理云盘任务”。
-- 扫描全部、刷新 PikPak 状态、扫描云盘库、重试失败只放在控制台维护 Tab。
-- 扫描全部显示当前阶段进度，运行中不能重复点击。
-- 操作日志读取服务器日志文件 `/data/autoanime.log` 尾部，同时展示 operations。
-- 番剧详情页展示 RSS 发布、PikPak 任务、云盘资源、本地资源，方便追踪误识别来源。
+- 控制台左侧展示动态队列树和定时任务树。
+- 右侧展示当前队列的 item 详情、运行批次、失败项、等待项。
+- 问题处理并入队列详情，不再单独做一个“操作日志式”入口。
+- `operations` 降级为辅助信息，主界面不再依赖它解释系统状态。
+- 日常界面不显示“存入云盘”“处理同步”“处理云盘任务”这种主流程按钮。
+- 维护动作只放在维护区。
 
-状态：已完成第二版。后续需要把控制台队列迁移为真实独立队列表，并支持每个队列独立轮询间隔。
+状态：未开始。当前控制台还是旧布局。
 
-### P1: 修复自动入云盘语义
+### P4: 修复自动入云盘语义
 
 目标：先解决“点了没反应”和自动下载条件不清的问题。
 
@@ -553,7 +907,7 @@ access_token + refresh_token
 
 状态：部分完成。按钮反馈已通过 operations 改进；自动入云盘仍需把跳过原因直接展示到番剧卡片。
 
-### P2: 拆分云盘入库和本地同步
+### P5: 拆分云盘入库和本地同步
 
 目标：建立新状态模型。
 
@@ -573,7 +927,7 @@ access_token + refresh_token
 
 状态：部分完成。`cloud_assets`、`sync_rules`、`local_assets`、`sync_tasks` 已建立；PikPak 状态轮询已拆到 `cloud_poll_tasks`，云盘资源登记已拆到 `cloud_asset_tasks`；云盘库扫描已接入；旧 `download_tasks` 仍待重命名或迁移为 `cloud_tasks`。
 
-### P3: 本地同步执行器
+### P6: 本地同步执行器
 
 目标：把云盘资源复制到 NAS 本地真实目录。
 
@@ -586,7 +940,7 @@ access_token + refresh_token
 
 状态：部分完成。同步意图开关、取消同步、同步后 NFO 已实现；新增同步意图调和，云盘已有资源可自动排同步；同步失败会冷却后自动重试且不阻塞后续任务；真实 PikPak 文件下载需要 NAS 环境验证。
 
-### P4: 元数据优先合并
+### P7: 元数据优先合并
 
 目标：扫描时尽早建立稳定身份。
 
@@ -600,7 +954,7 @@ access_token + refresh_token
 
 修正：RSS 没有提供 Bangumi.tv subject ID 时，不再自动按标题搜索 Bangumi 并绑定第一个结果，避免误识别为无关番剧；Mikan 来源先通过 Mikan 页面解析 subject ID，失败时停在 `mikan_match_tasks`。
 
-### P5: 语言过滤和三维自动选择
+### P8: 语言过滤和三维自动选择
 
 目标：让自动下载可靠。
 
@@ -622,7 +976,7 @@ access_token + refresh_token
 - 语言解析识别 `简日`、`繁日`、`简繁`、`简英`、`繁英` 等复合标签。
 - 语言优先级按包含关系保守匹配：例如 `简体` 可匹配 `简日`，但如果同时存在多个简体复合候选且没有更精确规则，不自动任选，进入待处理。
 
-### P6: Mikan 追番闭环
+### P9: Mikan 追番闭环
 
 目标：让 Mikan RSS 新集自动进入 PikPak，并按同步意图落到本地。
 
@@ -636,7 +990,7 @@ access_token + refresh_token
 
 状态：部分完成。RSS 扫描、自动入云盘、同步意图和 NFO 已有；需要完善“需要处理”列表和真实 NAS 验证。
 
-### P7: Nyaa/其他索引器补番
+### P10: Nyaa/其他索引器补番
 
 目标：为老番补全提供可搜索来源，不再假装 RSS 能补历史集。
 
@@ -652,7 +1006,7 @@ access_token + refresh_token
 
 状态：未开始。
 
-### P8: 云盘已有资源导入
+### P11: 云盘已有资源导入
 
 目标：让 PikPak 里已经存在的动画能进入管理和本地同步流程。
 
@@ -664,7 +1018,7 @@ access_token + refresh_token
 
 状态：部分完成。保守扫描已实现；待确认导入 UI 未实现。
 
-### P9: 全量状态审计
+### P12: 全量状态审计
 
 目标：提供一个手动按钮，完整检查所有番剧的云盘和本地状态，用于纠偏，不参与定时任务。
 
@@ -675,6 +1029,19 @@ access_token + refresh_token
 - 对缺失项只生成待处理任务，不直接全量下载。
 
 状态：未开始。
+
+### P13: 小型 UI 优化
+
+目标：只处理不影响主流程正确性的界面细节。
+
+- 日志区域最低高度。
+- 各详情容器固定高度。
+- 按钮文案收敛。
+- 队列列表显示更多摘要字段。
+- 图标、间距、滚动体验优化。
+- 网站 logo / favicon。
+
+状态：进行中。仅接受不干扰主线重构的小修。
 
 ## 10. 上传和交接规则
 
