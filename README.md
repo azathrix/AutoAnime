@@ -15,8 +15,8 @@ RSS/导入 -> 元数据匹配 -> 自动选择发布 -> 下载到云盘
 - 按番剧聚合 RSS 发布。
 - Bangumi 元数据刷新。
 - 字幕组、分辨率、语言优先级自动选择。
-- PikPak 离线下载到云盘。
-- PikPak 云盘任务轮询。
+- 通过 rclone PikPak backend 提交离线下载到云盘。
+- 通过 rclone 扫描 PikPak 云盘目录并同步到本地。
 - 云盘完成后登记云盘资源。
 - 手动同步到 NAS 本地。
 - 追更自动同步开关。
@@ -65,6 +65,26 @@ docker compose up -d --build
 
 这会先停止并删除当前 compose 管理的容器，再重新构建启动。挂载的 `./data` 和媒体目录不会被删除。
 
+首次部署后需要在容器内配置 rclone PikPak remote：
+
+```sh
+docker exec -it autoanime rclone config --config /data/rclone/rclone.conf
+```
+
+推荐 remote 名称：
+
+```txt
+pikpak
+```
+
+UI 中默认配置为：
+
+```txt
+rclone 命令: rclone
+rclone 配置文件: /data/rclone/rclone.conf
+rclone remote: pikpak
+```
+
 访问：
 
 ```txt
@@ -106,7 +126,13 @@ Jellyfin 只需要扫描 NAS 本地真实目录，例如：
 
 ## 推荐配置
 
-PikPak 认证方式：
+云盘执行方式：
+
+```txt
+rclone 命令
+```
+
+如果切回 PikPak API，推荐认证方式：
 
 ```txt
 Access + Refresh Token

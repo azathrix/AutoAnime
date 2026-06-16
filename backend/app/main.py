@@ -17,7 +17,7 @@ from .db import clear_runtime_data, connect, diagnostics, finish_operation, get_
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import mark_selected_releases, poll_submitted_tasks, process_metadata_tasks, process_mikan_match_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
-from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_cloud_asset_tasks, process_sync_tasks, queue_sync_for_series, reconcile_sync_intents, scan_cloud_library
+from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_cloud_asset_tasks, process_sync_tasks, queue_sync_for_series, reconcile_rclone_submitted_tasks, reconcile_sync_intents, scan_cloud_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -35,6 +35,10 @@ class SettingsPayload(BaseModel):
     resolution_priority: list[str] = []
     language_priority: list[str] = []
     secondary_language_priority: list[str] = []
+    cloud_transfer_backend: str = "rclone"
+    rclone_command: str = "rclone"
+    rclone_config_path: str = "/data/rclone/rclone.conf"
+    rclone_remote: str = "pikpak"
     pikpak_auth_mode: str = "token"
     pikpak_username: str = ""
     pikpak_password: str = ""
@@ -139,6 +143,7 @@ async def scheduled_queue_tick() -> None:
     await process_mikan_match_tasks(settings)
     await process_metadata_tasks(settings)
     await process_tasks(settings)
+    await reconcile_rclone_submitted_tasks(settings)
     await poll_submitted_tasks(settings)
     await process_cloud_asset_tasks(settings)
     backfill_cloud_assets_from_completed_tasks(settings)
@@ -163,6 +168,7 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
     await process_tasks(settings)
     if operation_id:
         update_operation(operation_id, "5/8 正在刷新 PikPak 任务状态")
+    rclone_done, rclone_missing = await reconcile_rclone_submitted_tasks(settings)
     poll_done, poll_failed = await poll_submitted_tasks(settings)
     if operation_id:
         update_operation(operation_id, "6/8 正在登记云盘资源")
@@ -175,7 +181,7 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
         if operation_id:
             update_operation(operation_id, "8/8 正在同步到本地")
         await process_sync_tasks(settings)
-    return f"{scan_message}；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+    return f"{scan_message}；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
 
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
@@ -528,6 +534,10 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "resolution_priority": "\n".join(payload.resolution_priority),
             "language_priority": "\n".join(payload.language_priority),
             "secondary_language_priority": "\n".join(payload.secondary_language_priority),
+            "cloud_transfer_backend": payload.cloud_transfer_backend,
+            "rclone_command": payload.rclone_command.strip() or "rclone",
+            "rclone_config_path": payload.rclone_config_path.strip(),
+            "rclone_remote": payload.rclone_remote.strip() or "pikpak",
             "pikpak_auth_mode": payload.pikpak_auth_mode,
             "pikpak_username": payload.pikpak_username.strip(),
             "pikpak_password": payload.pikpak_password,
@@ -662,13 +672,14 @@ async def api_process_tasks(force: bool = Query(False)) -> dict[str, str]:
 async def api_poll_tasks() -> dict[str, str]:
     settings = get_settings()
     async def run() -> str:
+        rclone_done, rclone_missing = await reconcile_rclone_submitted_tasks(settings)
         poll_done, poll_failed = await poll_submitted_tasks(settings, force=True)
         cloud_done, cloud_failed = await process_cloud_asset_tasks(settings, force=True)
         count = backfill_cloud_assets_from_completed_tasks(settings)
         reconciled, queued = reconcile_sync_intents(settings)
         if queued:
             await process_sync_tasks(settings)
-        return f"PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘登记 {cloud_done} 个，失败 {cloud_failed} 个；补齐云盘 {count} 个，调和 {reconciled} 部，同步排队 {queued} 个"
+        return f"rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘登记 {cloud_done} 个，失败 {cloud_failed} 个；补齐云盘 {count} 个，调和 {reconciled} 部，同步排队 {queued} 个"
 
     operation_id = run_operation("刷新云盘状态", run, "正在刷新 PikPak 任务和同步状态")
     return {"status": "started", "operation_id": str(operation_id), "message": "状态刷新已启动"}

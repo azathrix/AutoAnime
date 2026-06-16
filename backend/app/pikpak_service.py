@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from .db import save_settings
+from . import rclone_service
 
 try:
     from pikpakapi import PikPakApi
@@ -67,6 +68,8 @@ async def prepare_offline_captcha(api: Any) -> None:
 
 
 async def submit_offline_download(settings: dict[str, str], source: str, target_dir: str) -> dict[str, Any]:
+    if rclone_service.enabled(settings):
+        return await rclone_service.add_url(settings, source, target_dir)
     api = build_client(settings)
     if settings.get("pikpak_auth_mode") == "password":
         await api.login()
@@ -104,6 +107,8 @@ async def list_cloud_files(
     max_depth: int = 4,
     max_items: int = 2000,
 ) -> list[dict[str, Any]]:
+    if rclone_service.enabled(settings):
+        return await rclone_service.list_files(settings, root_path, recursive=True)
     api = build_client(settings)
     if settings.get("pikpak_auth_mode") == "password":
         await api.login()

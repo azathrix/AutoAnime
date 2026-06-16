@@ -255,6 +255,17 @@
                 </div>
               </el-tab-pane>
               <el-tab-pane label="PikPak">
+                <el-form-item label="云盘执行方式">
+                  <el-radio-group v-model="settings.cloud_transfer_backend">
+                    <el-radio-button label="rclone">rclone 命令</el-radio-button>
+                    <el-radio-button label="api">PikPak API</el-radio-button>
+                  </el-radio-group>
+                </el-form-item>
+                <div class="form-row" v-if="settings.cloud_transfer_backend === 'rclone'">
+                  <el-form-item label="rclone 命令"><el-input v-model="settings.rclone_command" placeholder="rclone" /></el-form-item>
+                  <el-form-item label="rclone remote"><el-input v-model="settings.rclone_remote" placeholder="pikpak" /></el-form-item>
+                </div>
+                <el-form-item v-if="settings.cloud_transfer_backend === 'rclone'" label="rclone 配置文件"><el-input v-model="settings.rclone_config_path" placeholder="/data/rclone/rclone.conf" /></el-form-item>
                 <el-form-item label="认证方式">
                   <el-radio-group v-model="settings.pikpak_auth_mode">
                     <el-radio-button label="token">Access + Refresh Token</el-radio-button>

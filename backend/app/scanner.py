@@ -14,6 +14,7 @@ from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, parse_entry, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
 from .sync_service import enqueue_cloud_asset_task
+from . import rclone_service
 
 
 async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
@@ -883,7 +884,9 @@ async def process_tasks(settings: dict[str, str], limit: int = 6, force: bool = 
         else:
             with connect() as conn:
                 ts = now()
-                status = "completed" if file_id and not task_id else "submitted"
+                status = "submitted"
+                if file_id and not task_id and not rclone_service.enabled(settings):
+                    status = "completed"
                 conn.execute(
                     """
                     UPDATE download_tasks
@@ -899,7 +902,8 @@ async def process_tasks(settings: dict[str, str], limit: int = 6, force: bool = 
                     )
                     enqueue_cloud_asset_task(conn, task["id"], ts)
                 else:
-                    enqueue_cloud_poll_task(conn, task["id"], ts)
+                    if not rclone_service.enabled(settings):
+                        enqueue_cloud_poll_task(conn, task["id"], ts)
             log("info", f"已提交 PikPak: {task['title']}")
             submitted += 1
 

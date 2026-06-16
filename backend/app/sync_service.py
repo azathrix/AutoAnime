@@ -13,6 +13,7 @@ from .library import render_episode_name, render_season_dir, render_series_dir, 
 from .metadata import generate_nfo_for_series
 from .parser import normalize_title_key, parse_episode
 from .pikpak_service import get_cloud_download_url, list_cloud_files
+from . import rclone_service
 
 
 def task_retry_after_minutes(minutes: int) -> str:
@@ -482,6 +483,157 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
     return int(asset["id"]) if asset else None
 
 
+def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: dict[str, str]) -> int | None:
+    file_id = cloud_file_id(item)
+    name = str(item.get("name") or Path(str(item.get("cloud_path") or "")).name)
+    path = str(item.get("cloud_path") or name)
+    if not name:
+        return None
+    with connect() as conn:
+        task = conn.execute("SELECT * FROM download_tasks WHERE id=?", (task_id,)).fetchone()
+        if not task:
+            return None
+        release = conn.execute("SELECT * FROM releases WHERE id=?", (task["release_id"],)).fetchone()
+        series = conn.execute("SELECT * FROM series WHERE id=?", (task["series_id"],)).fetchone()
+        if not release or not series:
+            return None
+        ts = now()
+        provider_file_id = file_id or f"rclone:{path}"
+        existing = conn.execute(
+            "SELECT id FROM cloud_assets WHERE provider='pikpak' AND provider_file_id=?",
+            (provider_file_id,),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE cloud_assets
+                SET task_id=?, release_id=?, series_id=?, episode_number=?, cloud_path=?, cloud_name=?,
+                    status='available', updated_at=?
+                WHERE id=?
+                """,
+                (
+                    task["id"],
+                    task["release_id"],
+                    task["series_id"],
+                    release["episode_number"],
+                    path,
+                    name,
+                    ts,
+                    existing["id"],
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO cloud_assets
+                  (task_id, release_id, series_id, episode_number, provider, provider_file_id,
+                   cloud_path, cloud_name, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                  provider_file_id=excluded.provider_file_id,
+                  cloud_path=excluded.cloud_path,
+                  cloud_name=excluded.cloud_name,
+                  status='available',
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    task["id"],
+                    task["release_id"],
+                    task["series_id"],
+                    release["episode_number"],
+                    provider_file_id,
+                    path,
+                    name,
+                    ts,
+                    ts,
+                ),
+            )
+        asset = conn.execute("SELECT id FROM cloud_assets WHERE task_id=?", (task["id"],)).fetchone()
+    if asset:
+        log("info", f"云盘资源已入库: {name}")
+        return int(asset["id"])
+    return None
+
+
+async def reconcile_rclone_submitted_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    if not rclone_service.enabled(settings):
+        return 0, 0
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT dt.*, r.episode_number, r.title AS release_title, s.title_cn
+            FROM download_tasks dt
+            JOIN releases r ON r.id=dt.release_id
+            JOIN series s ON s.id=dt.series_id
+            WHERE dt.status='submitted'
+              AND s.bangumi_id != ''
+              AND (dt.retry_after='' OR dt.retry_after <= ?)
+            ORDER BY dt.id ASC
+            LIMIT ?
+            """,
+            (now(), limit),
+        ).fetchall()
+    completed = 0
+    missing = 0
+    for task in rows:
+        try:
+            files = await rclone_service.list_files(settings, task["target_dir"], recursive=False)
+        except Exception as exc:
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE download_tasks
+                    SET retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(task["attempts"] or 0) + 1), str(exc)[:2000], now(), task["id"]),
+                )
+            log("warn", f"rclone 云盘状态检查失败: {task['release_title']} - {exc}")
+            missing += 1
+            continue
+        normalized_name = normalize_title_key(task["normalized_name"])
+        matched = None
+        for item in files:
+            if item.get("is_dir"):
+                continue
+            name = str(item.get("name") or "")
+            if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
+                continue
+            if normalized_name and normalize_title_key(name) == normalized_name:
+                matched = item
+                break
+            if parse_episode(name) == int(task["episode_number"] or 0):
+                matched = item
+                break
+        if not matched:
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE download_tasks
+                    SET retry_after=?, last_error='rclone 已提交，目标目录暂未发现完成文件', updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(task["attempts"] or 0) + 1), now(), task["id"]),
+                )
+            missing += 1
+            continue
+        asset_id = upsert_cloud_asset_from_download_task(int(task["id"]), matched, settings)
+        if not asset_id:
+            missing += 1
+            continue
+        with connect() as conn:
+            ts = now()
+            conn.execute(
+                "UPDATE download_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
+                (ts, task["id"]),
+            )
+            enqueue_cloud_asset_task(conn, int(task["id"]), ts)
+        completed += 1
+    if completed:
+        reconcile_sync_intents(settings)
+    return completed, missing
+
+
 async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
     files = await list_cloud_files(settings, settings.get("library_root") or "/Anime")
     with connect() as conn:
@@ -539,6 +691,10 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
 async def download_cloud_file_to_local(file_id: str, source: str, target: str, settings: dict[str, str]) -> None:
     target_path = Path(target)
     target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if rclone_service.enabled(settings) and source:
+        await rclone_service.copy_to_local(settings, source, target)
+        return
 
     if file_id:
         url = await get_cloud_download_url(settings, file_id)
