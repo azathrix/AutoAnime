@@ -74,6 +74,21 @@ async def ensure_config(settings: dict[str, str]) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+async def version(settings: dict[str, str]) -> str:
+    process = await asyncio.create_subprocess_exec(
+        command(settings),
+        "version",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    output = stdout.decode("utf-8", errors="replace").strip()
+    error = stderr.decode("utf-8", errors="replace").strip()
+    if process.returncode != 0:
+        raise RuntimeError((error or output or "rclone version 失败")[:2000])
+    return output
+
+
 async def obscure_password(settings: dict[str, str], password: str) -> str:
     process = await asyncio.create_subprocess_exec(
         command(settings),

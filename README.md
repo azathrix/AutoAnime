@@ -65,7 +65,7 @@ docker compose up -d --build
 
 这会先停止并删除当前 compose 管理的容器，再重新构建启动。挂载的 `./data` 和媒体目录不会被删除。
 
-镜像会在容器内安装 rclone。若 NAS 访问 rclone.org 或 GitHub 较慢，可以给构建阶段加代理：
+镜像会在容器内通过 Debian apt 安装 rclone，避免构建阶段直接访问 rclone.org 官方安装脚本。若 NAS 访问 Debian/npm/pip 源较慢，可以给构建阶段加代理：
 
 ```sh
 cd /volume1/docker/autoanime

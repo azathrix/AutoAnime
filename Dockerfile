@@ -42,8 +42,7 @@ WORKDIR /app
 
 COPY backend/requirements.txt .
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl unzip ca-certificates \
-    && curl -fsSL https://rclone.org/install.sh | bash \
+    && apt-get install -y --no-install-recommends rclone ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 
