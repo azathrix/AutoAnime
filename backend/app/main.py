@@ -527,16 +527,16 @@ async def api_delete_series(series_id: int) -> dict[str, str]:
 async def api_scan() -> dict[str, str]:
     with connect() as conn:
         running = conn.execute(
-            "SELECT id FROM operations WHERE name='手动全流程扫描' AND status='running' LIMIT 1"
+            "SELECT id FROM operations WHERE name='扫描全部' AND status='running' LIMIT 1"
         ).fetchone()
     if running:
-        return {"status": "running", "operation_id": str(running["id"]), "message": "全流程扫描正在执行"}
+        return {"status": "running", "operation_id": str(running["id"]), "message": "扫描全部正在执行"}
     operation_id = run_progress_operation(
-        "手动全流程扫描",
+        "扫描全部",
         lambda op_id: run_full_refresh(get_settings(), op_id),
         "正在依次执行 RSS、元数据、云盘入库、PikPak 状态、本地同步",
     )
-    return {"status": "started", "operation_id": str(operation_id), "message": "全流程扫描已启动"}
+    return {"status": "started", "operation_id": str(operation_id), "message": "扫描全部已启动"}
 
 
 @app.post("/api/tasks/process")

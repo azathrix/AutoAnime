@@ -36,7 +36,7 @@
             <el-option label="30 秒" :value="30000" />
           </el-select>
           <el-button :icon="Refresh" @click="reload" :loading="loading">刷新状态</el-button>
-          <el-button v-if="view === 'dashboard'" type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">手动全流程扫描</el-button>
+          <el-button v-if="view === 'dashboard'" type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
         </div>
       </header>
 
@@ -145,7 +145,7 @@
 
             <el-tab-pane label="维护" name="maintenance">
               <div class="maintenance-actions">
-                <el-button type="primary" :icon="Search" @click="runAction('/scan')">手动全流程扫描</el-button>
+                <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
                 <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
                 <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
                 <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
@@ -192,7 +192,7 @@
                   type="info"
                   show-icon
                   :closable="false"
-                  title="保存设置只会更新规则；要立即执行完整处理，请回到控制台点击“手动全流程扫描”。"
+                  title="保存设置只会更新规则；要立即执行完整处理，请回到控制台点击“扫描全部”。"
                   class="settings-alert"
                 />
                 <el-form-item label="Mikan RSS"><el-input v-model="settings.rss_url" /></el-form-item>
@@ -444,7 +444,7 @@ const issues = computed(() => {
 })
 const issueCount = computed(() => issues.value.length)
 const runningRows = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted', 'failed'].includes(t.status)))
-const scanOperation = computed(() => dashboard.operations.find(op => op.name === '手动全流程扫描' && op.status === 'running'))
+const scanOperation = computed(() => dashboard.operations.find(op => op.name === '扫描全部' && op.status === 'running'))
 const scanRunning = computed(() => Boolean(scanOperation.value))
 const scanProgress = computed(() => {
   const message = scanOperation.value?.message || ''
