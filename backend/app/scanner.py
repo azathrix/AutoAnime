@@ -140,6 +140,52 @@ async def fetch_mikan_page_releases(settings: dict[str, str], mikan_bangumi_id: 
     return parse_mikan_page_releases(resp.text, mikan_bangumi_id)
 
 
+async def resolve_series_mikan_bangumi_id(settings: dict[str, str], series_id: int, bangumi_id: str) -> str:
+    with connect() as conn:
+        candidates = conn.execute(
+            """
+            SELECT id, page_url
+            FROM rss_candidates
+            WHERE bangumi_id=?
+              AND page_url != ''
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 10
+            """,
+            (bangumi_id,),
+        ).fetchall()
+    for candidate in candidates:
+        try:
+            matched_bangumi_id, mikan_id = await fetch_mikan_match(settings, str(candidate["page_url"] or ""), "")
+        except Exception:
+            continue
+        if matched_bangumi_id == bangumi_id and mikan_id:
+            ts = now()
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE series SET mikan_bangumi_id=?, updated_at=? WHERE id=?",
+                    (mikan_id, ts, series_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE rss_candidates
+                    SET mikan_bangumi_id=?, updated_at=?
+                    WHERE bangumi_id=?
+                      AND mikan_bangumi_id=''
+                    """,
+                    (mikan_id, ts, bangumi_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE mikan_match_tasks
+                    SET mikan_bangumi_id=?, bangumi_id=?, updated_at=?
+                    WHERE candidate_id=?
+                    """,
+                    (mikan_id, bangumi_id, ts, candidate["id"]),
+                )
+            return mikan_id
+    return ""
+
+
 async def gather_limited(coros, limit: int = 4):
     semaphore = asyncio.Semaphore(max(1, limit))
 
@@ -981,7 +1027,7 @@ async def _process_backfill_tasks(settings: dict[str, str], limit: int = 8) -> t
         )
         rows = conn.execute(
             """
-            SELECT bt.*, s.title_cn, s.mikan_bangumi_id
+            SELECT bt.*, s.title_cn, s.mikan_bangumi_id, s.bangumi_id
             FROM backfill_tasks bt
             JOIN series s ON s.id=bt.series_id
             WHERE bt.status IN ('pending', 'failed')
@@ -1003,9 +1049,18 @@ async def _process_backfill_tasks(settings: dict[str, str], limit: int = 8) -> t
                 (now(), row["id"]),
             )
         try:
-            if not row["mikan_bangumi_id"]:
+            mikan_bangumi_id = str(row["mikan_bangumi_id"] or "")
+            if not mikan_bangumi_id:
+                mikan_bangumi_id = await resolve_series_mikan_bangumi_id(
+                    settings,
+                    int(row["series_id"]),
+                    str(row["bangumi_id"] or ""),
+                )
+                if mikan_bangumi_id:
+                    log("info", f"整季补全前已补回 Mikan Bangumi ID: {row['title_cn']} -> {mikan_bangumi_id}")
+            if not mikan_bangumi_id:
                 raise RuntimeError("缺少 Mikan Bangumi ID，暂不能补全整季")
-            releases = await fetch_mikan_page_releases(settings, str(row["mikan_bangumi_id"]))
+            releases = await fetch_mikan_page_releases(settings, mikan_bangumi_id)
             if not releases:
                 raise RuntimeError("Mikan 番组页未解析到可补全条目")
             with connect() as conn:
