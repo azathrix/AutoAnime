@@ -5,7 +5,7 @@ import feedparser
 
 from .db import connect, hide_orphan_series, log, merge_duplicate_series, now
 from .library import bool_setting, render_episode_name, target_dir
-from .metadata import generate_nfo_for_series, refresh_series_metadata
+from .metadata import refresh_series_metadata
 from .parser import ParsedRelease, fingerprint, parse_entry, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
 from .sync_service import ensure_sync_rule, process_sync_tasks, reconcile_sync_intents, upsert_cloud_asset
@@ -101,24 +101,45 @@ def upsert_release(item: ParsedRelease) -> tuple[int, int]:
     return series_id, release_id
 
 
-def priority_pick(values: list[str], priority: list[str]) -> str:
-    values_clean = [v for v in values if v]
+def priority_match(value: str, preferred: str, field: str = "") -> bool:
+    preferred_lower = preferred.lower()
+    value_lower = value.lower()
+    if preferred_lower == value_lower or preferred_lower in value_lower:
+        return True
+    if field == "language":
+        if preferred in {"简体", "简中"}:
+            return value.startswith("简")
+        if preferred in {"繁体", "繁中"}:
+            return value.startswith("繁")
+        if preferred in {"日语", "日文"}:
+            return "日" in value
+        if preferred in {"英语", "英文"}:
+            return "英" in value
+        return False
+    if preferred in {"简体", "简中"} and value.startswith("简"):
+        return True
+    if preferred in {"繁体", "繁中"} and value.startswith("繁"):
+        return True
+    if preferred in {"日语", "日文"} and "日" in value:
+        return True
+    if preferred in {"英语", "英文"} and "英" in value:
+        return True
+    return False
+
+
+def priority_pick(values: list[str], priority: list[str], field: str = "") -> str:
+    values_clean = sorted({v for v in values if v})
     if not values_clean:
         return ""
     for preferred in priority:
-        for value in values_clean:
-            preferred_lower = preferred.lower()
-            value_lower = value.lower()
-            if preferred_lower == value_lower or preferred_lower in value_lower:
-                return value
-            if preferred in {"简体", "简中"} and value.startswith("简"):
-                return value
-            if preferred in {"繁体", "繁中"} and value.startswith("繁"):
-                return value
-            if preferred in {"日语", "日文"} and "日" in value:
-                return value
-            if preferred in {"英语", "英文"} and "英" in value:
-                return value
+        exact = [value for value in values_clean if value.lower() == preferred.lower()]
+        if len(exact) == 1:
+            return exact[0]
+        matched = [value for value in values_clean if priority_match(value, preferred, field)]
+        if len(matched) == 1:
+            return matched[0]
+        if len(matched) > 1:
+            return ""
     return values_clean[0] if len(set(values_clean)) == 1 else ""
 
 
@@ -129,7 +150,7 @@ def filter_by_priority(rows: list, field: str, priority: list[str]) -> tuple[lis
     if len(values) == 1:
         selected = values[0]
     else:
-        selected = priority_pick(values, priority)
+        selected = priority_pick(values, priority, field)
     if not selected:
         return rows, "", f"{field}存在多个候选: {', '.join(values)}"
     return [row for row in rows if row[field] == selected], selected, ""
@@ -463,8 +484,6 @@ async def scan_and_queue(settings: dict[str, str]) -> str:
         for release_id in ids:
             queue_release(release_id, settings)
             queued += 1
-        generate_nfo_for_series(series_id, settings)
-
     log("info", f"扫描完成: {len(items)} 条发布，更新 {len(touched_series)} 部番剧，队列 {queued} 条")
     await process_tasks(settings)
     reconciled, sync_queued = reconcile_sync_intents(settings)

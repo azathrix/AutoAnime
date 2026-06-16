@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import connect, diagnostics, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, restore_visible_series, save_settings, start_operation
+from .db import connect, diagnostics, finish_operation, get_settings, init_db, log, merge_duplicate_series, now, save_settings, start_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import mark_selected_releases, poll_submitted_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
@@ -97,7 +97,9 @@ async def scheduled_scan() -> None:
     settings = get_settings()
     if bool_setting(settings.get("auto_scan", "false")):
         await scan_and_queue(settings)
+    await process_tasks(settings)
     await poll_submitted_tasks(settings)
+    backfill_cloud_assets_from_completed_tasks(settings)
     reconciled, queued = reconcile_sync_intents(settings)
     if queued:
         log("info", f"周期任务已排本地同步: {reconciled} 部番剧，{queued} 个任务")
@@ -134,7 +136,6 @@ def run_operation(name: str, coro_factory, start_message: str = "") -> int:
 
 def dashboard_data() -> dict[str, Any]:
     with connect() as conn:
-        restored = restore_visible_series(conn)
         series = conn.execute(
             """
             SELECT s.*,
@@ -143,6 +144,9 @@ def dashboard_data() -> dict[str, Any]:
               COUNT(DISTINCT r.subtitle_group) AS group_count,
               COUNT(DISTINCT r.resolution) AS resolution_count,
               COUNT(DISTINCT r.language) AS language_count,
+              GROUP_CONCAT(DISTINCT NULLIF(r.subtitle_group, '')) AS subtitle_groups,
+              GROUP_CONCAT(DISTINCT NULLIF(r.resolution, '')) AS resolutions,
+              GROUP_CONCAT(DISTINCT NULLIF(r.language, '')) AS languages,
               COUNT(DISTINCT CASE WHEN dt.status IN ('submitted','completed') THEN dt.id END) AS downloaded_count,
               COUNT(DISTINCT ca.id) AS cloud_asset_count,
               COUNT(DISTINCT la.id) AS local_asset_count,
@@ -234,8 +238,6 @@ def dashboard_data() -> dict[str, Any]:
             LIMIT 80
             """
         ).fetchall()
-    if restored:
-        log("warn", f"已恢复被隐藏但仍有资源的番剧: {restored} 部")
     return {
         "series": rows_to_dicts(series),
         "tasks": rows_to_dicts(tasks),

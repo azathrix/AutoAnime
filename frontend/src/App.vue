@@ -9,10 +9,9 @@
         </div>
       </div>
       <nav>
-        <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 控制台</button>
-        <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 新番库</button>
-        <button :class="{ active: view === 'tasks' }" @click="view = 'tasks'"><el-icon><List /></el-icon> 云盘队列</button>
-        <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
+        <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 流水线</button>
+        <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧库</button>
+        <button :class="{ active: view === 'tasks' }" @click="view = 'tasks'"><el-icon><List /></el-icon> 问题处理</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
     </aside>
@@ -20,9 +19,9 @@
     <main class="main">
       <header class="hero">
         <div>
-          <p class="eyebrow">PikPak · Jellyfin · Bangumi</p>
+          <p class="eyebrow">Mikan · PikPak · Local</p>
           <h1>{{ pageTitle }}</h1>
-          <p class="hero-sub">追番、补全、整理和媒体库元数据的统一入口。</p>
+          <p class="hero-sub">Mikan 发现新集，PikPak 自动入库，本地只同步想看的内容。</p>
         </div>
         <div class="hero-actions">
           <el-switch
@@ -37,9 +36,7 @@
             <el-option label="10 秒" :value="10000" />
             <el-option label="30 秒" :value="30000" />
           </el-select>
-          <el-button type="primary" :icon="Search" @click="runAction('/scan')">扫描 RSS</el-button>
           <el-button :icon="Refresh" @click="reload" :loading="loading">刷新状态</el-button>
-          <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败</el-button>
         </div>
       </header>
 
@@ -49,34 +46,40 @@
           <strong>{{ dashboard.series.length }}</strong>
         </div>
         <div class="metric-card">
-          <span>任务</span>
-          <strong>{{ dashboard.tasks.length }}</strong>
+          <span>云盘资源</span>
+          <strong>{{ cloudAssetTotal }}</strong>
         </div>
         <div class="metric-card">
-          <span>已提交</span>
-          <strong>{{ submittedCount }}</strong>
+          <span>本地资源</span>
+          <strong>{{ localAssetTotal }}</strong>
         </div>
         <div class="metric-card">
-          <span>失败</span>
-          <strong>{{ failedCount }}</strong>
+          <span>待处理</span>
+          <strong>{{ issueCount }}</strong>
         </div>
 
-        <el-card class="span-2">
-          <template #header>
-            <div class="card-header">
-              <span>当前队列</span>
-              <el-button size="small" :icon="Refresh" @click="runAction('/tasks/poll')">刷新状态</el-button>
+        <el-card class="span-4">
+          <template #header>自动流水线</template>
+          <div class="flow-steps">
+            <div class="flow-step">
+              <span>1</span>
+              <strong>Mikan RSS</strong>
+              <small>{{ settings.auto_scan ? `${settings.scan_interval_minutes || 60} 分钟自动扫描` : '自动扫描关闭' }}</small>
             </div>
-          </template>
-          <el-empty v-if="!dashboard.active_tasks.length" description="当前没有待处理任务" />
-          <div v-else class="active-queue">
-            <div v-for="task in dashboard.active_tasks" :key="task.id" class="active-task">
-              <el-tag :type="taskTag(task.status)">{{ task.status }}</el-tag>
-              <div>
-                <strong>{{ task.title_cn }}</strong>
-                <span>第 {{ task.episode_number }} 集 · {{ task.subtitle_group }} · {{ task.resolution }}</span>
-                <small v-if="task.last_error">{{ task.last_error }}</small>
-              </div>
+            <div class="flow-step">
+              <span>2</span>
+              <strong>元数据确认</strong>
+              <small>{{ metadataIssueCount ? `${metadataIssueCount} 个需要确认` : '无需处理' }}</small>
+            </div>
+            <div class="flow-step">
+              <span>3</span>
+              <strong>PikPak 入库</strong>
+              <small>{{ cloudQueueCount ? `${cloudQueueCount} 个任务处理中` : '无待入库任务' }}</small>
+            </div>
+            <div class="flow-step">
+              <span>4</span>
+              <strong>本地同步</strong>
+              <small>{{ syncQueueCount ? `${syncQueueCount} 个任务处理中` : '无待同步任务' }}</small>
             </div>
           </div>
         </el-card>
@@ -92,16 +95,6 @@
                 <span>{{ op.message || '处理中' }}</span>
               </div>
             </div>
-          </div>
-        </el-card>
-
-        <el-card class="span-2">
-          <template #header>功能板块</template>
-          <div class="module-grid">
-            <div><b>新番追更</b><span>已启用：Mikan RSS -> PikPak</span></div>
-            <div><b>老番补全</b><span>待接入搜索源</span></div>
-            <div><b>电影下载</b><span>预留 TMDB 工作流</span></div>
-            <div><b>美剧追番</b><span>预留剧集工作流</span></div>
           </div>
         </el-card>
 
@@ -147,13 +140,25 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>云盘队列</span>
-              <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新状态</el-button>
-              <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
-              <el-button type="success" :icon="VideoPlay" @click="runAction('/tasks/process')">处理云盘任务</el-button>
+              <span>待处理问题</span>
             </div>
           </template>
-          <el-table :data="dashboard.tasks" height="620">
+          <el-empty v-if="!issues.length" description="当前没有需要人工处理的问题" />
+          <el-table v-else :data="issues" height="420">
+            <el-table-column prop="type" label="类型" width="130">
+              <template #default="{ row }"><el-tag :type="row.level">{{ row.type }}</el-tag></template>
+            </el-table-column>
+            <el-table-column prop="title" label="番剧" min-width="180" />
+            <el-table-column prop="message" label="原因" min-width="260" />
+            <el-table-column label="操作" width="120">
+              <template #default="{ row }"><el-button size="small" @click="row.series_id && openSeries(row.series_id)">处理</el-button></template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+
+        <el-card class="task-card">
+          <template #header>运行中任务</template>
+          <el-table :data="runningRows" height="300">
             <el-table-column prop="status" label="状态" width="120">
               <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
             </el-table-column>
@@ -166,13 +171,9 @@
             <el-table-column prop="last_error" label="错误" min-width="220" />
           </el-table>
         </el-card>
+
         <el-card class="task-card">
-          <template #header>
-            <div class="card-header">
-              <span>本地同步队列</span>
-              <el-button :icon="Refresh" @click="runAction('/sync/tasks/process')">处理同步</el-button>
-            </div>
-          </template>
+          <template #header>同步队列</template>
           <el-table :data="dashboard.sync_tasks" height="360">
             <el-table-column prop="status" label="状态" width="120">
               <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ row.status }}</el-tag></template>
@@ -183,18 +184,15 @@
             <el-table-column prop="last_error" label="错误" min-width="220" />
           </el-table>
         </el-card>
-      </section>
 
-      <section v-if="view === 'calendar'">
-        <el-card>
-          <template #header>追番日历</template>
-          <el-empty v-if="!dashboard.calendar.length" description="Bangumi 元数据接入后会显示放送日历" />
-          <el-table v-else :data="dashboard.calendar">
-            <el-table-column prop="air_date" label="日期" width="160" />
-            <el-table-column prop="title_cn" label="番剧" />
-            <el-table-column prop="episode_number" label="集" width="80" />
-            <el-table-column prop="status" label="状态" width="120" />
-          </el-table>
+        <el-card class="task-card">
+          <template #header>维护操作</template>
+          <div class="maintenance-actions">
+            <el-button :icon="Search" @click="runAction('/scan')">扫描 Mikan RSS</el-button>
+            <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
+            <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
+            <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
+          </div>
         </el-card>
       </section>
 
@@ -208,7 +206,7 @@
                   type="info"
                   show-icon
                   :closable="false"
-                  title="保存设置只会更新规则；要让规则作用到已扫描内容，请点击顶部“扫描 RSS”。失败任务需要点击“重试失败”。"
+                  title="保存设置只会更新规则；要让规则作用到已扫描内容，请到问题处理里执行“扫描 Mikan RSS”。失败任务可在维护操作里重试。"
                   class="settings-alert"
                 />
                 <el-form-item label="Mikan RSS"><el-input v-model="settings.rss_url" /></el-form-item>
@@ -286,7 +284,7 @@
           type="info"
           show-icon
           :closable="false"
-          title="番剧设置保存后只更新规则；云盘入库一般由扫描自动处理，只有需要手动补救时才点“存入云盘”。"
+          title="这里只处理规则和冲突；云盘入库与本地同步由后台任务自动推进。"
           class="settings-alert"
         />
         <el-form :model="selectedSeries.series" label-position="top">
@@ -337,9 +335,6 @@
         </div>
         <div class="drawer-actions">
           <el-button type="primary" @click="saveCurrentSeries">保存</el-button>
-          <el-button v-if="!seriesHasCloud" @click="runSeriesAction('download')">存入云盘</el-button>
-          <el-button @click="runSeriesAction('metadata')">刷新元数据</el-button>
-          <el-button @click="runSeriesAction('nfo')">生成 NFO</el-button>
           <el-popconfirm title="只从列表隐藏这个误识别条目，保留关联记录。确定隐藏？" @confirm="deleteCurrentSeries">
             <template #reference>
               <el-button type="danger" plain>隐藏误识别</el-button>
@@ -353,9 +348,6 @@
           <el-table-column prop="resolution" label="分辨率" width="100" />
           <el-table-column prop="language" label="语言" width="90" />
           <el-table-column prop="title" label="发布标题" />
-          <el-table-column label="操作" width="100">
-            <template #default="{ row }"><el-button size="small" @click="downloadRelease(row.id)">存云盘</el-button></template>
-          </el-table-column>
         </el-table>
       </template>
     </el-drawer>
@@ -366,7 +358,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
-import { Calendar, Collection, DataBoard, List, Refresh, Search, Setting, VideoPlay } from '@element-plus/icons-vue'
+import { Collection, DataBoard, List, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { deleteAction, getDashboard, getDiagnostics, getSeries, getSettings, postAction, saveSeries, saveSettings } from './api'
 
 const view = ref('dashboard')
@@ -395,23 +387,43 @@ const settings = reactive({})
 const diagnostics = reactive({ tables: {} })
 
 const pageTitle = computed(() => ({
-  dashboard: '控制台',
-  library: '新番库',
-  tasks: '云盘队列',
-  calendar: '追番日历',
+  dashboard: '自动流水线',
+  library: '番剧库',
+  tasks: '问题处理',
   settings: '设置中心'
 }[view.value]))
 
-const submittedCount = computed(() => dashboard.tasks.filter(t => ['submitted', 'completed'].includes(t.status)).length)
-const failedCount = computed(() => dashboard.tasks.filter(t => t.status === 'failed').length)
-const seriesHasCloud = computed(() => {
-  const id = selectedSeries.value?.series?.id
-  return Boolean(id && dashboard.cloud_assets.some(item => item.series_id === id && item.status === 'available'))
+const cloudAssetTotal = computed(() => dashboard.series.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
+const localAssetTotal = computed(() => dashboard.series.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
+const cloudQueueCount = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted'].includes(t.status)).length)
+const syncQueueCount = computed(() => dashboard.sync_tasks.filter(t => ['pending', 'running', 'failed'].includes(t.status)).length)
+const metadataIssueCount = computed(() => dashboard.series.filter(item => !item.bangumi_id && !item.tmdb_id).length)
+const issues = computed(() => {
+  const rows = []
+  for (const item of dashboard.series) {
+    if (!item.bangumi_id && !item.tmdb_id) {
+      rows.push({ type: '元数据', level: 'warning', title: item.title_cn, message: '缺少 Bangumi/TMDB 绑定，不能可靠入库', series_id: item.id })
+    }
+    if (Number(item.group_count || 0) > 1 && !item.selected_group && !priorityCanResolve(item, 'subtitle_group', settings.subtitle_priority)) {
+      rows.push({ type: '字幕组', level: 'warning', title: item.title_cn, message: '存在多个字幕组，当前优先级无法唯一选择', series_id: item.id })
+    }
+    if (Number(item.resolution_count || 0) > 1 && !item.selected_resolution && !priorityCanResolve(item, 'resolution', settings.resolution_priority)) {
+      rows.push({ type: '分辨率', level: 'warning', title: item.title_cn, message: '存在多个分辨率，当前优先级无法唯一选择', series_id: item.id })
+    }
+    if (Number(item.language_count || 0) > 1 && !priorityCanResolve(item, 'language', settings.language_priority)) {
+      rows.push({ type: '语言', level: 'warning', title: item.title_cn, message: '存在多个语言版本，当前优先级无法唯一选择', series_id: item.id })
+    }
+  }
+  for (const task of dashboard.tasks.filter(t => t.status === 'failed')) {
+    rows.push({ type: '云盘失败', level: 'danger', title: task.title_cn, message: task.last_error || 'PikPak 入库失败', series_id: task.series_id })
+  }
+  for (const task of dashboard.sync_tasks.filter(t => t.status === 'failed')) {
+    rows.push({ type: '同步失败', level: 'danger', title: task.title_cn, message: task.last_error || '本地同步失败', series_id: task.series_id })
+  }
+  return rows
 })
-const seriesHasLocal = computed(() => {
-  const id = selectedSeries.value?.series?.id
-  return Boolean(id && dashboard.series.some(item => item.id === id && Number(item.local_asset_count || 0) > 0))
-})
+const issueCount = computed(() => issues.value.length)
+const runningRows = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted', 'failed'].includes(t.status)))
 const selectedSeriesStats = computed(() => {
   const id = selectedSeries.value?.series?.id
   return dashboard.series.find(item => item.id === id) || {}
@@ -447,6 +459,50 @@ function taskTag(status) {
   if (status === 'completed' || status === 'submitted' || status === 'synced') return 'success'
   if (status === 'running') return 'warning'
   return 'info'
+}
+
+function priorityCanResolve(item, field, priority = []) {
+  if (!Array.isArray(priority) || !priority.length) return false
+  const source = {
+    subtitle_group: item.subtitle_groups,
+    resolution: item.resolutions,
+    language: item.languages
+  }[field]
+  const values = splitCandidateValues(source)
+  if (new Set(values).size <= 1) return true
+  return Boolean(priorityPick([...new Set(values)], priority))
+}
+
+function splitCandidateValues(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function priorityPick(values, priority = []) {
+  for (const preferred of priority) {
+    const preferredLower = String(preferred).toLowerCase()
+    const exact = values.filter(value => String(value).toLowerCase() === preferredLower)
+    if (exact.length === 1) return exact[0]
+    const matched = values.filter(value => {
+      const valueText = String(value)
+      const valueLower = valueText.toLowerCase()
+      if (valueLower === preferredLower || valueLower.includes(preferredLower)) return true
+      if (['简体', '简中'].includes(preferred) && valueText.startsWith('简')) return true
+      if (['繁体', '繁中'].includes(preferred) && valueText.startsWith('繁')) return true
+      if (['日语', '日文'].includes(preferred) && valueText.includes('日')) return true
+      if (['英语', '英文'].includes(preferred) && valueText.includes('英')) return true
+      return false
+    })
+    if (matched.length === 1) return matched[0]
+    if (matched.length > 1) {
+      const exact = matched.filter(value => String(value).toLowerCase() === preferredLower)
+      if (exact.length === 1) return exact[0]
+      return ''
+    }
+  }
+  return ''
 }
 
 function progressOf(item) {
@@ -528,16 +584,6 @@ async function saveCurrentSeries() {
   await reload()
 }
 
-async function runSeriesAction(action) {
-  const result = await postAction(`/series/${selectedSeries.value.series.id}/${action}`)
-  if (result.status === 'skipped') {
-    ElMessage.warning(result.message || '没有可执行任务')
-  } else {
-    ElMessage.success(result.message || '操作已提交')
-  }
-  setTimeout(reload, 800)
-}
-
 async function toggleSeriesSync(enabled) {
   const action = enabled ? 'sync' : 'sync/cancel'
   const result = await postAction(`/series/${selectedSeries.value.series.id}/${action}`)
@@ -561,12 +607,6 @@ async function deleteCurrentSeries() {
   seriesDrawer.value = false
   selectedSeries.value = null
   await reload()
-}
-
-async function downloadRelease(id) {
-  await postAction(`/releases/${id}/download`)
-  ElMessage.success('已加入云盘队列')
-  setTimeout(reload, 800)
 }
 
 const PriorityList = {

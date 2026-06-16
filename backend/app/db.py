@@ -221,7 +221,6 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in release_additions.items():
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
-    restore_visible_series(conn)
     merge_duplicate_series(conn)
     conn.execute(
         """
