@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
@@ -15,7 +15,7 @@ git archive --format=zip --output="%ZIP%" HEAD
 if errorlevel 1 (
   for /f "delims=" %%H in ('git rev-parse --short HEAD') do set "SHORT=%%H"
   set "ZIP=%BUILD_DIR%\AutoAnime-clean-%SHORT%.zip"
-  git archive --format=zip --output="%ZIP%" HEAD
+  git archive --format=zip --output="!ZIP!" HEAD
   if errorlevel 1 (
     popd
     echo Package failed.
