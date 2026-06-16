@@ -20,7 +20,7 @@
         <div>
           <p class="eyebrow">Mikan · PikPak · Local</p>
           <h1>{{ pageTitle }}</h1>
-          <p class="hero-sub">队列自动轮询，手动扫描会按顺序触发完整追番处理。</p>
+          <p class="hero-sub">队列自动轮询，手动扫描会按顺序触发完整追番处理。<span class="build-version">v{{ appVersion }} · {{ appBuild }}</span></p>
         </div>
         <div class="hero-actions">
           <el-switch
@@ -469,8 +469,11 @@ import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
 import { Collection, DataBoard, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { deleteAction, getDashboard, getDiagnostics, getSeries, getSettings, postAction, saveSeries, saveSettings } from './api'
+import { APP_BUILD, APP_VERSION } from './version'
 
 const view = ref('dashboard')
+const appVersion = APP_VERSION
+const appBuild = APP_BUILD
 const consoleTab = ref('issues')
 const loading = ref(false)
 const savingSettings = ref(false)

@@ -308,7 +308,11 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
                   (candidate_id, status, mikan_url, mikan_bangumi_id, created_at, updated_at)
                 VALUES (?, 'pending', ?, ?, ?, ?)
                 ON CONFLICT(candidate_id) DO UPDATE SET
-                  status=CASE WHEN mikan_match_tasks.status='completed' THEN mikan_match_tasks.status ELSE 'pending' END,
+                  status=CASE
+                    WHEN mikan_match_tasks.mikan_bangumi_id='' OR mikan_match_tasks.bangumi_id='' THEN 'pending'
+                    WHEN mikan_match_tasks.status='completed' THEN 'completed'
+                    ELSE 'pending'
+                  END,
                   mikan_url=excluded.mikan_url,
                   mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE mikan_match_tasks.mikan_bangumi_id END,
                   last_error='',
@@ -333,6 +337,38 @@ def enqueue_metadata_task(conn, candidate_id: int, bangumi_id: str, ts: str) -> 
         """,
         (candidate_id, bangumi_id, ts, ts),
     )
+
+
+def enqueue_missing_mikan_match_tasks(ts: str) -> int:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT rc.id, rc.page_url, rc.mikan_bangumi_id
+            FROM rss_candidates rc
+            LEFT JOIN mikan_match_tasks mt ON mt.candidate_id=rc.id
+            WHERE rc.bangumi_id != ''
+              AND rc.page_url != ''
+              AND rc.mikan_bangumi_id = ''
+              AND (mt.id IS NULL OR mt.mikan_bangumi_id='' OR mt.bangumi_id='')
+            ORDER BY rc.id ASC
+            """
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO mikan_match_tasks
+                  (candidate_id, status, mikan_url, mikan_bangumi_id, created_at, updated_at)
+                VALUES (?, 'pending', ?, ?, ?, ?)
+                ON CONFLICT(candidate_id) DO UPDATE SET
+                  status='pending',
+                  mikan_url=excluded.mikan_url,
+                  retry_after='',
+                  last_error='',
+                  updated_at=excluded.updated_at
+                """,
+                (row["id"], row["page_url"], row["mikan_bangumi_id"], ts, ts),
+            )
+    return len(rows)
 
 
 def candidate_to_parsed_release(candidate) -> ParsedRelease:
