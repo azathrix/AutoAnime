@@ -47,31 +47,88 @@ def remote_exists(settings: dict[str, str]) -> bool:
     return f"[{remote(settings)}]" in text
 
 
+def remote_config_block(settings: dict[str, str]) -> dict[str, str]:
+    config_path = settings.get("rclone_config_path") or ""
+    if not config_path:
+        return {}
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    in_block = False
+    result: dict[str, str] = {}
+    header = f"[{remote(settings)}]"
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_block:
+                break
+            in_block = stripped == header
+            continue
+        if in_block and "=" in stripped:
+            key, value = stripped.split("=", 1)
+            result[key.strip()] = value.strip()
+    return result
+
+
+def remote_has_token(settings: dict[str, str]) -> bool:
+    block = remote_config_block(settings)
+    token = block.get("token") or ""
+    return bool(token.strip())
+
+
 async def ensure_config(settings: dict[str, str]) -> None:
-    if not enabled(settings) or remote_exists(settings):
+    if not enabled(settings):
+        return
+    created = False
+    if remote_exists(settings) and remote_has_token(settings):
         return
     username = (settings.get("pikpak_username") or "").strip()
     password = settings.get("pikpak_password") or ""
     config_path = settings.get("rclone_config_path") or ""
     if not username or not password or not config_path:
         raise RuntimeError("rclone PikPak 未配置，且缺少 PikPak 用户名或密码，无法自动初始化")
-    obscured = await obscure_password(settings, password)
-    path = Path(config_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    existing = ""
-    if path.exists():
-        existing = path.read_text(encoding="utf-8", errors="replace").rstrip()
-    block = "\n".join(
-        [
-            f"[{remote(settings)}]",
-            "type = pikpak",
-            f"user = {username}",
-            f"pass = {obscured}",
-            "",
-        ]
+    if not remote_exists(settings):
+        obscured = await obscure_password(settings, password)
+        path = Path(config_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = ""
+        if path.exists():
+            existing = path.read_text(encoding="utf-8", errors="replace").rstrip()
+        block = "\n".join(
+            [
+                f"[{remote(settings)}]",
+                "type = pikpak",
+                f"user = {username}",
+                f"pass = {obscured}",
+                "",
+            ]
+        )
+        content = f"{existing}\n\n{block}" if existing else block
+        path.write_text(content, encoding="utf-8")
+        created = True
+    if created or not remote_has_token(settings):
+        await reconnect(settings)
+
+
+async def reconnect(settings: dict[str, str]) -> None:
+    process = await asyncio.create_subprocess_exec(
+        command(settings),
+        *config_args(settings),
+        "config",
+        "reconnect",
+        f"{remote(settings)}:",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    content = f"{existing}\n\n{block}" if existing else block
-    path.write_text(content, encoding="utf-8")
+    stdout, stderr = await process.communicate()
+    output = stdout.decode("utf-8", errors="replace").strip()
+    error = stderr.decode("utf-8", errors="replace").strip()
+    if process.returncode != 0:
+        raise RuntimeError((error or output or "rclone config reconnect 失败")[:2000])
 
 
 async def version(settings: dict[str, str]) -> str:

@@ -98,6 +98,14 @@ AUTOANIME_PROXY=http://192.168.31.146:10808 ./deploy-nas.sh
 /data/rclone/rclone.conf
 ```
 
+如果配置里缺少 rclone 的 `token`，应用会自动执行：
+
+```sh
+rclone config reconnect pikpak:
+```
+
+如果 PikPak 端要求额外验证码或交互登录，日志会提示失败原因，此时再手动进入容器执行同一条 reconnect 命令。
+
 remote 名称默认：
 
 ```txt
