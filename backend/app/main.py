@@ -21,6 +21,8 @@ from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_syn
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+queue_debounce_task: asyncio.Task | None = None
+queue_tick_running = False
 
 
 class SettingsPayload(BaseModel):
@@ -139,18 +141,85 @@ async def scheduled_scan() -> None:
 
 
 async def scheduled_queue_tick() -> None:
+    global queue_tick_running
+    if queue_tick_running:
+        return
+    queue_tick_running = True
     settings = get_settings()
-    await process_mikan_match_tasks(settings)
-    await process_metadata_tasks(settings)
-    await process_tasks(settings)
-    await reconcile_rclone_submitted_tasks(settings)
-    await poll_submitted_tasks(settings)
-    await process_cloud_asset_tasks(settings)
-    backfill_cloud_assets_from_completed_tasks(settings)
-    reconciled, queued = reconcile_sync_intents(settings)
-    if queued:
-        log("info", f"周期任务已排本地同步: {reconciled} 部番剧，{queued} 个任务")
-        await process_sync_tasks(settings)
+    try:
+        await process_mikan_match_tasks(settings)
+        await process_metadata_tasks(settings)
+        await process_tasks(settings)
+        await reconcile_rclone_submitted_tasks(settings)
+        await poll_submitted_tasks(settings)
+        await process_cloud_asset_tasks(settings)
+        backfill_cloud_assets_from_completed_tasks(settings)
+        reconciled, queued = reconcile_sync_intents(settings)
+        if queued:
+            log("info", f"周期任务已排本地同步: {reconciled} 部番剧，{queued} 个任务")
+            await process_sync_tasks(settings)
+        if has_ready_queue_work():
+            trigger_queue_debounced()
+    finally:
+        queue_tick_running = False
+
+
+def has_ready_queue_work() -> bool:
+    ts = now()
+    with connect() as conn:
+        checks = [
+            (
+                "mikan_match_tasks",
+                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
+            ),
+            (
+                "metadata_tasks",
+                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
+            ),
+            (
+                "download_tasks",
+                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
+            ),
+            (
+                "cloud_poll_tasks",
+                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
+            ),
+            (
+                "cloud_asset_tasks",
+                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
+            ),
+            (
+                "sync_tasks",
+                "status IN ('pending','failed') AND (retry_after='' OR retry_after <= ?)",
+            ),
+        ]
+        for table, where in checks:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM {table} WHERE {where}",
+                (ts,),
+            ).fetchone()
+            if row and int(row["count"] or 0) > 0:
+                return True
+    return False
+
+
+def trigger_queue_debounced(delay: float = 10.0) -> None:
+    global queue_debounce_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if queue_debounce_task and not queue_debounce_task.done():
+        queue_debounce_task.cancel()
+
+    async def runner() -> None:
+        try:
+            await asyncio.sleep(delay)
+            await scheduled_queue_tick()
+        except asyncio.CancelledError:
+            return
+
+    queue_debounce_task = loop.create_task(runner())
 
 
 async def run_full_refresh(settings: dict[str, str], operation_id: int | None = None) -> str:
@@ -554,6 +623,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
         }
     )
     reschedule()
+    trigger_queue_debounced()
     log("info", "全局设置已保存")
     return settings_response()
 
@@ -655,6 +725,7 @@ async def api_scan() -> dict[str, str]:
         lambda op_id: run_full_refresh(get_settings(), op_id),
         "正在依次执行 RSS、Mikan 匹配、元数据、云盘入库、PikPak 状态、本地同步",
     )
+    trigger_queue_debounced()
     return {"status": "started", "operation_id": str(operation_id), "message": "扫描全部已启动"}
 
 
@@ -665,6 +736,7 @@ async def api_process_tasks(force: bool = Query(False)) -> dict[str, str]:
         lambda: process_tasks(get_settings(), force=force),
         "正在立即提交 PikPak 云盘任务" if force else "正在提交 PikPak 云盘任务",
     )
+    trigger_queue_debounced()
     return {"status": "started", "operation_id": str(operation_id), "message": "云盘队列已立即触发" if force else "队列处理已启动"}
 
 
@@ -694,6 +766,7 @@ async def api_scan_cloud() -> dict[str, str]:
         return f"入库 {imported} 个，跳过 {skipped} 个"
 
     operation_id = run_operation("扫描云盘库", run, "正在扫描 PikPak 云盘库")
+    trigger_queue_debounced()
     return {"status": "started", "operation_id": str(operation_id), "message": "云盘库扫描已启动"}
 
 
@@ -706,6 +779,7 @@ async def api_process_sync_tasks() -> dict[str, str]:
         return f"调和 {reconciled} 部，同步排队 {queued} 个"
 
     operation_id = run_operation("本地同步", run, "正在把云盘资源同步到本地")
+    trigger_queue_debounced()
     return {"status": "started", "operation_id": str(operation_id), "message": "本地同步处理已启动"}
 
 
@@ -723,6 +797,7 @@ async def api_retry_failed() -> dict[str, str]:
         count = cursor.rowcount
     log("info", f"已重置失败任务: {count} 个")
     asyncio.create_task(process_tasks(get_settings()))
+    trigger_queue_debounced()
     return {"status": "started", "count": str(count), "message": "失败任务已重新入队"}
 
 

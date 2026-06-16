@@ -811,8 +811,9 @@ async def process_tasks(settings: dict[str, str], limit: int = 6, force: bool = 
         ).fetchall()
 
     submitted = 0
+    max_submit = limit if rclone_service.enabled(settings) else 1
     for task in rows:
-        if submitted >= 1:
+        if submitted >= max_submit:
             break
         source = task["magnet"] or task["torrent_url"]
         if not source:

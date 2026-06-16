@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -235,10 +236,53 @@ async def list_files(settings: dict[str, str], path: str, recursive: bool = True
     return result
 
 
-async def copy_to_local(settings: dict[str, str], source_path: str, target_path: str) -> None:
+async def copy_to_local(settings: dict[str, str], source_path: str, target_path: str, progress_cb=None) -> None:
     Path(target_path).parent.mkdir(parents=True, exist_ok=True)
-    await run_rclone(
+    await run_rclone_streaming(
         settings,
-        ["copyto", remote_path(settings, source_path), target_path],
-        timeout=None,
+        [
+            "copyto",
+            remote_path(settings, source_path),
+            target_path,
+            "--progress",
+            "--stats",
+            "1s",
+            "--stats-one-line",
+        ],
+        progress_cb=progress_cb,
     )
+
+
+async def run_rclone_streaming(settings: dict[str, str], args: list[str], progress_cb=None) -> str:
+    await ensure_config(settings)
+    process = await asyncio.create_subprocess_exec(
+        command(settings),
+        *config_args(settings),
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    chunks: list[str] = []
+
+    async def consume(stream) -> None:
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", errors="replace").strip()
+            if not text:
+                continue
+            chunks.append(text)
+            match = re.search(r"(\d{1,3})%", text)
+            if match and progress_cb:
+                percent = max(0, min(100, int(match.group(1))))
+                await progress_cb(percent, text[:500])
+
+    await asyncio.gather(consume(process.stdout), consume(process.stderr))
+    return_code = await process.wait()
+    output = "\n".join(chunks).strip()
+    if return_code != 0:
+        raise RuntimeError((output or f"exit code {return_code}")[:2000])
+    if progress_cb:
+        await progress_cb(100, "同步完成")
+    return output

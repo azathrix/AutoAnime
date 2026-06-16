@@ -97,7 +97,7 @@
                 title="RSS 发布会先进入暂存区；只有完成 Mikan 匹配和元数据刷新后，才会出现在番剧库并继续入云盘。"
                 class="settings-alert"
               />
-              <el-table v-if="dashboard.rss_candidates.length" :data="dashboard.rss_candidates" height="260" class="candidate-table">
+              <el-table v-if="dashboard.rss_candidates.length" :data="dashboard.rss_candidates" height="420" class="candidate-table">
                 <el-table-column prop="status" label="状态" width="100">
                   <template #default="{ row }"><el-tag type="warning">{{ row.status }}</el-tag></template>
                 </el-table-column>
@@ -148,6 +148,16 @@
                 <el-table-column prop="title_cn" label="番剧" min-width="180" />
                 <el-table-column prop="source_path" label="云盘路径" min-width="260" />
                 <el-table-column prop="target_path" label="本地路径" min-width="260" />
+                <el-table-column label="进度" width="180">
+                  <template #default="{ row }">
+                    <el-progress
+                      v-if="row.status === 'running' || Number(row.progress || 0) > 0"
+                      :percentage="Number(row.progress || 0)"
+                      :show-text="false"
+                    />
+                    <span class="muted">{{ row.progress_text || '-' }}</span>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="last_error" label="错误" min-width="220" />
                 <el-table-column label="下次处理" width="130">
                   <template #default="{ row }">{{ row.waiting_retry ? formatCountdown(row.retry_seconds) : '-' }}</template>

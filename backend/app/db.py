@@ -217,6 +217,8 @@ def init_db() -> None:
                 sync_direction TEXT NOT NULL DEFAULT 'cloud_to_local',
                 source_path TEXT NOT NULL DEFAULT '',
                 target_path TEXT NOT NULL DEFAULT '',
+                progress INTEGER NOT NULL DEFAULT 0,
+                progress_text TEXT NOT NULL DEFAULT '',
                 retry_after TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
@@ -445,6 +447,8 @@ def migrate(conn: sqlite3.Connection) -> None:
         for row in conn.execute("PRAGMA table_info(sync_tasks)").fetchall()
     }
     sync_task_additions = {
+        "progress": "INTEGER NOT NULL DEFAULT 0",
+        "progress_text": "TEXT NOT NULL DEFAULT ''",
         "retry_after": "TEXT NOT NULL DEFAULT ''",
     }
     for column, ddl in sync_task_additions.items():

@@ -695,12 +695,12 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
     return imported, skipped
 
 
-async def download_cloud_file_to_local(file_id: str, source: str, target: str, settings: dict[str, str]) -> None:
+async def download_cloud_file_to_local(file_id: str, source: str, target: str, settings: dict[str, str], progress_cb=None) -> None:
     target_path = Path(target)
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if rclone_service.enabled(settings) and source:
-        await rclone_service.copy_to_local(settings, source, target)
+        await rclone_service.copy_to_local(settings, source, target, progress_cb=progress_cb)
         return
 
     if file_id:
@@ -748,15 +748,31 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
     async def handle(task) -> bool:
         with connect() as conn:
             conn.execute(
-                "UPDATE sync_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                """
+                UPDATE sync_tasks
+                SET status='running', attempts=attempts+1, progress=0, progress_text='准备同步', updated_at=?
+                WHERE id=?
+                """,
                 (now(), task["id"]),
             )
         try:
+            async def progress_cb(percent: int, text: str) -> None:
+                with connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE sync_tasks
+                        SET progress=?, progress_text=?, updated_at=?
+                        WHERE id=?
+                        """,
+                        (percent, text[:500], now(), task["id"]),
+                    )
+
             await download_cloud_file_to_local(
                 task["provider_file_id"],
                 task["source_path"],
                 task["target_path"],
                 settings,
+                progress_cb=progress_cb,
             )
         except Exception as exc:
             with connect() as conn:
@@ -789,7 +805,12 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                 (task["target_path"], ts, ts, task["cloud_asset_id"]),
             )
             conn.execute(
-                "UPDATE sync_tasks SET status='synced', retry_after='', last_error='', updated_at=? WHERE id=?",
+                """
+                UPDATE sync_tasks
+                SET status='synced', progress=100, progress_text='同步完成',
+                    retry_after='', last_error='', updated_at=?
+                WHERE id=?
+                """,
                 (ts, task["id"]),
             )
         nfo_settings = dict(settings)
