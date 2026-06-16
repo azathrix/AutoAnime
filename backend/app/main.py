@@ -223,6 +223,9 @@ def trigger_queue_debounced(delay: float = 10.0) -> None:
 
 
 async def run_full_refresh(settings: dict[str, str], operation_id: int | None = None) -> str:
+    with connect() as conn:
+        for table in ["mikan_match_tasks", "metadata_tasks", "download_tasks", "cloud_poll_tasks", "cloud_asset_tasks", "sync_tasks"]:
+            conn.execute(f"UPDATE {table} SET retry_after='', updated_at=?", (now(),))
     if operation_id:
         update_operation(operation_id, "1/8 正在扫描 RSS")
     scan_message = await scan_and_queue(settings)

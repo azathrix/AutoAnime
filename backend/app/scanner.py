@@ -16,6 +16,10 @@ from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offlin
 from .sync_service import enqueue_cloud_asset_task
 from . import rclone_service
 
+download_tasks_lock = asyncio.Lock()
+mikan_match_lock = asyncio.Lock()
+metadata_tasks_lock = asyncio.Lock()
+
 
 async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
     proxy = settings.get("rss_proxy") or None
@@ -268,6 +272,11 @@ def candidate_to_parsed_release(candidate) -> ParsedRelease:
 
 
 async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    async with mikan_match_lock:
+        return await _process_mikan_match_tasks(settings, limit)
+
+
+async def _process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
     with connect() as conn:
         conn.execute(
             """
@@ -349,6 +358,11 @@ async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -
 
 
 async def process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    async with metadata_tasks_lock:
+        return await _process_metadata_tasks(settings, limit)
+
+
+async def _process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
     with connect() as conn:
         conn.execute(
             """
@@ -788,6 +802,11 @@ def stale_running_cutoff(minutes: int = 10) -> str:
 
 
 async def process_tasks(settings: dict[str, str], limit: int = 6, force: bool = False) -> None:
+    async with download_tasks_lock:
+        await _process_tasks(settings, limit, force)
+
+
+async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool = False) -> None:
     with connect() as conn:
         conn.execute(
             """

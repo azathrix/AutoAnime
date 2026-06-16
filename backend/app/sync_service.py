@@ -15,6 +15,9 @@ from .parser import normalize_title_key, parse_episode
 from .pikpak_service import get_cloud_download_url, list_cloud_files
 from . import rclone_service
 
+cloud_asset_tasks_lock = asyncio.Lock()
+sync_tasks_lock = asyncio.Lock()
+
 
 def task_retry_after_minutes(minutes: int) -> str:
     from datetime import datetime, timedelta, timezone
@@ -140,6 +143,11 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
 
 
 async def process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, force: bool = False) -> tuple[int, int]:
+    async with cloud_asset_tasks_lock:
+        return await _process_cloud_asset_tasks(settings, limit, force)
+
+
+async def _process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, force: bool = False) -> tuple[int, int]:
     with connect() as conn:
         conn.execute(
             """
@@ -745,6 +753,11 @@ async def download_cloud_file_to_local(file_id: str, source: str, target: str, s
 
 
 async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
+    async with sync_tasks_lock:
+        await _process_sync_tasks(settings, limit)
+
+
+async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
     with connect() as conn:
         conn.execute(
             """
