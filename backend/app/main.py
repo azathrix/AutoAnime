@@ -16,7 +16,7 @@ from .config import APP_DIR
 from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, get_runtime_generation, get_settings, init_db, log, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
-from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, repair_series_mikan_ids, resolve_series_choice, scan_and_queue
+from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_series_choice, scan_and_queue
 from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_cloud_asset_tasks, process_sync_tasks, queue_sync_for_series, reconcile_rclone_submitted_tasks, reconcile_sync_intents, scan_cloud_library
 
 
@@ -261,12 +261,13 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
     with connect() as conn:
         for table in ["mikan_match_tasks", "metadata_tasks", "selection_tasks", "backfill_tasks", "download_tasks", "cloud_poll_tasks", "cloud_asset_tasks", "sync_tasks"]:
             conn.execute(f"UPDATE {table} SET retry_after='', updated_at=?", (now(),))
+    reclaimed_mikan = reclaim_mikan_match_tasks(now())
     if operation_id:
         update_operation(operation_id, "1/8 正在扫描 RSS")
     log("info", "扫描全部: 1/8 开始扫描 RSS")
     scan_message = await scan_and_queue(settings)
     repaired_mikan = enqueue_missing_mikan_match_tasks(now())
-    log("info", f"扫描全部: RSS 完成，{scan_message}；补排 Mikan 匹配 {repaired_mikan} 个")
+    log("info", f"扫描全部: RSS 完成，{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个")
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
@@ -327,7 +328,7 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
     if queue_debounce_task and not queue_debounce_task.done():
         queue_debounce_task.cancel()
         queue_debounce_task = None
-    return f"{scan_message}；补排 Mikan 匹配 {repaired_mikan} 个；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；回填番剧 Mikan ID {repaired_series_mikan} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；选集成功 {selection_done} 个，失败 {selection_failed} 个；补全成功 {backfill_done} 个，失败 {backfill_failed} 个；rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+    return f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；回填番剧 Mikan ID {repaired_series_mikan} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；选集成功 {selection_done} 个，失败 {selection_failed} 个；补全成功 {backfill_done} 个，失败 {backfill_failed} 个；rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
 
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:

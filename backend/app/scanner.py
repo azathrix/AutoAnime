@@ -12,7 +12,7 @@ import feedparser
 from .db import connect, hide_orphan_series, log, merge_duplicate_series, now
 from .library import bool_setting, render_episode_name, target_dir
 from .metadata import fetch_bangumi_metadata
-from .parser import ParsedRelease, fingerprint, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_year, split_lines
+from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_year, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
 from .sync_service import enqueue_cloud_asset_task
 from . import rclone_service
@@ -40,7 +40,23 @@ def mikan_absolute_url(path_or_url: str) -> str:
 def parse_mikan_ids(html: str) -> tuple[str, str]:
     bangumi_match = re.search(r"https?://(?:bgm\.tv|bangumi\.tv)/subject/(\d+)", html, re.I)
     mikan_match = re.search(r"/Home/Bangumi/(\d+)", html, re.I)
+    if not mikan_match:
+        mikan_match = re.search(r'data-bangumiid="(\d+)"', html, re.I)
     return (bangumi_match.group(1) if bangumi_match else "", mikan_match.group(1) if mikan_match else "")
+
+
+def parse_episode_page_mikan_id(html_text: str) -> str:
+    patterns = [
+        r'href="/Home/Bangumi/(\d+)(?:#\d+)?"',
+        r"onclick=\"window\.open\('/Home/Bangumi/(\d+)(?:#\d+)?'",
+        r'data-bangumiid="(\d+)"',
+        r"/RSS/Bangumi\?bangumiId=(\d+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html_text, re.I)
+        if match:
+            return match.group(1)
+    return ""
 
 
 async def fetch_mikan_match(settings: dict[str, str], page_url: str, mikan_bangumi_id: str = "") -> tuple[str, str]:
@@ -52,14 +68,15 @@ async def fetch_mikan_match(settings: dict[str, str], page_url: str, mikan_bangu
         resp = await client.get(first_url)
         resp.raise_for_status()
         bangumi_id, mikan_id = parse_mikan_ids(resp.text)
-        mikan_id = mikan_id or mikan_bangumi_id
-        if bangumi_id:
+        mikan_id = mikan_id or parse_episode_page_mikan_id(resp.text) or mikan_bangumi_id
+        if bangumi_id and mikan_id:
             return bangumi_id, mikan_id
         if mikan_id:
             bgm_url = mikan_absolute_url(f"/Home/Bangumi/{mikan_id}")
             bgm_resp = await client.get(bgm_url)
             bgm_resp.raise_for_status()
-            bangumi_id, _ = parse_mikan_ids(bgm_resp.text)
+            bangumi_id, parsed_mikan_id = parse_mikan_ids(bgm_resp.text)
+            mikan_id = parsed_mikan_id or mikan_id
             return bangumi_id, mikan_id
     return "", ""
 
@@ -142,21 +159,51 @@ async def fetch_mikan_page_releases(settings: dict[str, str], mikan_bangumi_id: 
 
 async def resolve_series_mikan_bangumi_id(settings: dict[str, str], series_id: int, bangumi_id: str) -> str:
     with connect() as conn:
-        candidates = conn.execute(
-            """
-            SELECT id, page_url
-            FROM rss_candidates
-            WHERE bangumi_id=?
-              AND page_url != ''
-            ORDER BY updated_at DESC, id DESC
-            LIMIT 10
-            """,
-            (bangumi_id,),
-        ).fetchall()
+        series = conn.execute(
+            "SELECT title_cn, title_raw, bangumi_id FROM series WHERE id=?",
+            (series_id,),
+        ).fetchone()
+        candidates = []
+        if bangumi_id:
+            candidates = conn.execute(
+                """
+                SELECT id, page_url, series_title, bangumi_id
+                FROM rss_candidates
+                WHERE bangumi_id=?
+                  AND page_url != ''
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 10
+                """,
+                (bangumi_id,),
+            ).fetchall()
+        if not candidates and series:
+            title_keys = {
+                normalize_title_key(str(series["title_cn"] or "")),
+                normalize_title_key(str(series["title_raw"] or "")),
+            }
+            title_keys = {value for value in title_keys if value}
+            rows = conn.execute(
+                """
+                SELECT id, page_url, series_title, bangumi_id
+                FROM rss_candidates
+                WHERE page_url != ''
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 80
+                """
+            ).fetchall()
+            for row in rows:
+                row_key = normalize_title_key(str(row["series_title"] or ""))
+                if row_key and row_key in title_keys:
+                    candidates.append(row)
+                if len(candidates) >= 10:
+                    break
+    log("info", f"Mikan ID 反查候选: series_id={series_id} bangumi_id={bangumi_id or '-'} candidates={len(candidates)}")
     for candidate in candidates:
         try:
+            log("info", f"Mikan ID 反查尝试: series_id={series_id} candidate_id={candidate['id']} page={candidate['page_url']}")
             matched_bangumi_id, mikan_id = await fetch_mikan_match(settings, str(candidate["page_url"] or ""), "")
         except Exception:
+            log("warn", f"Mikan ID 反查失败: series_id={series_id} candidate_id={candidate['id']} page={candidate['page_url']}")
             continue
         if matched_bangumi_id == bangumi_id and mikan_id:
             ts = now()
@@ -182,7 +229,9 @@ async def resolve_series_mikan_bangumi_id(settings: dict[str, str], series_id: i
                     """,
                     (mikan_id, bangumi_id, ts, candidate["id"]),
                 )
+            log("info", f"Mikan ID 反查命中: series_id={series_id} bangumi_id={bangumi_id} mikan_id={mikan_id}")
             return mikan_id
+        log("info", f"Mikan ID 反查未命中: series_id={series_id} candidate_id={candidate['id']} matched_bangumi={matched_bangumi_id or '-'} mikan_id={mikan_id or '-'}")
     return ""
 
 
@@ -392,10 +441,15 @@ def enqueue_missing_mikan_match_tasks(ts: str) -> int:
             SELECT rc.id, rc.page_url, rc.mikan_bangumi_id
             FROM rss_candidates rc
             LEFT JOIN mikan_match_tasks mt ON mt.candidate_id=rc.id
-            WHERE rc.bangumi_id != ''
-              AND rc.page_url != ''
-              AND rc.mikan_bangumi_id = ''
-              AND (mt.id IS NULL OR mt.mikan_bangumi_id='' OR mt.bangumi_id='')
+            WHERE rc.page_url != ''
+              AND (
+                    rc.bangumi_id = ''
+                 OR rc.mikan_bangumi_id = ''
+                 OR mt.id IS NULL
+                 OR mt.mikan_bangumi_id = ''
+                 OR mt.bangumi_id = ''
+                 OR mt.status IN ('failed', 'pending')
+              )
             ORDER BY rc.id ASC
             """
         ).fetchall()
@@ -415,6 +469,25 @@ def enqueue_missing_mikan_match_tasks(ts: str) -> int:
                 (row["id"], row["page_url"], row["mikan_bangumi_id"], ts, ts),
             )
     return len(rows)
+
+
+def reclaim_mikan_match_tasks(ts: str) -> int:
+    with connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE mikan_match_tasks
+            SET status='pending',
+                retry_after='',
+                last_error=CASE
+                  WHEN last_error='' THEN '手动扫描前回收运行中的 Mikan 匹配任务'
+                  ELSE last_error
+                END,
+                updated_at=?
+            WHERE status='running'
+            """,
+            (ts,),
+        )
+    return cursor.rowcount
 
 
 def repair_series_mikan_ids(ts: str) -> int:
@@ -532,6 +605,7 @@ async def _process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) 
             """,
             (now(), limit),
         ).fetchall()
+    log("info", f"Mikan 匹配队列: 本轮可执行 {len(rows)} 个")
     async def handle(row) -> tuple[int, int]:
         with connect() as conn:
             conn.execute(
