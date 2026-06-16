@@ -160,7 +160,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
             INSERT INTO series
               (fingerprint, title_raw, title_cn, bangumi_id, mikan_bangumi_id, year, poster_url, summary,
                metadata_source, hidden, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'bangumi', 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'bangumi', 0, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               title_raw=excluded.title_raw,
               title_cn=CASE WHEN excluded.title_cn!='' THEN excluded.title_cn ELSE series.title_cn END,
