@@ -17,7 +17,7 @@ from .db import clear_runtime_data, connect, diagnostics, finish_operation, get_
 from .library import bool_setting
 from .metadata import generate_nfo_for_series, refresh_series_metadata
 from .scanner import mark_selected_releases, poll_submitted_tasks, process_metadata_tasks, process_mikan_match_tasks, process_tasks, queue_release, resolve_series_choice, scan_and_queue
-from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_sync_tasks, queue_sync_for_series, reconcile_sync_intents, scan_cloud_library
+from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_cloud_asset_tasks, process_sync_tasks, queue_sync_for_series, reconcile_sync_intents, scan_cloud_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -91,6 +91,15 @@ def enrich_download_tasks(rows: list[Any]) -> list[dict[str, Any]]:
     return result
 
 
+def enrich_retry_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    result = rows_to_dicts(rows)
+    for row in result:
+        retry_seconds = seconds_until(str(row.get("retry_after") or ""))
+        row["retry_seconds"] = retry_seconds
+        row["waiting_retry"] = row.get("status") == "pending" and retry_seconds > 0
+    return result
+
+
 def split_setting(value: str) -> list[str]:
     return [x.strip() for x in (value or "").splitlines() if x.strip()]
 
@@ -131,6 +140,7 @@ async def scheduled_queue_tick() -> None:
     await process_metadata_tasks(settings)
     await process_tasks(settings)
     await poll_submitted_tasks(settings)
+    await process_cloud_asset_tasks(settings)
     backfill_cloud_assets_from_completed_tasks(settings)
     reconciled, queued = reconcile_sync_intents(settings)
     if queued:
@@ -153,9 +163,10 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
     await process_tasks(settings)
     if operation_id:
         update_operation(operation_id, "5/8 正在刷新 PikPak 任务状态")
-    await poll_submitted_tasks(settings)
+    poll_done, poll_failed = await poll_submitted_tasks(settings)
     if operation_id:
         update_operation(operation_id, "6/8 正在登记云盘资源")
+    cloud_done, cloud_failed = await process_cloud_asset_tasks(settings)
     cloud_count = backfill_cloud_assets_from_completed_tasks(settings)
     if operation_id:
         update_operation(operation_id, "7/8 正在调和本地同步")
@@ -164,7 +175,7 @@ async def run_full_refresh(settings: dict[str, str], operation_id: int | None = 
         if operation_id:
             update_operation(operation_id, "8/8 正在同步到本地")
         await process_sync_tasks(settings)
-    return f"{scan_message}；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；补齐云盘 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
+    return f"{scan_message}；Mikan 匹配成功 {mikan_done} 个，失败 {mikan_failed} 个；元数据成功 {metadata_done} 个，失败 {metadata_failed} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘资源登记 {cloud_done} 个，失败 {cloud_failed} 个，补齐 {cloud_count} 个；调和同步 {reconciled} 部，排队 {queued} 个"
 
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
@@ -197,6 +208,18 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             row["status"]: row["count"]
             for row in conn.execute(
                 "SELECT status, COUNT(*) AS count FROM download_tasks GROUP BY status"
+            ).fetchall()
+        }
+        cloud_poll_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM cloud_poll_tasks GROUP BY status"
+            ).fetchall()
+        }
+        cloud_asset_task_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM cloud_asset_tasks GROUP BY status"
             ).fetchall()
         }
         cloud_retry = conn.execute(
@@ -268,11 +291,19 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "description": "提交离线任务并轮询 PikPak 状态",
         },
         {
+            "key": "cloud_poll",
+            "name": "PikPak 状态",
+            "pending": cloud_poll_rows.get("pending", 0),
+            "running": cloud_poll_rows.get("running", 0),
+            "failed": cloud_poll_rows.get("failed", 0),
+            "description": "独立轮询离线任务完成状态，不阻塞新的入库提交",
+        },
+        {
             "key": "cloud_assets",
             "name": "云盘资源登记",
-            "pending": cloud_assets_pending,
-            "running": 0,
-            "failed": 0,
+            "pending": cloud_asset_task_rows.get("pending", 0) + cloud_assets_pending,
+            "running": cloud_asset_task_rows.get("running", 0),
+            "failed": cloud_asset_task_rows.get("failed", 0),
             "description": "把完成的 PikPak 任务登记成云盘资源",
         },
         {
@@ -457,7 +488,7 @@ def dashboard_data() -> dict[str, Any]:
         "logs": rows_to_dicts(logs),
         "cloud_assets": rows_to_dicts(cloud_assets),
         "sync_rules": rows_to_dicts(sync_rules),
-        "sync_tasks": rows_to_dicts(sync_tasks),
+        "sync_tasks": enrich_retry_rows(sync_tasks),
         "operations": rows_to_dicts(operations),
         "calendar": rows_to_dicts(calendar),
         "task_counts": {row["status"]: row["count"] for row in task_counts},
@@ -631,12 +662,13 @@ async def api_process_tasks(force: bool = Query(False)) -> dict[str, str]:
 async def api_poll_tasks() -> dict[str, str]:
     settings = get_settings()
     async def run() -> str:
-        await poll_submitted_tasks(settings)
+        poll_done, poll_failed = await poll_submitted_tasks(settings, force=True)
+        cloud_done, cloud_failed = await process_cloud_asset_tasks(settings, force=True)
         count = backfill_cloud_assets_from_completed_tasks(settings)
         reconciled, queued = reconcile_sync_intents(settings)
         if queued:
             await process_sync_tasks(settings)
-        return f"补齐云盘 {count} 个，调和 {reconciled} 部，同步排队 {queued} 个"
+        return f"PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘登记 {cloud_done} 个，失败 {cloud_failed} 个；补齐云盘 {count} 个，调和 {reconciled} 部，同步排队 {queued} 个"
 
     operation_id = run_operation("刷新云盘状态", run, "正在刷新 PikPak 任务和同步状态")
     return {"status": "started", "operation_id": str(operation_id), "message": "状态刷新已启动"}

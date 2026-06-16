@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import re
 import zlib
@@ -12,6 +13,40 @@ from .library import render_episode_name, render_season_dir, render_series_dir, 
 from .metadata import generate_nfo_for_series
 from .parser import normalize_title_key, parse_episode
 from .pikpak_service import get_cloud_download_url, list_cloud_files
+
+
+def task_retry_after_minutes(minutes: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(minutes=max(1, minutes))).isoformat()
+
+
+def stale_running_cutoff(minutes: int = 10) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+def task_retry_after(settings: dict[str, str], attempts: int) -> str:
+    default_minutes = max(5, 5 * max(1, attempts))
+    minutes = min(180, default_minutes)
+    return task_retry_after_minutes(minutes)
+
+
+def enqueue_cloud_asset_task(conn, download_task_id: int, ts: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO cloud_asset_tasks
+          (download_task_id, status, retry_after, last_error, created_at, updated_at)
+        VALUES (?, 'pending', '', '', ?, ?)
+        ON CONFLICT(download_task_id) DO UPDATE SET
+          status=CASE WHEN cloud_asset_tasks.status='completed' THEN cloud_asset_tasks.status ELSE 'pending' END,
+          retry_after='',
+          last_error='',
+          updated_at=excluded.updated_at
+        """,
+        (download_task_id, ts, ts),
+    )
 
 
 def cloud_asset_path(task: dict, release: dict, series: dict, settings: dict[str, str]) -> tuple[str, str]:
@@ -92,6 +127,88 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
     return None
 
 
+async def process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, force: bool = False) -> tuple[int, int]:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE cloud_asset_tasks
+            SET status='pending', last_error='上次云盘资源登记中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
+        if force:
+            conn.execute(
+                """
+                UPDATE cloud_asset_tasks
+                SET retry_after='', updated_at=?
+                WHERE status='pending' AND retry_after != ''
+                """,
+                (now(),),
+            )
+        rows = conn.execute(
+            """
+            SELECT cat.*, dt.pikpak_file_id, r.title
+            FROM cloud_asset_tasks cat
+            JOIN download_tasks dt ON dt.id=cat.download_task_id
+            JOIN releases r ON r.id=dt.release_id
+            JOIN series s ON s.id=dt.series_id
+            WHERE cat.status IN ('pending', 'failed')
+              AND (cat.retry_after='' OR cat.retry_after <= ?)
+              AND dt.status='completed'
+              AND dt.pikpak_file_id != ''
+              AND s.bangumi_id != ''
+            ORDER BY cat.id ASC
+            LIMIT ?
+            """,
+            (now(), limit),
+        ).fetchall()
+
+    completed = 0
+    failed = 0
+    touched_series: set[int] = set()
+    for row in rows:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE cloud_asset_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                (now(), row["id"]),
+            )
+        try:
+            asset_id = upsert_cloud_asset(int(row["download_task_id"]), settings)
+            if not asset_id:
+                raise RuntimeError("云盘资源登记失败：缺少任务、发布、番剧或 file_id")
+        except Exception as exc:
+            failed += 1
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE cloud_asset_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(row["attempts"] or 0) + 1), str(exc)[:2000], now(), row["id"]),
+                )
+            log("error", f"云盘资源登记失败: {row['title']} - {exc}")
+            continue
+
+        with connect() as conn:
+            conn.execute(
+                "UPDATE cloud_asset_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
+                (now(), row["id"]),
+            )
+            series = conn.execute(
+                "SELECT series_id FROM cloud_assets WHERE id=?",
+                (asset_id,),
+            ).fetchone()
+        if series:
+            touched_series.add(int(series["series_id"]))
+        completed += 1
+
+    if completed:
+        reconcile_sync_intents(settings)
+    return completed, failed
+
+
 def ensure_sync_rule(series_id: int, settings: dict[str, str], enabled: bool | None = None) -> None:
     ts = now()
     auto_sync = settings.get("auto_sync_following", "true").lower() == "true"
@@ -163,6 +280,7 @@ def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int
                   status=CASE WHEN sync_tasks.status='synced' THEN sync_tasks.status ELSE 'pending' END,
                   source_path=excluded.source_path,
                   target_path=excluded.target_path,
+                  retry_after='',
                   last_error='',
                   updated_at=excluded.updated_at
                 """,
@@ -405,7 +523,13 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
     else:
         with connect() as conn:
             pending = conn.execute(
-                "SELECT COUNT(*) AS count FROM sync_tasks WHERE status IN ('pending','failed') AND attempts < 3"
+                """
+                SELECT COUNT(*) AS count
+                FROM sync_tasks
+                WHERE status IN ('pending','failed')
+                  AND (retry_after='' OR retry_after <= ?)
+                """,
+                (now(),),
             ).fetchone()["count"]
         if pending:
             await process_sync_tasks(settings)
@@ -437,19 +561,28 @@ async def download_cloud_file_to_local(file_id: str, source: str, target: str, s
 
 async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
     with connect() as conn:
+        conn.execute(
+            """
+            UPDATE sync_tasks
+            SET status='pending', last_error='上次本地同步中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
         rows = conn.execute(
             """
             SELECT st.*, ca.cloud_name, ca.provider_file_id
             FROM sync_tasks st
             JOIN cloud_assets ca ON ca.id=st.cloud_asset_id
-            WHERE st.status IN ('pending', 'failed') AND st.attempts < 3
+            WHERE st.status IN ('pending', 'failed')
+              AND (st.retry_after='' OR st.retry_after <= ?)
             ORDER BY st.id ASC
             LIMIT ?
             """,
-            (limit,),
+            (now(), limit),
         ).fetchall()
 
-    for task in rows:
+    async def handle(task) -> bool:
         with connect() as conn:
             conn.execute(
                 "UPDATE sync_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
@@ -465,11 +598,15 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
         except Exception as exc:
             with connect() as conn:
                 conn.execute(
-                    "UPDATE sync_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
-                    (str(exc)[:2000], now(), task["id"]),
+                    """
+                    UPDATE sync_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(task["attempts"] or 0) + 1), str(exc)[:2000], now(), task["id"]),
                 )
             log("error", f"本地同步失败: {task['cloud_name']} - {exc}")
-            continue
+            return False
 
         with connect() as conn:
             ts = now()
@@ -489,7 +626,7 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                 (task["target_path"], ts, ts, task["cloud_asset_id"]),
             )
             conn.execute(
-                "UPDATE sync_tasks SET status='synced', last_error='', updated_at=? WHERE id=?",
+                "UPDATE sync_tasks SET status='synced', retry_after='', last_error='', updated_at=? WHERE id=?",
                 (ts, task["id"]),
             )
         nfo_settings = dict(settings)
@@ -501,6 +638,15 @@ async def process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                 (now(), task["cloud_asset_id"]),
             )
         log("info", f"已同步到本地: {task['cloud_name']}")
+        return True
+
+    semaphore = asyncio.Semaphore(max(1, min(3, limit)))
+
+    async def limited(task):
+        async with semaphore:
+            return await handle(task)
+
+    await asyncio.gather(*(limited(task) for task in rows))
 
 
 def cancel_sync_for_series(series_id: int) -> tuple[int, str]:

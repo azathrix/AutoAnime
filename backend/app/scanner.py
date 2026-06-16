@@ -13,7 +13,7 @@ from .library import bool_setting, render_episode_name, target_dir
 from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, parse_entry, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
-from .sync_service import process_sync_tasks, reconcile_sync_intents, upsert_cloud_asset
+from .sync_service import enqueue_cloud_asset_task
 
 
 async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
@@ -268,16 +268,25 @@ def candidate_to_parsed_release(candidate) -> ParsedRelease:
 
 async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
     with connect() as conn:
+        conn.execute(
+            """
+            UPDATE mikan_match_tasks
+            SET status='pending', last_error='上次匹配中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
         rows = conn.execute(
             """
             SELECT mt.*, rc.title, rc.page_url
             FROM mikan_match_tasks mt
             JOIN rss_candidates rc ON rc.id=mt.candidate_id
-            WHERE mt.status IN ('pending', 'failed') AND mt.attempts < 3
+            WHERE mt.status IN ('pending', 'failed')
+              AND (mt.retry_after='' OR mt.retry_after <= ?)
             ORDER BY mt.id ASC
             LIMIT ?
             """,
-            (limit,),
+            (now(), limit),
         ).fetchall()
     async def handle(row) -> tuple[int, int]:
         with connect() as conn:
@@ -297,8 +306,12 @@ async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -
             error = str(exc)[:2000]
             with connect() as conn:
                 conn.execute(
-                    "UPDATE mikan_match_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
-                    (error, now(), row["id"]),
+                    """
+                    UPDATE mikan_match_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(row["attempts"] or 0) + 1), error, now(), row["id"]),
                 )
                 conn.execute(
                     "UPDATE rss_candidates SET status='failed', reason=?, updated_at=? WHERE id=?",
@@ -311,7 +324,8 @@ async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -
             conn.execute(
                 """
                 UPDATE mikan_match_tasks
-                SET status='completed', bangumi_id=?, mikan_bangumi_id=?, last_error='', updated_at=?
+                SET status='completed', bangumi_id=?, mikan_bangumi_id=?,
+                    retry_after='', last_error='', updated_at=?
                 WHERE id=?
                 """,
                 (bangumi_id, mikan_id, ts, row["id"]),
@@ -335,16 +349,25 @@ async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -
 
 async def process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
     with connect() as conn:
+        conn.execute(
+            """
+            UPDATE metadata_tasks
+            SET status='pending', last_error='上次元数据处理中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
         rows = conn.execute(
             """
             SELECT mt.*, rc.*
             FROM metadata_tasks mt
             JOIN rss_candidates rc ON rc.id=mt.candidate_id
-            WHERE mt.status IN ('pending', 'failed') AND mt.attempts < 3
+            WHERE mt.status IN ('pending', 'failed')
+              AND (mt.retry_after='' OR mt.retry_after <= ?)
             ORDER BY mt.id ASC
             LIMIT ?
             """,
-            (limit,),
+            (now(), limit),
         ).fetchall()
     async def handle(row) -> tuple[int, int]:
         with connect() as conn:
@@ -356,8 +379,12 @@ async def process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> t
             error = "缺少 Bangumi ID"
             with connect() as conn:
                 conn.execute(
-                    "UPDATE metadata_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
-                    (error, now(), row["id"]),
+                    """
+                    UPDATE metadata_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(row["attempts"] or 0) + 1), error, now(), row["id"]),
                 )
                 conn.execute(
                     "UPDATE rss_candidates SET status='failed', reason=?, updated_at=? WHERE id=?",
@@ -372,8 +399,12 @@ async def process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> t
             error = str(exc)[:2000]
             with connect() as conn:
                 conn.execute(
-                    "UPDATE metadata_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
-                    (error, now(), row["id"]),
+                    """
+                    UPDATE metadata_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(row["attempts"] or 0) + 1), error, now(), row["id"]),
                 )
                 conn.execute(
                     "UPDATE rss_candidates SET status='failed', reason=?, updated_at=? WHERE id=?",
@@ -383,7 +414,7 @@ async def process_metadata_tasks(settings: dict[str, str], limit: int = 20) -> t
             return 0, 1
         with connect() as conn:
             conn.execute(
-                "UPDATE metadata_tasks SET status='completed', last_error='', updated_at=? WHERE id=?",
+                "UPDATE metadata_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
                 (now(), row["id"]),
             )
             conn.execute(
@@ -674,6 +705,22 @@ def queue_release(release_id: int, settings: dict[str, str]) -> None:
         )
 
 
+def enqueue_cloud_poll_task(conn, download_task_id: int, ts: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO cloud_poll_tasks
+          (download_task_id, status, retry_after, last_error, created_at, updated_at)
+        VALUES (?, 'pending', '', '', ?, ?)
+        ON CONFLICT(download_task_id) DO UPDATE SET
+          status=CASE WHEN cloud_poll_tasks.status='completed' THEN cloud_poll_tasks.status ELSE 'pending' END,
+          retry_after='',
+          last_error='',
+          updated_at=excluded.updated_at
+        """,
+        (download_task_id, ts, ts),
+    )
+
+
 def extract_task_id(result: dict) -> str:
     for path in [
         ("task", "id"),
@@ -806,8 +853,21 @@ async def process_tasks(settings: dict[str, str], limit: int = 6, force: bool = 
                         """,
                         (retry_after, f"PikPak 限流，等待后自动重试: {str(exc)[:1800]}", now(), task["id"]),
                     )
+                    conn.execute(
+                        """
+                        UPDATE download_tasks
+                        SET retry_after=?, last_error=CASE
+                              WHEN last_error='' THEN 'PikPak 当前限流，等待统一冷却后自动重试'
+                              ELSE last_error
+                            END,
+                            updated_at=?
+                        WHERE status='pending'
+                          AND (retry_after='' OR retry_after <= ?)
+                        """,
+                        (retry_after, now(), now()),
+                    )
                 log("warn", f"PikPak 限流，已延后重试: {task['title']} - {exc}")
-                continue
+                break
             retry_after = task_retry_after(settings, int(task["attempts"] or 0) + 1)
             with connect() as conn:
                 conn.execute(
@@ -822,44 +882,125 @@ async def process_tasks(settings: dict[str, str], limit: int = 6, force: bool = 
             continue
         else:
             with connect() as conn:
+                ts = now()
+                status = "completed" if file_id and not task_id else "submitted"
                 conn.execute(
                     """
                     UPDATE download_tasks
                     SET status='submitted', pikpak_task_id=?, pikpak_file_id=?, retry_after='', last_error='', updated_at=?
                     WHERE id=?
                     """,
-                    (task_id, file_id, now(), task["id"]),
+                    (task_id, file_id, ts, task["id"]),
                 )
+                if status == "completed":
+                    conn.execute(
+                        "UPDATE download_tasks SET status='completed', updated_at=? WHERE id=?",
+                        (ts, task["id"]),
+                    )
+                    enqueue_cloud_asset_task(conn, task["id"], ts)
+                else:
+                    enqueue_cloud_poll_task(conn, task["id"], ts)
             log("info", f"已提交 PikPak: {task['title']}")
             submitted += 1
 
 
-async def poll_submitted_tasks(settings: dict[str, str]) -> None:
+async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force: bool = False) -> tuple[int, int]:
     with connect() as conn:
+        conn.execute(
+            """
+            UPDATE cloud_poll_tasks
+            SET status='pending', last_error='上次状态轮询中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
+        if force:
+            conn.execute(
+                """
+                UPDATE cloud_poll_tasks
+                SET retry_after='', updated_at=?
+                WHERE status='pending' AND retry_after != ''
+                """,
+                (now(),),
+            )
         local_tasks = conn.execute(
             """
-            SELECT dt.*, r.title
-            FROM download_tasks dt
+            SELECT cpt.id AS poll_task_id, cpt.attempts AS poll_attempts,
+                   dt.*, r.title
+            FROM cloud_poll_tasks cpt
+            JOIN download_tasks dt ON dt.id=cpt.download_task_id
             JOIN releases r ON r.id=dt.release_id
             JOIN series s ON s.id=dt.series_id
-            WHERE dt.status IN ('submitted', 'running')
+            WHERE cpt.status IN ('pending', 'failed')
+              AND (cpt.retry_after='' OR cpt.retry_after <= ?)
+              AND dt.status IN ('submitted', 'running')
               AND (dt.pikpak_task_id != '' OR dt.pikpak_file_id != '')
               AND s.bangumi_id != ''
+            ORDER BY cpt.id ASC
+            LIMIT ?
             """
+            ,
+            (now(), limit),
         ).fetchall()
     if not local_tasks:
-        return
+        return 0, 0
 
     try:
         remote_tasks = await list_offline_tasks(settings)
     except Exception as exc:
         log("error", f"PikPak 状态轮询失败: {exc}")
-        return
+        with connect() as conn:
+            retry_after = task_retry_after(settings, 1)
+            for task in local_tasks:
+                conn.execute(
+                    """
+                    UPDATE cloud_poll_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (retry_after, str(exc)[:2000], now(), task["poll_task_id"]),
+                )
+        return 0, len(local_tasks)
 
     by_id = {task.get("id"): task for task in remote_tasks if task.get("id")}
+    completed = 0
+    failed = 0
     for task in local_tasks:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE cloud_poll_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                (now(), task["poll_task_id"]),
+            )
         remote = by_id.get(task["pikpak_task_id"])
         if not remote:
+            if task["pikpak_file_id"] and not task["pikpak_task_id"]:
+                with connect() as conn:
+                    ts = now()
+                    conn.execute(
+                        "UPDATE download_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
+                        (ts, task["id"]),
+                    )
+                    conn.execute(
+                        "UPDATE cloud_poll_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
+                        (ts, task["poll_task_id"]),
+                    )
+                    enqueue_cloud_asset_task(conn, task["id"], ts)
+                completed += 1
+                continue
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE cloud_poll_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        task_retry_after(settings, int(task["poll_attempts"] or 0) + 1),
+                        "PikPak 暂未返回该离线任务，等待后重试",
+                        now(),
+                        task["poll_task_id"],
+                    ),
+                )
             continue
         phase = remote.get("phase", "")
         file_id = remote.get("file_id") or remote.get("reference_resource", {}).get("id", "") or task["pikpak_file_id"]
@@ -870,30 +1011,52 @@ async def poll_submitted_tasks(settings: dict[str, str]) -> None:
         else:
             status = "submitted"
         with connect() as conn:
+            ts = now()
             conn.execute(
                 """
                 UPDATE download_tasks
                 SET status=?, pikpak_file_id=?, last_error=?, updated_at=?
                 WHERE id=?
                 """,
-                (status, file_id, remote.get("message", "")[:2000], now(), task["id"]),
+                (status, file_id, remote.get("message", "")[:2000], ts, task["id"]),
             )
             if status == "completed":
                 conn.execute(
                     "UPDATE episodes SET status='downloaded', updated_at=? WHERE series_id=? AND episode_number=(SELECT episode_number FROM releases WHERE id=?)",
-                    (now(), task["series_id"], task["release_id"]),
+                    (ts, task["series_id"], task["release_id"]),
+                )
+                conn.execute(
+                    "UPDATE cloud_poll_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
+                    (ts, task["poll_task_id"]),
+                )
+                enqueue_cloud_asset_task(conn, task["id"], ts)
+                completed += 1
+            elif status == "failed":
+                conn.execute(
+                    """
+                    UPDATE cloud_poll_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        task_retry_after(settings, int(task["poll_attempts"] or 0) + 1),
+                        remote.get("message", "")[:2000],
+                        ts,
+                        task["poll_task_id"],
+                    ),
+                )
+                failed += 1
+            else:
+                conn.execute(
+                    "UPDATE cloud_poll_tasks SET status='pending', retry_after=?, last_error='', updated_at=? WHERE id=?",
+                    (task_retry_after(settings, int(task["poll_attempts"] or 0) + 1), ts, task["poll_task_id"]),
                 )
         if status == "completed" and file_id and task["normalized_name"]:
             try:
                 await rename_cloud_file(settings, file_id, task["normalized_name"])
             except Exception as exc:
                 log("warn", f"云端重命名失败: {task['title']} - {exc}")
-        if status == "completed":
-            asset_id = upsert_cloud_asset(task["id"], settings)
-            if asset_id:
-                _, queued = reconcile_sync_intents(settings)
-                if queued:
-                    await process_sync_tasks(settings)
+    return completed, failed
 
 
 async def scan_and_queue(settings: dict[str, str]) -> str:

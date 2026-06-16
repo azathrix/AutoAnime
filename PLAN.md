@@ -87,6 +87,11 @@ jellyfin
 - 云盘入库、PikPak 状态同步、云盘资源登记、本地状态同步、本地同步、NFO 生成、全量审计等操作都必须独立建表，不能复用别的队列状态。
 - 到下一阶段的数据必须完整；例如 `metadata_tasks` 失败时不能写 `series/releases`，`mikan_match_tasks` 失败时不能写 `metadata_tasks`。
 - 用户点击“扫描全部”只是按顺序立即触发各队列处理器；日常运行仍由各队列自动触发或定时触发。
+- 队列失败不长期占住 worker。失败任务写入 `last_error` 和 `retry_after` 后回到 `pending`，冷却结束后自动重试；worker 继续处理其他可执行任务。
+- PikPak 入库拆成三段任务表：
+  - `download_tasks`: 只负责提交离线任务到 PikPak。
+  - `cloud_poll_tasks`: 只负责轮询 PikPak 离线任务状态。
+  - `cloud_asset_tasks`: 只负责把完成的 PikPak 任务登记为 `cloud_assets`。
 
 ### 当前代码结构
 
@@ -210,7 +215,11 @@ docker compose up -d --build
 - 相同 `bangumi_id` 的重复番剧会在数据库迁移和 Bangumi 元数据刷新后合并。
 - PikPak 离线提交已接入。
 - PikPak 提交默认不预先初始化 captcha；只有返回验证码相关错误时才初始化 captcha 并重试一次，避免额外 API 调用触发限流。
-- 下载任务支持提交、轮询、失败重试。
+- PikPak 提交、PikPak 状态轮询、云盘资源登记已拆成独立任务表。
+- PikPak 限流时会给待提交任务统一写入冷却时间，避免继续撞接口。
+- 提交成功但只拿到 `file_id`、没有离线任务 ID 时，会直接进入云盘资源登记，避免“云盘已有但本地不同步”。
+- Mikan 匹配、元数据、本地同步失败后会写 `retry_after` 回到 `pending`，不再因为一个失败项卡住后续任务。
+- 本地同步任务支持小并发处理，并在失败后冷却重试。
 - 新扫描到且没有 `metadata_source` 的番剧会尝试刷新 Bangumi 元数据。
 - 当前代码仍保留扫描后生成一份旧 NFO；后续需要彻底移除，只保留“同步到本地后生成 NFO”。
 - 发布语言解析已接入，支持简体、繁体、日语、中文和常见 CHS/CHT/BIG5/GB/JP 标记。
@@ -309,7 +318,9 @@ POST /api/jellyfin/scan
 - `series`: 聚合后的番剧/剧集条目
 - `episodes`: 单集记录
 - `releases`: RSS 发布记录
-- `download_tasks`: PikPak 提交和轮询任务
+- `download_tasks`: PikPak 离线任务提交队列
+- `cloud_poll_tasks`: PikPak 状态轮询队列
+- `cloud_asset_tasks`: 云盘资源登记队列
 - `cloud_assets`: 已在云盘中的资源，包括本程序任务完成和云盘库扫描导入。
 - `sync_rules`: 每个番剧的本地同步意图和本地根目录。
 - `local_assets`: NAS 本地真实文件记录。
@@ -550,7 +561,7 @@ access_token + refresh_token
   - 本地已删除
   - 失败
 
-状态：部分完成。`cloud_assets`、`sync_rules`、`local_assets`、`sync_tasks` 已建立；云盘库扫描已接入；旧 `download_tasks` 仍待重命名或迁移为 `cloud_tasks`。
+状态：部分完成。`cloud_assets`、`sync_rules`、`local_assets`、`sync_tasks` 已建立；PikPak 状态轮询已拆到 `cloud_poll_tasks`，云盘资源登记已拆到 `cloud_asset_tasks`；云盘库扫描已接入；旧 `download_tasks` 仍待重命名或迁移为 `cloud_tasks`。
 
 ### P3: 本地同步执行器
 
@@ -563,7 +574,7 @@ access_token + refresh_token
 - 同步成功后生成 NFO。
 - 同步成功后可触发 Jellyfin 扫描。
 
-状态：部分完成。同步意图开关、取消同步、同步后 NFO 已实现；新增同步意图调和，云盘已有资源可自动排同步；真实 PikPak 文件下载需要 NAS 环境验证。
+状态：部分完成。同步意图开关、取消同步、同步后 NFO 已实现；新增同步意图调和，云盘已有资源可自动排同步；同步失败会冷却后自动重试且不阻塞后续任务；真实 PikPak 文件下载需要 NAS 环境验证。
 
 ### P4: 元数据优先合并
 

@@ -149,6 +149,9 @@
                 <el-table-column prop="source_path" label="云盘路径" min-width="260" />
                 <el-table-column prop="target_path" label="本地路径" min-width="260" />
                 <el-table-column prop="last_error" label="错误" min-width="220" />
+                <el-table-column label="下次处理" width="130">
+                  <template #default="{ row }">{{ row.waiting_retry ? formatCountdown(row.retry_seconds) : '-' }}</template>
+                </el-table-column>
               </el-table>
             </el-tab-pane>
 
@@ -476,7 +479,7 @@ const issues = computed(() => {
   for (const task of dashboard.tasks.filter(t => t.status === 'failed')) {
     rows.push({ type: '云盘失败', level: 'danger', title: task.title_cn, message: task.last_error || 'PikPak 入库失败', series_id: task.series_id })
   }
-  for (const task of dashboard.sync_tasks.filter(t => t.status === 'failed')) {
+  for (const task of dashboard.sync_tasks.filter(t => t.status === 'failed' || (t.last_error && t.waiting_retry))) {
     rows.push({ type: '同步失败', level: 'danger', title: task.title_cn, message: task.last_error || '本地同步失败', series_id: task.series_id })
   }
   return rows

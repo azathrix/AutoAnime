@@ -160,6 +160,8 @@ async def get_cloud_download_url(settings: dict[str, str], file_id: str) -> str:
     if settings.get("pikpak_auth_mode") == "password":
         await api.login()
     data = await api.get_download_url(file_id)
+    if isinstance(data, str):
+        return data
     if not isinstance(data, dict):
         raise RuntimeError("无法获取云盘下载链接")
     candidates = [
@@ -177,6 +179,15 @@ async def get_cloud_download_url(settings: dict[str, str], file_id: str) -> str:
             file_info.get("link"),
         ]
     )
+    for media in data.get("medias", []) if isinstance(data.get("medias"), list) else []:
+        if not isinstance(media, dict):
+            continue
+        link = media.get("link")
+        if isinstance(link, dict):
+            candidates.append(link.get("url"))
+            candidates.append(link.get("download_url"))
+        elif link:
+            candidates.append(link)
     for value in candidates:
         if value:
             return str(value)

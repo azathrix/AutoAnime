@@ -121,12 +121,35 @@ def init_db() -> None:
                 UNIQUE(release_id)
             );
 
+            CREATE TABLE IF NOT EXISTS cloud_poll_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                download_task_id INTEGER NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                retry_after TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cloud_asset_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                download_task_id INTEGER NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                retry_after TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS metadata_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 candidate_id INTEGER NOT NULL UNIQUE,
                 status TEXT NOT NULL DEFAULT 'pending',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 bangumi_id TEXT NOT NULL DEFAULT '',
+                retry_after TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -140,6 +163,7 @@ def init_db() -> None:
                 mikan_url TEXT NOT NULL DEFAULT '',
                 mikan_bangumi_id TEXT NOT NULL DEFAULT '',
                 bangumi_id TEXT NOT NULL DEFAULT '',
+                retry_after TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -193,6 +217,7 @@ def init_db() -> None:
                 sync_direction TEXT NOT NULL DEFAULT 'cloud_to_local',
                 source_path TEXT NOT NULL DEFAULT '',
                 target_path TEXT NOT NULL DEFAULT '',
+                retry_after TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -282,6 +307,34 @@ def migrate(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE download_tasks ADD COLUMN {column} {ddl}")
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS cloud_poll_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            download_task_id INTEGER NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            retry_after TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cloud_asset_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            download_task_id INTEGER NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            retry_after TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
         ON cloud_assets(provider, provider_file_id)
         WHERE provider_file_id != ''
@@ -340,12 +393,23 @@ def migrate(conn: sqlite3.Connection) -> None:
             status TEXT NOT NULL DEFAULT 'pending',
             attempts INTEGER NOT NULL DEFAULT 0,
             bangumi_id TEXT NOT NULL DEFAULT '',
+            retry_after TEXT NOT NULL DEFAULT '',
             last_error TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+    metadata_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(metadata_tasks)").fetchall()
+    }
+    metadata_additions = {
+        "retry_after": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in metadata_additions.items():
+        if column not in metadata_columns:
+            conn.execute(f"ALTER TABLE metadata_tasks ADD COLUMN {column} {ddl}")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS mikan_match_tasks (
@@ -356,6 +420,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             mikan_url TEXT NOT NULL DEFAULT '',
             mikan_bangumi_id TEXT NOT NULL DEFAULT '',
             bangumi_id TEXT NOT NULL DEFAULT '',
+            retry_after TEXT NOT NULL DEFAULT '',
             last_error TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -370,10 +435,21 @@ def migrate(conn: sqlite3.Connection) -> None:
         "mikan_url": "TEXT NOT NULL DEFAULT ''",
         "mikan_bangumi_id": "TEXT NOT NULL DEFAULT ''",
         "bangumi_id": "TEXT NOT NULL DEFAULT ''",
+        "retry_after": "TEXT NOT NULL DEFAULT ''",
     }
     for column, ddl in mikan_match_additions.items():
         if column not in mikan_match_columns:
             conn.execute(f"ALTER TABLE mikan_match_tasks ADD COLUMN {column} {ddl}")
+    sync_task_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(sync_tasks)").fetchall()
+    }
+    sync_task_additions = {
+        "retry_after": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in sync_task_additions.items():
+        if column not in sync_task_columns:
+            conn.execute(f"ALTER TABLE sync_tasks ADD COLUMN {column} {ddl}")
     merge_duplicate_series(conn)
 
 
@@ -584,6 +660,8 @@ def diagnostics() -> dict[str, Any]:
             "mikan_match_tasks",
             "metadata_tasks",
             "download_tasks",
+            "cloud_poll_tasks",
+            "cloud_asset_tasks",
             "cloud_assets",
             "sync_rules",
             "local_assets",
@@ -615,6 +693,8 @@ def clear_runtime_data() -> None:
             "local_assets",
             "sync_rules",
             "cloud_assets",
+            "cloud_asset_tasks",
+            "cloud_poll_tasks",
             "download_tasks",
             "metadata_tasks",
             "mikan_match_tasks",
@@ -626,7 +706,7 @@ def clear_runtime_data() -> None:
             "logs",
         ]:
             conn.execute(f"DELETE FROM {table}")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','download_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','releases','episodes','series','operations','logs')")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','download_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','releases','episodes','series','operations','logs')")
     try:
         LOG_PATH.unlink(missing_ok=True)
     except OSError:
