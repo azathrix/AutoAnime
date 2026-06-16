@@ -65,6 +65,14 @@ docker compose up -d --build
 
 这会先停止并删除当前 compose 管理的容器，再重新构建启动。挂载的 `./data` 和媒体目录不会被删除。
 
+也可以直接使用部署脚本：
+
+```sh
+cd /volume1/docker/autoanime
+chmod +x deploy-nas.sh
+./deploy-nas.sh
+```
+
 镜像会在容器内下载 rclone 官方 linux-amd64 zip 并安装固定二进制，不使用官方 install.sh。若 NAS 访问 Debian/npm/pip/rclone 下载源较慢，可以给构建阶段加代理：
 
 ```sh
@@ -77,6 +85,12 @@ docker compose up -d --build
 ```
 
 按你的代理实际端口修改；没有代理时不用设置这些变量。
+
+使用部署脚本时可以简化为：
+
+```sh
+AUTOANIME_PROXY=http://192.168.31.146:10808 ./deploy-nas.sh
+```
 
 默认会使用 UI 中已有的 PikPak 用户名和密码自动生成 rclone 配置：
 

@@ -698,6 +698,7 @@ frontend/package-lock.json
 frontend/vite.config.js
 Dockerfile
 docker-compose.yml
+deploy-nas.sh
 README.md
 PLAN.md
 .dockerignore
