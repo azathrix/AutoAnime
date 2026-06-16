@@ -9,7 +9,7 @@ if not exist "%TARGET%" mkdir "%TARGET%"
 
 robocopy "%ROOT%" "%TARGET%" ^
   /MIR ^
-  /XD ".git" "build" "data" "test-data" "frontend\node_modules" "frontend\.vite" "backend\frontend_dist" "backend\app\__pycache__" ^
+  /XD ".git" "build" "data" "test-data" "node_modules" ".vite" "frontend_dist" "__pycache__" ^
   /XF "*.zip" "*.log" "*.pyc" ".env" ^
   /R:2 /W:2 /NFL /NDL /NP
 

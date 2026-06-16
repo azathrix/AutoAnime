@@ -29,7 +29,7 @@ Mikan RSS / Nyaa 搜索 / 其他补番索引器
 当前第一阶段仍以 Mikan RSS + PikPak 为主：
 
 ```txt
-Mikan RSS -> RSS 候选暂存 -> Mikan 页面匹配 bgm.tv subject ID -> Bangumi/TMDB 元数据刷新
+Mikan RSS -> RSS 候选暂存 -> Mikan 页面匹配 bgm.tv subject ID -> Bangumi 元数据刷新
 -> 正式番剧入库与合并 -> 字幕组/分辨率/语言自动选择 -> PikPak 离线下载
 -> 云盘状态轮询 -> 按同步意图自动同步到 NAS 本地
 -> 本地 NFO -> Jellyfin 本地库
@@ -52,7 +52,7 @@ source adapters
   Mikan RSS / Nyaa / 动漫花园或其他补番种子索引器 / 手动种子或 magnet
 
 metadata layer
-  Bangumi / TMDB / 标题归一化 / 身份合并
+  Bangumi / 标题归一化 / 身份合并
 
 cloud library
   provider: pikpak / future providers
@@ -321,7 +321,7 @@ POST /api/jellyfin/scan
 - `media_items`: 番剧、电影、剧集等媒体主体
 - `episodes`: 单集记录，番剧和剧集共用
 - `releases`: 来源发现的候选发布
-- `metadata_matches`: Bangumi/TMDB 搜索候选和人工确认结果
+- `metadata_matches`: Bangumi 搜索候选和人工确认结果
 - `cloud_providers`: 云盘 provider 配置，当前先支持 PikPak
 - `cloud_assets`: 已在云盘中的文件或目录
 - `cloud_tasks`: 下载、转存、导入到云盘的任务
@@ -333,7 +333,6 @@ POST /api/jellyfin/scan
 关键身份字段：
 
 - `media_items.bangumi_id`
-- `media_items.tmdb_id`
 - `media_items.identity_key`
 - `media_items.media_type`
 - `cloud_assets.provider`
@@ -346,7 +345,7 @@ POST /api/jellyfin/scan
 身份合并优先级：
 
 ```txt
-bangumi:{id} > tmdb:{id} > title:{normalized_title}
+bangumi:{id} > title:{normalized_title}
 ```
 
 ## 7. 设计约束
@@ -378,7 +377,7 @@ bangumi:{id} > tmdb:{id} > title:{normalized_title}
 
 6. 元数据应尽早匹配。
    - Mikan RSS 的 `bangumiId` 是 Bangumi.tv subject ID，应优先使用。
-   - RSS 扫描后先按稳定 ID 归并，再尝试 Bangumi/TMDB 匹配。
+   - RSS 扫描后先按稳定 ID 归并，再尝试 Bangumi 匹配。
    - 根据元数据 ID 合并重复条目。
    - 手动确认的元数据优先级最高。
 
@@ -397,12 +396,12 @@ access_token + refresh_token
 9. 后续扩展应优先增加 adapter。
    - source adapter：RSS、搜索、导入、收藏。
    - cloud adapter：PikPak、未来其他云盘。
-   - metadata adapter：Bangumi、TMDB。
+   - metadata adapter：Bangumi。
 
 10. 任务边界必须清楚。
    - RSS 定时扫描允许全量拉 RSS feed，但只处理新增或变更发布。
    - RSS 发现条目先是“候选”，不等于正式入库。
-   - 正式入库标准：必须绑定 Bangumi 或 TMDB，且标题、年份、季、集数等关键元数据足够明确。
+   - 正式入库标准：必须绑定 Bangumi，且标题、年份、季、集数等关键元数据足够明确。
    - 入库后才检查云盘资产；没有云盘资产才加入 PikPak 入库队列。
    - 云盘资产存在后才检查本地资产；没有本地资产且同步意图开启才加入本地同步队列。
    - 全量检查云盘/本地所有状态只能由手动按钮触发，不能作为普通定时任务。
@@ -436,11 +435,10 @@ access_token + refresh_token
 ### 元数据
 
 - Bangumi 自动搜索目前只是第一结果启发式。
-- TMDB 尚未实现。
 - 集标题和放送日期还没有完整填充。
-- 需要支持 Bangumi/TMDB 搜索候选选择和手动确认。
+- 需要支持 Bangumi 搜索候选选择和手动确认。
 - Mikan RSS `bangumiId` 已优先用于稳定合并；Bangumi 自动搜索仍需增加候选确认，避免启发式第一结果误配。
-- 没有 Bangumi/TMDB 稳定身份的条目不应进入正式番剧库，应进入待确认候选。
+- 没有 Bangumi 稳定身份的条目不应进入正式番剧库，应进入待确认候选。
 
 ### 语言和发布选择
 
@@ -469,7 +467,7 @@ access_token + refresh_token
 - 暂无认证。
 - 暂无路由级浏览器 URL，当前 Vue 使用内部状态。
 - 番剧卡片已展示云盘数量和本地数量；后续仍需展示更明确的阻塞原因和自动选择状态。
-- 日历需要 Bangumi/TMDB 放送数据。
+- 日历需要 Bangumi 放送数据。
 
 ## 9. 下一阶段路线图
 
@@ -573,12 +571,11 @@ access_token + refresh_token
 
 - Mikan RSS 的 `bangumiId` 只作为 Mikan 番组页线索，不作为稳定媒体身份。
 - RSS 扫描先进入候选/待确认队列，Mikan 匹配拿到 Bangumi.tv subject ID 且元数据完整后才正式入库。
-- 增加 TMDB 匹配。
 - 增加匹配候选 UI。
 - 建立 `identity_key`。
-- 按 Bangumi/TMDB ID 合并重复媒体。
+- 按 Bangumi ID 合并重复媒体。
 
-状态：部分完成。候选暂存队列和 Mikan 页面匹配队列已接入；正式入库门槛已改为必须经过元数据任务。TMDB、候选确认 UI 和完整 `identity_key` 仍待实现。
+状态：部分完成。候选暂存队列和 Mikan 页面匹配队列已接入；正式入库门槛已改为必须经过 Bangumi 元数据任务。候选确认 UI 和完整 `identity_key` 仍待实现。
 
 修正：RSS 没有提供 Bangumi.tv subject ID 时，不再自动按标题搜索 Bangumi 并绑定第一个结果，避免误识别为无关番剧；Mikan 来源先通过 Mikan 页面解析 subject ID，失败时停在 `mikan_match_tasks`。
 
@@ -695,6 +692,14 @@ PLAN.md
 - `data/` 是运行时状态，不应被源码包覆盖。
 
 交接给另一个 AI 或上传 NAS 测试前，创建干净源码包，并排除以上路径。
+
+当前 `package-clean.bat` 输出干净源码目录：
+
+```txt
+build\AutoAnime-clean
+```
+
+默认不再生成 zip，避免 Windows 或上传进程占用压缩包导致无法覆盖。
 
 ## 11. 维护规则
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
 import httpx
@@ -433,6 +434,40 @@ def priority_pick(values: list[str], priority: list[str], field: str = "") -> st
     return values_clean[0] if len(set(values_clean)) == 1 else ""
 
 
+def language_tokens(value: str) -> list[str]:
+    text = value or ""
+    tokens: list[str] = []
+    if text.startswith("简") or "简体" in text or "简中" in text:
+        tokens.append("简体")
+    if text.startswith("繁") or "繁体" in text or "繁中" in text:
+        tokens.append("繁体")
+    if "日" in text:
+        tokens.append("日语")
+    if "英" in text:
+        tokens.append("英语")
+    if text == "中文" and not tokens:
+        tokens.append("中文")
+    return tokens
+
+
+def rank_by_language(values: list[str], priority: list[str], token_index: int) -> tuple[list[str], str, str]:
+    values_clean = sorted({v for v in values if v})
+    if not values_clean or not priority:
+        return values_clean, "", ""
+    for preferred in priority:
+        matched = [
+            value
+            for value in values_clean
+            if len(language_tokens(value)) > token_index
+            and priority_match(language_tokens(value)[token_index], preferred, "language")
+        ]
+        if len(matched) == 1:
+            return matched, preferred, ""
+        if len(matched) > 1:
+            return matched, preferred, ""
+    return values_clean, "", ""
+
+
 def filter_by_priority(rows: list, field: str, priority: list[str]) -> tuple[list, str, str]:
     values = sorted({row[field] for row in rows if row[field]})
     if not values:
@@ -444,6 +479,33 @@ def filter_by_priority(rows: list, field: str, priority: list[str]) -> tuple[lis
     if not selected:
         return rows, "", f"{field}存在多个候选: {', '.join(values)}"
     return [row for row in rows if row[field] == selected], selected, ""
+
+
+def filter_by_language_priority(
+    rows: list,
+    primary_priority: list[str],
+    secondary_priority: list[str],
+) -> tuple[list, str, str]:
+    values = sorted({row["language"] for row in rows if row["language"]})
+    if not values:
+        return rows, "", ""
+    if len(values) == 1:
+        return rows, values[0], ""
+    primary_values, primary_selected, _ = rank_by_language(values, primary_priority, 0)
+    if len(primary_values) == 1:
+        selected = primary_values[0]
+        return [row for row in rows if row["language"] == selected], selected, ""
+    if primary_selected:
+        rows = [row for row in rows if row["language"] in primary_values]
+        values = primary_values
+    secondary_values, _, _ = rank_by_language(values, secondary_priority, 1)
+    if len(secondary_values) == 1:
+        selected = secondary_values[0]
+        return [row for row in rows if row["language"] == selected], selected, ""
+    if len(secondary_values) > 1:
+        rows = [row for row in rows if row["language"] in secondary_values]
+        values = secondary_values
+    return rows, "", f"language存在多个候选: {', '.join(values)}"
 
 
 def auto_download_enabled(series, settings: dict[str, str]) -> bool:
@@ -521,10 +583,12 @@ def resolve_series_choice(series_id: int, settings: dict[str, str]) -> tuple[lis
             info["reason"] = reason.replace("resolution", "分辨率")
             return [], info
 
-    candidates, selected_language, reason = filter_by_priority(
+    candidates, selected_language, reason = filter_by_language_priority(
         candidates,
-        "language",
         split_lines(settings.get("language_priority", ""))
+        if bool_setting(settings.get("auto_download_by_priority", "true"))
+        else [],
+        split_lines(settings.get("secondary_language_priority", ""))
         if bool_setting(settings.get("auto_download_by_priority", "true"))
         else [],
     )
@@ -583,9 +647,16 @@ def queue_release(release_id: int, settings: dict[str, str]) -> None:
         conn.execute(
             """
             INSERT INTO download_tasks
-              (release_id, series_id, status, target_dir, normalized_name, created_at, updated_at)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?)
-            ON CONFLICT(release_id) DO NOTHING
+              (release_id, series_id, status, target_dir, normalized_name, retry_after, created_at, updated_at)
+            VALUES (?, ?, 'pending', ?, ?, '', ?, ?)
+            ON CONFLICT(release_id) DO UPDATE SET
+              status=CASE
+                WHEN download_tasks.status IN ('completed','submitted','running') THEN download_tasks.status
+                ELSE 'pending'
+              END,
+              target_dir=excluded.target_dir,
+              normalized_name=excluded.normalized_name,
+              updated_at=excluded.updated_at
             """,
             (release_id, release["series_id"], target, name, ts, ts),
         )
@@ -626,7 +697,17 @@ def extract_file_id(result: dict) -> str:
     return ""
 
 
-async def process_tasks(settings: dict[str, str], limit: int = 5) -> None:
+def is_rate_limited_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "too frequent" in text or "try again later" in text or "rate" in text and "limit" in text
+
+
+def retry_after_time(settings: dict[str, str]) -> str:
+    minutes = max(1, int(settings.get("pikpak_rate_limit_cooldown_minutes") or 15))
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+
+
+async def process_tasks(settings: dict[str, str], limit: int = 1) -> None:
     with connect() as conn:
         rows = conn.execute(
             """
@@ -636,10 +717,11 @@ async def process_tasks(settings: dict[str, str], limit: int = 5) -> None:
             JOIN series s ON s.id = dt.series_id
             WHERE dt.status IN ('pending', 'failed') AND dt.attempts < 3
               AND s.bangumi_id != ''
+              AND (dt.retry_after='' OR dt.retry_after <= ?)
             ORDER BY dt.id ASC
             LIMIT ?
             """,
-            (limit,),
+            (now(), limit),
         ).fetchall()
 
     for task in rows:
@@ -662,6 +744,19 @@ async def process_tasks(settings: dict[str, str], limit: int = 5) -> None:
             task_id = extract_task_id(result) if isinstance(result, dict) else ""
             file_id = extract_file_id(result) if isinstance(result, dict) else ""
         except Exception as exc:
+            if is_rate_limited_error(exc):
+                retry_after = retry_after_time(settings)
+                with connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE download_tasks
+                        SET status='pending', retry_after=?, last_error=?, updated_at=?
+                        WHERE id=?
+                        """,
+                        (retry_after, f"PikPak 限流，等待后自动重试: {str(exc)[:1800]}", now(), task["id"]),
+                    )
+                log("warn", f"PikPak 限流，已延后重试: {task['title']} - {exc}")
+                break
             with connect() as conn:
                 conn.execute(
                     "UPDATE download_tasks SET status='failed', last_error=?, updated_at=? WHERE id=?",
@@ -673,11 +768,11 @@ async def process_tasks(settings: dict[str, str], limit: int = 5) -> None:
                 conn.execute(
                     """
                     UPDATE download_tasks
-                    SET status='submitted', pikpak_task_id=?, pikpak_file_id=?, last_error='', updated_at=?
+                    SET status='submitted', pikpak_task_id=?, pikpak_file_id=?, retry_after='', last_error='', updated_at=?
                     WHERE id=?
                     """,
                     (task_id, file_id, now(), task["id"]),
-                )
+            )
             log("info", f"已提交 PikPak: {task['title']}")
 
 

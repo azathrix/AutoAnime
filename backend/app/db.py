@@ -114,6 +114,7 @@ def init_db() -> None:
                 pikpak_file_id TEXT NOT NULL DEFAULT '',
                 target_dir TEXT NOT NULL DEFAULT '',
                 normalized_name TEXT NOT NULL DEFAULT '',
+                retry_after TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -269,6 +270,16 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in release_additions.items():
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
+    download_task_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(download_tasks)").fetchall()
+    }
+    download_task_additions = {
+        "retry_after": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in download_task_additions.items():
+        if column not in download_task_columns:
+            conn.execute(f"ALTER TABLE download_tasks ADD COLUMN {column} {ddl}")
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file

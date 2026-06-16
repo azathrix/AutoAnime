@@ -33,6 +33,7 @@ class SettingsPayload(BaseModel):
     subtitle_priority: list[str] = []
     resolution_priority: list[str] = []
     language_priority: list[str] = []
+    secondary_language_priority: list[str] = []
     pikpak_auth_mode: str = "token"
     pikpak_username: str = ""
     pikpak_password: str = ""
@@ -83,6 +84,7 @@ def settings_response() -> dict[str, Any]:
     result["subtitle_priority"] = split_setting(settings.get("subtitle_priority", ""))
     result["resolution_priority"] = split_setting(settings.get("resolution_priority", ""))
     result["language_priority"] = split_setting(settings.get("language_priority", ""))
+    result["secondary_language_priority"] = split_setting(settings.get("secondary_language_priority", ""))
     return result
 
 
@@ -455,6 +457,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "subtitle_priority": "\n".join(payload.subtitle_priority),
             "resolution_priority": "\n".join(payload.resolution_priority),
             "language_priority": "\n".join(payload.language_priority),
+            "secondary_language_priority": "\n".join(payload.secondary_language_priority),
             "pikpak_auth_mode": payload.pikpak_auth_mode,
             "pikpak_username": payload.pikpak_username.strip(),
             "pikpak_password": payload.pikpak_password,

@@ -25,16 +25,16 @@ RSS/导入 -> 元数据匹配 -> 自动选择发布 -> 下载到云盘
 
 ## Docker 部署
 
-本地打干净包：
+本地生成干净源码目录：
 
 ```bat
 package-clean.bat
 ```
 
-包会输出到：
+会输出到：
 
 ```txt
-build\
+build\AutoAnime-clean
 ```
 
 直接上传源码到 NAS 调试目录：
@@ -49,7 +49,7 @@ upload-clean.bat
 \\InputName\docker\autoanime
 ```
 
-上传干净包到：
+上传干净源码目录内容到：
 
 ```sh
 /volume1/docker/autoanime
@@ -138,6 +138,5 @@ test-data
 ## 注意
 
 - 当前云盘 provider 先支持 PikPak，后续可扩展其他云盘。
-- TMDB 深度匹配还未完成。
 - 老番/电影/美剧补全需要后续搜索源或导入源。
 - Jellyfin API 刷新暂时不接入，等主流程稳定后再做。

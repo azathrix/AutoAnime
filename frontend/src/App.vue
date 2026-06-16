@@ -242,7 +242,8 @@
                 <div class="priority-layout">
                   <PriorityList title="字幕组优先级" v-model="settings.subtitle_priority" placeholder="添加字幕组" />
                   <PriorityList title="分辨率优先级" v-model="settings.resolution_priority" placeholder="添加分辨率" />
-                  <PriorityList title="语言优先级" v-model="settings.language_priority" placeholder="添加语言" />
+                  <PriorityList title="主字幕语言优先级" v-model="settings.language_priority" placeholder="添加主字幕语言" />
+                  <PriorityList title="副字幕语言优先级" v-model="settings.secondary_language_priority" placeholder="添加副字幕语言" />
                 </div>
               </el-tab-pane>
               <el-tab-pane label="PikPak">
@@ -305,7 +306,6 @@
           </div>
           <div class="form-row">
             <el-form-item label="Bangumi ID"><el-input v-model="selectedSeries.series.bangumi_id" /></el-form-item>
-            <el-form-item label="TMDB ID"><el-input v-model="selectedSeries.series.tmdb_id" /></el-form-item>
           </div>
           <div class="form-row">
             <el-form-item label="字幕组">
@@ -452,8 +452,8 @@ const issues = computed(() => {
     }
   }
   for (const item of dashboard.series) {
-    if (!item.bangumi_id && !item.tmdb_id) {
-      rows.push({ type: '元数据', level: 'warning', title: item.title_cn, message: '缺少 Bangumi/TMDB 绑定，不能可靠入库', series_id: item.id })
+    if (!item.bangumi_id) {
+      rows.push({ type: '元数据', level: 'warning', title: item.title_cn, message: '缺少 Bangumi 绑定，不能可靠入库', series_id: item.id })
     }
     if (Number(item.group_count || 0) > 1 && !item.selected_group && !priorityCanResolve(item, 'subtitle_group', settings.subtitle_priority)) {
       rows.push({ type: '字幕组', level: 'warning', title: item.title_cn, message: '存在多个字幕组，当前优先级无法唯一选择', series_id: item.id })
@@ -461,8 +461,8 @@ const issues = computed(() => {
     if (Number(item.resolution_count || 0) > 1 && !item.selected_resolution && !priorityCanResolve(item, 'resolution', settings.resolution_priority)) {
       rows.push({ type: '分辨率', level: 'warning', title: item.title_cn, message: '存在多个分辨率，当前优先级无法唯一选择', series_id: item.id })
     }
-    if (Number(item.language_count || 0) > 1 && !priorityCanResolve(item, 'language', settings.language_priority)) {
-      rows.push({ type: '语言', level: 'warning', title: item.title_cn, message: '存在多个语言版本，当前优先级无法唯一选择', series_id: item.id })
+    if (Number(item.language_count || 0) > 1 && !subtitleLanguageCanResolve(item)) {
+      rows.push({ type: '字幕语言', level: 'warning', title: item.title_cn, message: '存在多个字幕语言组合，当前主/副字幕优先级无法唯一选择', series_id: item.id })
     }
   }
   for (const task of dashboard.tasks.filter(t => t.status === 'failed')) {
@@ -540,6 +540,12 @@ function priorityCanResolve(item, field, priority = []) {
   return Boolean(priorityPick([...new Set(values)], priority))
 }
 
+function subtitleLanguageCanResolve(item) {
+  const values = [...new Set(splitCandidateValues(item.languages))]
+  if (values.length <= 1) return true
+  return Boolean(subtitleLanguagePick(values, settings.language_priority, settings.secondary_language_priority))
+}
+
 function splitCandidateValues(value) {
   return String(value || '')
     .split(',')
@@ -570,6 +576,43 @@ function priorityPick(values, priority = []) {
     }
   }
   return ''
+}
+
+function subtitleLanguageTokens(value) {
+  const text = String(value || '')
+  const tokens = []
+  if (text.startsWith('简') || text.includes('简体') || text.includes('简中')) tokens.push('简体')
+  if (text.startsWith('繁') || text.includes('繁体') || text.includes('繁中')) tokens.push('繁体')
+  if (text.includes('日')) tokens.push('日语')
+  if (text.includes('英')) tokens.push('英语')
+  if (text === '中文' && !tokens.length) tokens.push('中文')
+  return tokens
+}
+
+function languageMatches(token, preferred) {
+  if (!token || !preferred) return false
+  if (token === preferred) return true
+  if (['简体', '简中'].includes(preferred)) return token.startsWith('简')
+  if (['繁体', '繁中'].includes(preferred)) return token.startsWith('繁')
+  if (['日语', '日文'].includes(preferred)) return token.includes('日')
+  if (['英语', '英文'].includes(preferred)) return token.includes('英')
+  return false
+}
+
+function rankSubtitleLanguages(values, priority = [], index = 0) {
+  if (!Array.isArray(priority) || !priority.length) return values
+  for (const preferred of priority) {
+    const matched = values.filter(value => languageMatches(subtitleLanguageTokens(value)[index], preferred))
+    if (matched.length) return matched
+  }
+  return values
+}
+
+function subtitleLanguagePick(values, primary = [], secondary = []) {
+  let candidates = rankSubtitleLanguages(values, primary, 0)
+  if (candidates.length === 1) return candidates[0]
+  candidates = rankSubtitleLanguages(candidates, secondary, 1)
+  return candidates.length === 1 ? candidates[0] : ''
 }
 
 function progressOf(item) {

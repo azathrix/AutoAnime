@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
@@ -7,23 +7,23 @@ set "BUILD_DIR=%ROOT%\build"
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-set "ZIP=%BUILD_DIR%\AutoAnime-clean.zip"
+set "TARGET=%BUILD_DIR%\AutoAnime-clean"
 
-pushd "%ROOT%" || exit /b 1
-if exist "%ZIP%" del /f /q "%ZIP%" >nul 2>nul
-git archive --format=zip --output="%ZIP%" HEAD
-if errorlevel 1 (
-  for /f "delims=" %%H in ('git rev-parse --short HEAD') do set "SHORT=%%H"
-  set "ZIP=%BUILD_DIR%\AutoAnime-clean-!SHORT!.zip"
-  git archive --format=zip --output="!ZIP!" HEAD
-  if errorlevel 1 (
-    popd
-    echo Package failed.
-    exit /b 1
-  )
+if exist "%TARGET%" rmdir /s /q "%TARGET%"
+mkdir "%TARGET%"
+
+robocopy "%ROOT%" "%TARGET%" ^
+  /MIR ^
+  /XD ".git" "build" "data" "test-data" "node_modules" ".vite" "frontend_dist" "__pycache__" ^
+  /XF "*.zip" "*.log" "*.pyc" ".env" ^
+  /R:2 /W:2 /NFL /NDL /NP
+
+set "RC=%ERRORLEVEL%"
+if %RC% GEQ 8 (
+  echo Package failed. Robocopy exit code: %RC%
+  exit /b %RC%
 )
-popd
 
 echo Created:
-echo !ZIP!
+echo %TARGET%
 endlocal
