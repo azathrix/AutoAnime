@@ -893,7 +893,7 @@ async function openSeries(id, domain = 'seasonal') {
 
 async function saveCurrentSeries() {
   await saveSeries(selectedSeries.value.series.id, selectedSeries.value.series)
-  ElMessage.success('番剧设置已保存')
+  ElMessage.success(selectedSeriesDomain.value === 'library' ? '番剧库条目已保存' : '番剧设置已保存')
   await reload()
 }
 

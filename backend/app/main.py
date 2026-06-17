@@ -1503,6 +1503,9 @@ async def api_series(series_id: int) -> dict[str, Any]:
 @app.put("/api/series/{series_id}")
 async def api_update_series(series_id: int, payload: SeriesPayload) -> dict[str, Any]:
     with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (series_id,)).fetchone()
+        if not entry:
+            return {"series": None, "releases": [], "tasks": [], "cloud_assets": [], "local_assets": [], "groups": [], "resolutions": [], "languages": []}
         conn.execute(
             """
             UPDATE entries
@@ -1525,27 +1528,31 @@ async def api_update_series(series_id: int, payload: SeriesPayload) -> dict[str,
                 series_id,
             ),
         )
-        conn.execute(
-            """
-            UPDATE series
-            SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?, updated_at=?
-            WHERE bangumi_id=?
-            """,
-            (
-                payload.title_cn.strip(),
-                payload.bangumi_id.strip(),
-                payload.tmdb_id.strip(),
-                payload.year,
-                payload.season_number,
-                now(),
-                payload.bangumi_id.strip(),
-            ),
-        )
         ts = now()
-        series_row = conn.execute("SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1", (series_id,)).fetchone()
-        enqueue_selection_task(conn, int(series_row["series_id"] or 0) if series_row else 0, series_id, ts, "番剧规则变更，重新计算自动选集")
-        enqueue_backfill_task(conn, int(series_row["series_id"] or 0) if series_row else 0, series_id, get_settings(), ts)
-    log("info", f"番剧设置已保存: {payload.title_cn}")
+        if entry["domain_kind"] == "seasonal":
+            conn.execute(
+                """
+                UPDATE series
+                SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?, updated_at=?
+                WHERE bangumi_id=?
+                """,
+                (
+                    payload.title_cn.strip(),
+                    payload.bangumi_id.strip(),
+                    payload.tmdb_id.strip(),
+                    payload.year,
+                    payload.season_number,
+                    now(),
+                    payload.bangumi_id.strip(),
+                ),
+            )
+            series_row = conn.execute("SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1", (series_id,)).fetchone()
+            enqueue_selection_task(conn, int(series_row["series_id"] or 0) if series_row else 0, series_id, ts, "番剧规则变更，重新计算自动选集")
+            enqueue_backfill_task(conn, int(series_row["series_id"] or 0) if series_row else 0, series_id, get_settings(), ts)
+    if entry["domain_kind"] == "seasonal":
+        log("info", f"新番条目设置已保存: {payload.title_cn}")
+    else:
+        log("info", f"番剧库条目已保存: {payload.title_cn}")
     with connect() as conn:
         merge_duplicate_series(conn)
     return await api_series(series_id)
