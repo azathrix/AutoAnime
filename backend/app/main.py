@@ -19,7 +19,7 @@ from .queue_bridge import register_queue_trigger
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
 from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, language_tokens, mark_selected_releases, poll_submitted_tasks, priority_match, priority_pick, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
-from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, enqueue_sync_plan_tasks, process_cloud_asset_tasks, process_local_presence_tasks, process_nfo_tasks, process_sync_plan_tasks, process_sync_tasks, queue_sync_for_series, reconcile_rclone_submitted_tasks, scan_cloud_library
+from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_entry, enqueue_sync_plan_tasks, process_cloud_asset_tasks, process_local_presence_tasks, process_nfo_tasks, process_sync_plan_tasks, process_sync_tasks, queue_sync_for_entry, reconcile_rclone_submitted_tasks, scan_cloud_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -584,14 +584,14 @@ def generate_entry_nfo(entry_id: int) -> dict[str, str]:
 
 def queue_entry_sync(entry_id: int) -> dict[str, str]:
     settings = get_settings()
-    count, message = queue_sync_for_series(entry_id, settings)
+    count, message = queue_sync_for_entry(entry_id, settings)
     if count > 0:
         return {"status": "queued", "count": str(count), "message": message}
     return {"status": "completed", "count": "0", "message": message}
 
 
 def cancel_entry_sync(entry_id: int) -> dict[str, str]:
-    count, message = cancel_sync_for_series(entry_id)
+    count, message = cancel_sync_for_entry(entry_id)
     return {"status": "completed", "count": str(count), "message": message}
 
 

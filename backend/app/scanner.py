@@ -160,11 +160,11 @@ async def fetch_mikan_page_releases(settings: dict[str, str], mikan_bangumi_id: 
     return parse_mikan_page_releases(resp.text, mikan_bangumi_id)
 
 
-async def resolve_series_mikan_bangumi_id(settings: dict[str, str], series_id: int, bangumi_id: str) -> str:
+async def resolve_entry_mikan_bangumi_id(settings: dict[str, str], entry_id: int, bangumi_id: str) -> str:
     with connect() as conn:
-        series = conn.execute(
-            "SELECT title_cn, title_raw, bangumi_id FROM series WHERE id=?",
-            (series_id,),
+        entry = conn.execute(
+            "SELECT display_title, title_cn, title_raw, bangumi_id FROM entries WHERE id=?",
+            (entry_id,),
         ).fetchone()
         candidates = []
         if bangumi_id:
@@ -179,10 +179,11 @@ async def resolve_series_mikan_bangumi_id(settings: dict[str, str], series_id: i
                 """,
                 (bangumi_id,),
             ).fetchall()
-        if not candidates and series:
+        if not candidates and entry:
             title_keys = {
-                normalize_title_key(str(series["title_cn"] or "")),
-                normalize_title_key(str(series["title_raw"] or "")),
+                normalize_title_key(str(entry["display_title"] or "")),
+                normalize_title_key(str(entry["title_cn"] or "")),
+                normalize_title_key(str(entry["title_raw"] or "")),
             }
             title_keys = {value for value in title_keys if value}
             rows = conn.execute(
@@ -200,20 +201,21 @@ async def resolve_series_mikan_bangumi_id(settings: dict[str, str], series_id: i
                     candidates.append(row)
                 if len(candidates) >= 10:
                     break
-    log("info", f"Mikan ID 反查候选: series_id={series_id} bangumi_id={bangumi_id or '-'} candidates={len(candidates)}")
+    log("info", f"Mikan ID 反查候选: entry_id={entry_id} bangumi_id={bangumi_id or '-'} candidates={len(candidates)}")
     for candidate in candidates:
         try:
-            log("info", f"Mikan ID 反查尝试: series_id={series_id} candidate_id={candidate['id']} page={candidate['page_url']}")
+            log("info", f"Mikan ID 反查尝试: entry_id={entry_id} candidate_id={candidate['id']} page={candidate['page_url']}")
             matched_bangumi_id, mikan_id = await fetch_mikan_match(settings, str(candidate["page_url"] or ""), "")
         except Exception:
-            log("warn", f"Mikan ID 反查失败: series_id={series_id} candidate_id={candidate['id']} page={candidate['page_url']}")
+            log("warn", f"Mikan ID 反查失败: entry_id={entry_id} candidate_id={candidate['id']} page={candidate['page_url']}")
             continue
         if matched_bangumi_id == bangumi_id and mikan_id:
             ts = now()
             with connect() as conn:
+                conn.execute("UPDATE entries SET mikan_bangumi_id=?, updated_at=? WHERE id=?", (mikan_id, ts, entry_id))
                 conn.execute(
-                    "UPDATE series SET mikan_bangumi_id=?, updated_at=? WHERE id=?",
-                    (mikan_id, ts, series_id),
+                    "UPDATE series SET mikan_bangumi_id=?, updated_at=? WHERE bangumi_id=?",
+                    (mikan_id, ts, bangumi_id),
                 )
                 conn.execute(
                     """
@@ -232,9 +234,9 @@ async def resolve_series_mikan_bangumi_id(settings: dict[str, str], series_id: i
                     """,
                     (mikan_id, bangumi_id, ts, candidate["id"]),
                 )
-            log("info", f"Mikan ID 反查命中: series_id={series_id} bangumi_id={bangumi_id} mikan_id={mikan_id}")
+            log("info", f"Mikan ID 反查命中: entry_id={entry_id} bangumi_id={bangumi_id} mikan_id={mikan_id}")
             return mikan_id
-        log("info", f"Mikan ID 反查未命中: series_id={series_id} candidate_id={candidate['id']} matched_bangumi={matched_bangumi_id or '-'} mikan_id={mikan_id or '-'}")
+        log("info", f"Mikan ID 反查未命中: entry_id={entry_id} candidate_id={candidate['id']} matched_bangumi={matched_bangumi_id or '-'} mikan_id={mikan_id or '-'}")
     return ""
 
 
@@ -1129,15 +1131,6 @@ def resolve_entry_choice(entry_id: int, settings: dict[str, str]) -> tuple[list[
     return ids, info
 
 
-def resolve_series_choice(series_id: int, settings: dict[str, str]) -> tuple[list[int], dict[str, str]]:
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT entry_id FROM seasonal_entries se JOIN entries e ON e.id=se.entry_id WHERE e.id=? LIMIT 1",
-            (series_id,),
-        ).fetchone()
-    return resolve_entry_choice(int(row["entry_id"]) if row else series_id, settings)
-
-
 def mark_selected_releases(entry_id: int, release_ids: list[int]) -> None:
     with connect() as conn:
         conn.execute("UPDATE releases SET selected=0 WHERE entry_id=?", (entry_id,))
@@ -1271,9 +1264,9 @@ async def _process_backfill_tasks(settings: dict[str, str], limit: int = 8) -> t
         try:
             mikan_bangumi_id = str(row["mikan_bangumi_id"] or "")
             if not mikan_bangumi_id:
-                mikan_bangumi_id = await resolve_series_mikan_bangumi_id(
+                mikan_bangumi_id = await resolve_entry_mikan_bangumi_id(
                     settings,
-                    int(row["series_id"]),
+                    int(row["entry_id"]),
                     str(row["bangumi_id"] or ""),
                 )
                 if mikan_bangumi_id:

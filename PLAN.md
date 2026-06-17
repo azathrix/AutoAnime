@@ -1216,6 +1216,10 @@ access_token + refresh_token
   - 抽出统一 `entry` 动作 helper
   - 入口层不再保留 `series` 路由别名
   - 后续继续清理内部 `series_id` 兼容查询时，不需要再同步维护额外 HTTP 路由
+- 同步与元数据的运行入口已继续去 `series` 语义：
+  - `queue_sync_for_series / cancel_sync_for_series` 已改为 `queue_sync_for_entry / cancel_sync_for_entry`
+  - `refresh_series_metadata / generate_nfo_for_series / resolve_series_choice` 已删除
+  - Mikan 补回逻辑已改为按 `entry_id` 反查和回填 `mikan_bangumi_id`
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 

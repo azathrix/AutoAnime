@@ -459,17 +459,7 @@ def materialize_sync_tasks_for_entry(entry_id: int, settings: dict[str, str]) ->
     return queued, f"已生成本地同步任务: {queued} 条"
 
 
-def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int, str]:
-    entry_id = series_id
-    with connect() as conn:
-        entry_row = conn.execute("SELECT id FROM entries WHERE id=?", (series_id,)).fetchone()
-        if not entry_row:
-            mapped = conn.execute(
-                "SELECT entry_id FROM releases WHERE series_id=? AND entry_id != 0 ORDER BY id ASC LIMIT 1",
-                (series_id,),
-            ).fetchone()
-            if mapped:
-                entry_id = int(mapped["entry_id"])
+def queue_sync_for_entry(entry_id: int, settings: dict[str, str]) -> tuple[int, str]:
     ensure_sync_rule(entry_id, settings, enabled=True)
     enqueue_sync_plan_tasks([entry_id], now())
     return 1, "已加入同步计划；云盘资源入库后会自动生成本地同步任务"
@@ -1423,17 +1413,7 @@ async def _process_local_presence_tasks(settings: dict[str, str], limit: int = 2
     return completed, failed
 
 
-def cancel_sync_for_series(series_id: int) -> tuple[int, str]:
-    entry_id = series_id
-    with connect() as conn:
-        row = conn.execute("SELECT id FROM entries WHERE id=?", (series_id,)).fetchone()
-        if not row:
-            mapped = conn.execute(
-                "SELECT entry_id FROM releases WHERE series_id=? AND entry_id != 0 ORDER BY id ASC LIMIT 1",
-                (series_id,),
-            ).fetchone()
-            if mapped:
-                entry_id = int(mapped["entry_id"])
+def cancel_sync_for_entry(entry_id: int) -> tuple[int, str]:
     removed = 0
     with connect() as conn:
         rows = conn.execute(
