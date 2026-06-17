@@ -248,6 +248,22 @@ backfill_tasks
 - `cleanup_tasks`
   - 只负责清理已完成任务、过期记录、孤儿状态
 
+当前已落地的新拆分阶段补充：
+
+- `cloud_presence_tasks`
+  - 已从下载提交里拆出，专门判断云盘是否已存在资源，避免重复提交到 PikPak。
+- `download_enqueue_tasks`
+  - 已从下载执行器里拆出，专门负责生成 `download_tasks` 与 `cloud_submissions`。
+- `nfo_tasks`
+  - 已从本地同步执行器里拆出，独立生成和重建 NFO。
+- `local_presence_tasks`
+  - 已独立检查本地文件与 NFO 是否仍存在，并回写本地状态。
+- `cleanup_tasks`
+  - 已独立负责运行期清理：
+    - 裁剪 `operations` 的已完成/失败记录
+    - 裁剪各任务表中过多的 `completed/superseded/synced` 历史项
+    - 避免控制台长期堆积无用已完成任务
+
 注意：
 
 - “检查云盘是否已存在”必须从提交下载里拆出去，避免重复下载。

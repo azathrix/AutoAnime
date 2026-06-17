@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_DIR
-from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, start_scheduled_job_run, update_operation
+from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, run_cleanup_tasks, save_settings, start_operation, start_scheduled_job_run, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
 from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
@@ -560,6 +560,18 @@ def ready_count_local_presence() -> int:
     )
 
 
+def ready_count_cleanup() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM cleanup_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
 def ready_queue_names() -> list[str]:
     checks = [
         ("mikan_match", ready_count_mikan_match),
@@ -575,6 +587,7 @@ def ready_queue_names() -> list[str]:
         ("sync", ready_count_sync),
         ("nfo", ready_count_nfo),
         ("local_presence", ready_count_local_presence),
+        ("cleanup", ready_count_cleanup),
     ]
     return [name for name, fn in checks if fn() > 0]
 
@@ -805,6 +818,46 @@ async def handle_local_presence_queue() -> None:
         trigger_queue("local_presence")
 
 
+async def handle_cleanup_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(4):
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE cleanup_tasks
+                SET status='running', attempts=attempts+1, updated_at=?
+                WHERE task_scope='runtime'
+                """,
+                (now(),),
+            )
+        try:
+            stats = run_cleanup_tasks()
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE cleanup_tasks
+                    SET status='completed', retry_after='', last_error=?, updated_at=?
+                    WHERE task_scope='runtime'
+                    """,
+                    (f"已清理 operations {stats['deleted_operations']} 条，已裁剪完成任务 {stats['trimmed_task_rows']} 条", now()),
+                )
+            if not runtime_generation_alive(generation):
+                return
+            break
+        except Exception as exc:
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE cleanup_tasks
+                    SET status='failed', retry_after='', last_error=?, updated_at=?
+                    WHERE task_scope='runtime'
+                    """,
+                    (str(exc)[:2000], now()),
+                )
+            log("error", f"清理任务失败: {exc}")
+            break
+
+
 async def run_scan_source(settings: dict[str, str], operation_id: int | None = None) -> str:
     generation = get_runtime_generation()
     reclaimed_mikan = reclaim_mikan_match_tasks(now())
@@ -826,6 +879,7 @@ async def run_scan_source(settings: dict[str, str], operation_id: int | None = N
     trigger_queue("sync", delay=0)
     trigger_queue("nfo", delay=0)
     trigger_queue("local_presence", delay=0)
+    trigger_queue("cleanup", delay=0)
     message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续队列已自动触发"
     log("info", f"扫描全部: RSS 完成，{message}")
     return message
@@ -848,6 +902,7 @@ def ensure_queue_handlers() -> None:
             "sync": handle_sync_queue,
             "nfo": handle_nfo_queue,
             "local_presence": handle_local_presence_queue,
+            "cleanup": handle_cleanup_queue,
         }
     )
 
@@ -1110,6 +1165,18 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
                 "SELECT status, COUNT(*) AS count FROM nfo_tasks GROUP BY status"
             ).fetchall()
         }
+        local_presence_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM local_presence_tasks GROUP BY status"
+            ).fetchall()
+        }
+        cleanup_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM cleanup_tasks GROUP BY status"
+            ).fetchall()
+        }
         cloud_assets_pending = conn.execute(
             """
             SELECT COUNT(*) AS count
@@ -1263,6 +1330,17 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "next_retry_after": "",
             "next_retry_seconds": 0,
             "description": "独立检查本地文件和 NFO 是否仍然存在，纠正绕过系统的删除",
+        },
+        {
+            "key": "cleanup",
+            "name": "清理",
+            "pending": cleanup_rows.get("pending", 0),
+            "running": cleanup_rows.get("running", 0),
+            "failed": cleanup_rows.get("failed", 0),
+            "waiting": 0,
+            "next_retry_after": "",
+            "next_retry_seconds": 0,
+            "description": "独立清理已完成操作、历史队列项和运行期残留状态",
         },
     ]
     for item in items:
@@ -1487,6 +1565,16 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 """
             ).fetchall()
         )}
+        details["cleanup"] = {"items": enrich_retry_rows(
+            conn.execute(
+                """
+                SELECT *
+                FROM cleanup_tasks
+                ORDER BY updated_at DESC
+                LIMIT 120
+                """
+            ).fetchall()
+        )}
         details["rss"] = {"items": rows_to_dicts(
             conn.execute(
                 """
@@ -1516,6 +1604,7 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:sync", "name": "本地同步", "kind": "queue", "queue_key": "sync"},
         {"key": "queue:nfo", "name": "NFO", "kind": "queue", "queue_key": "nfo"},
         {"key": "queue:local_presence", "name": "本地存在性检查", "kind": "queue", "queue_key": "local_presence"},
+        {"key": "queue:cleanup", "name": "清理", "kind": "queue", "queue_key": "cleanup"},
         {"key": "scheduler", "name": "定时任务", "kind": "group"},
         {"key": "scheduler:rss_scan", "name": "RSS 定时扫描", "kind": "scheduled", "job_key": "rss_scan"},
         {"key": "scheduler:queue_dispatch", "name": "队列分发", "kind": "scheduled", "job_key": "queue_dispatch"},

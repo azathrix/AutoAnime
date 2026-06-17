@@ -408,6 +408,17 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS cleanup_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_scope TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                retry_after TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS series_state_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 series_id INTEGER NOT NULL UNIQUE,
@@ -915,6 +926,20 @@ def migrate(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS cleanup_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_scope TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            retry_after TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS cloud_presence_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             release_id INTEGER NOT NULL UNIQUE,
@@ -954,6 +979,15 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 def ensure_scheduled_jobs(conn: sqlite3.Connection) -> None:
     ts = now()
+    conn.execute(
+        """
+        INSERT INTO cleanup_tasks
+          (task_scope, status, retry_after, last_error, created_at, updated_at)
+        VALUES ('runtime', 'pending', '', '', ?, ?)
+        ON CONFLICT(task_scope) DO NOTHING
+        """,
+        (ts, ts),
+    )
     jobs = [
         ("rss_scan", "rss_scan", 60, 0, 1),
         ("queue_dispatch", "queue_dispatch", 1, 10, 1),
@@ -970,6 +1004,7 @@ def ensure_scheduled_jobs(conn: sqlite3.Connection) -> None:
         ("sync_dispatch", "queue_dispatch", 0, 10, 1),
         ("nfo_dispatch", "queue_dispatch", 0, 10, 1),
         ("local_presence_dispatch", "queue_dispatch", 0, 10, 1),
+        ("cleanup_dispatch", "queue_dispatch", 0, 10, 1),
     ]
     for job_key, job_type, interval_minutes, debounce_seconds, max_concurrency in jobs:
         conn.execute(
@@ -1203,6 +1238,43 @@ def cleanup_operations(max_failed: int = 20) -> None:
                 "DELETE FROM operations WHERE id=?",
                 [(operation_id,) for operation_id in stale_ids],
             )
+
+
+def run_cleanup_tasks(max_failed_operations: int = 20, completed_task_limit: int = 200) -> dict[str, int]:
+    ts = now()
+    deleted_operations = 0
+    trimmed_task_rows = 0
+    cleanup_operations(max_failed=max_failed_operations)
+    with connect() as conn:
+        completed_ids = [
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM operations WHERE status IN ('completed', 'failed') ORDER BY id DESC"
+            ).fetchall()
+        ]
+        if len(completed_ids) > max_failed_operations:
+            stale_ids = completed_ids[max_failed_operations:]
+            conn.executemany("DELETE FROM operations WHERE id=?", [(operation_id,) for operation_id in stale_ids])
+            deleted_operations += len(stale_ids)
+
+        for table in [
+            "cloud_presence_tasks",
+            "download_enqueue_tasks",
+            "download_tasks",
+            "cloud_poll_tasks",
+            "cloud_asset_tasks",
+            "sync_tasks",
+            "nfo_tasks",
+            "local_presence_tasks",
+        ]:
+            rows = conn.execute(
+                f"SELECT id FROM {table} WHERE status IN ('completed', 'superseded', 'synced') ORDER BY id DESC"
+            ).fetchall()
+            if len(rows) > completed_task_limit:
+                stale = [(int(row["id"]),) for row in rows[completed_task_limit:]]
+                conn.executemany(f"DELETE FROM {table} WHERE id=?", stale)
+                trimmed_task_rows += len(stale)
+    return {"deleted_operations": deleted_operations, "trimmed_task_rows": trimmed_task_rows, "ran_at": 1 if ts else 0}
 
 
 def mark_scheduled_job(job_key: str, **fields: Any) -> None:
