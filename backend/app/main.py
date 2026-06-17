@@ -469,7 +469,6 @@ def settings_response() -> dict[str, Any]:
 def empty_entry_response() -> dict[str, Any]:
     return {
         "entry": None,
-        "series": None,
         "releases": [],
         "tasks": [],
         "cloud_assets": [],
@@ -513,7 +512,6 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
     entry_payload = enrich_catalog_entry({**row_to_dict(entry), "domain_kind": entry["domain_kind"]})
     return {
         "entry": entry_payload,
-        "series": entry_payload,
         "releases": rows_to_dicts(releases),
         "tasks": enrich_download_tasks(tasks),
         "cloud_assets": rows_to_dicts(cloud_assets),

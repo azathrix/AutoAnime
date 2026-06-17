@@ -72,7 +72,7 @@
         <el-card class="span-4 console-card">
           <template #header>本季条目</template>
           <div class="anime-grid">
-            <article v-for="item in filteredSeries" :key="item.id" class="anime-card" @click="openSeries(item.id, 'seasonal')">
+            <article v-for="item in filteredSeries" :key="item.id" class="anime-card" @click="openEntry(item.id, 'seasonal')">
               <div class="cover">
                 <img v-if="item.poster_url" :src="item.poster_url" />
                 <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
@@ -385,7 +385,7 @@
               </div>
             </header>
             <div class="library-entry-list">
-              <article v-for="item in work.entries" :key="item.id" class="library-entry-row" @click="openSeries(item.id, 'library')">
+              <article v-for="item in work.entries" :key="item.id" class="library-entry-row" @click="openEntry(item.id, 'library')">
                 <div class="cover small">
                   <img v-if="item.poster_url" :src="item.poster_url" />
                   <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
@@ -562,14 +562,14 @@
             <strong>本地同步</strong>
             <span>{{ syncSummary }}</span>
           </div>
-          <el-switch :model-value="syncWanted" @change="toggleSeriesSync" />
+          <el-switch :model-value="syncWanted" @change="toggleEntrySync" />
         </div>
         <div class="drawer-actions">
-          <el-button type="primary" @click="saveCurrentSeries">保存</el-button>
-          <el-button plain @click="runSeriesAction('metadata')">刷新元数据</el-button>
-          <el-button plain @click="runSeriesAction('nfo')">生成 NFO</el-button>
-          <el-button v-if="selectedEntryDomain === 'library'" plain @click="runSeriesAction('backfill')">补全条目</el-button>
-          <el-popconfirm title="只从列表隐藏这个误识别条目，保留关联记录。确定隐藏？" @confirm="deleteCurrentSeries">
+          <el-button type="primary" @click="saveCurrentEntry">保存</el-button>
+          <el-button plain @click="runEntryAction('metadata')">刷新元数据</el-button>
+          <el-button plain @click="runEntryAction('nfo')">生成 NFO</el-button>
+          <el-button v-if="selectedEntryDomain === 'library'" plain @click="runEntryAction('backfill')">补全条目</el-button>
+          <el-popconfirm title="只从列表隐藏这个误识别条目，保留关联记录。确定隐藏？" @confirm="deleteCurrentEntry">
             <template #reference>
               <el-button type="danger" plain>{{ selectedEntryDomain === 'library' ? '隐藏条目' : '隐藏误识别' }}</el-button>
             </template>
@@ -988,7 +988,7 @@ function apiErrorMessage(error) {
   return error?.response?.data?.detail || error?.response?.data?.message || error?.message || '请求失败'
 }
 
-async function openSeries(id, domain = 'seasonal') {
+async function openEntry(id, domain = 'seasonal') {
   selectedEntryDomain.value = domain
   selectedEntryDetail.value = domain === 'library' ? await getLibraryItem(id) : await getSeasonalItem(id)
   entryDrawerOpen.value = true
@@ -998,10 +998,10 @@ async function openQueueEntry(row) {
   const entryId = Number(row?.entry_id || 0)
   if (!entryId) return
   const domain = row?.domain_kind === 'library' ? 'library' : 'seasonal'
-  await openSeries(entryId, domain)
+  await openEntry(entryId, domain)
 }
 
-async function saveCurrentSeries() {
+async function saveCurrentEntry() {
   const payload = selectedEntry.value
   if (!payload) return
   if (selectedEntryDomain.value === 'library') {
@@ -1013,7 +1013,7 @@ async function saveCurrentSeries() {
   await reload()
 }
 
-async function toggleSeriesSync(enabled) {
+async function toggleEntrySync(enabled) {
   const base = selectedEntryDomain.value === 'library' ? '/library' : '/seasonal'
   const action = enabled ? 'sync' : 'sync/cancel'
   const entryId = selectedEntry.value?.id
@@ -1027,7 +1027,7 @@ async function toggleSeriesSync(enabled) {
   await reload()
 }
 
-async function runSeriesAction(action) {
+async function runEntryAction(action) {
   const base = selectedEntryDomain.value === 'library' ? '/library' : '/seasonal'
   try {
     const entryId = selectedEntry.value?.id
@@ -1040,7 +1040,7 @@ async function runSeriesAction(action) {
   }
 }
 
-async function deleteCurrentSeries() {
+async function deleteCurrentEntry() {
   const id = selectedEntry.value?.id
   if (!id) return
   const base = selectedEntryDomain.value === 'library' ? '/library' : '/seasonal'

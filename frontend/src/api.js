@@ -38,19 +38,19 @@ export async function saveLibraryEntry(id, payload) {
 }
 
 export async function getSeasonalItem(id) {
-  return getSeasonalEntry(id)
+  return (await api.get(`/seasonal/${id}`)).data
 }
 
 export async function saveSeasonalItem(id, payload) {
-  return saveSeasonalEntry(id, payload)
+  return (await api.put(`/seasonal/${id}`, payload)).data
 }
 
 export async function getLibraryItem(id) {
-  return getLibraryEntry(id)
+  return (await api.get(`/library/${id}`)).data
 }
 
 export async function saveLibraryItem(id, payload) {
-  return saveLibraryEntry(id, payload)
+  return (await api.put(`/library/${id}`, payload)).data
 }
 
 export async function postAction(path) {

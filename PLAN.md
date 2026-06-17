@@ -1264,6 +1264,9 @@ access_token + refresh_token
   - 前端 API 已补 `getSeasonalItem / saveSeasonalItem / getLibraryItem / saveLibraryItem`
   - 详情抽屉状态已改为 `entryDrawerOpen / selectedEntryDetail / selectedEntryDomain`
   - 保存、同步、删除、详情表格、自动刷新暂停条件均不再依赖 `selectedSeries.series`
+  - 本轮继续收口后，详情接口已不再返回兼容 `series` 字段
+  - 前端交互函数已改为 `openEntry / saveCurrentEntry / toggleEntrySync / runEntryAction / deleteCurrentEntry`
+  - 这一块已从“兼容过渡态”进入“entry-first 正式态”
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 
