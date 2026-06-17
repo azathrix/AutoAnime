@@ -675,49 +675,6 @@ const activeSeriesRows = computed(() => seasonalRows.value)
 const activeDetailRows = computed(() => selectedSeriesDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
 const cloudAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
-const failedQueueEntryIds = computed(() => {
-  const ids = new Set()
-  for (const queueKey of ['mikan_match', 'metadata', 'selection', 'backfill', 'cloud_presence', 'download_enqueue', 'cloud', 'cloud_poll', 'cloud_assets', 'sync_plan', 'sync', 'nfo', 'local_presence']) {
-    const items = dashboard.queue_details?.[queueKey]?.items || []
-    for (const item of items) {
-      if (String(item?.status || '') !== 'failed') continue
-      const entryId = Number(item?.entry_id || 0)
-      if (entryId > 0) ids.add(entryId)
-    }
-  }
-  return ids
-})
-const issues = computed(() => {
-  const rows = []
-  for (const item of seasonalRows.value) {
-    if (!item.bangumi_id) {
-      rows.push({ type: '元数据', level: 'warning', title: item.title_cn, message: '缺少 Bangumi 绑定，不能可靠入库', series_id: item.id })
-    }
-    if (Number(item.group_count || 0) > 1 && !item.selected_group && !priorityCanResolve(item, 'subtitle_group', settings.subtitle_priority)) {
-      rows.push({ type: '字幕组', level: 'warning', title: item.title_cn, message: '存在多个字幕组，当前优先级无法唯一选择', series_id: item.id })
-    }
-    if (Number(item.resolution_count || 0) > 1 && !item.selected_resolution && !priorityCanResolve(item, 'resolution', settings.resolution_priority)) {
-      rows.push({ type: '分辨率', level: 'warning', title: item.title_cn, message: '存在多个分辨率，当前优先级无法唯一选择', series_id: item.id })
-    }
-    if (Number(item.language_count || 0) > 1 && !subtitleLanguageCanResolve(item)) {
-      rows.push({ type: '字幕语言', level: 'warning', title: item.title_cn, message: '存在多个字幕语言组合，当前主/副字幕优先级无法唯一选择', series_id: item.id })
-    }
-    if (failedQueueEntryIds.value.has(Number(item.id || 0))) {
-      rows.push({ type: '任务失败', level: 'danger', title: item.title_cn, message: '该条目存在失败队列任务，请到控制台查看详情', series_id: item.id })
-    }
-  }
-  return rows
-})
-const issueMap = computed(() => {
-  const map = new Map()
-  for (const item of issues.value) {
-    const key = Number(item.series_id || 0)
-    if (!key) continue
-    if (!map.has(key)) map.set(key, [])
-    map.get(key).push(item.message)
-  }
-  return map
-})
 const scanOperation = computed(() => dashboard.operations.find(op => op.name === '扫描全部' && op.status === 'running'))
 const queueMap = computed(() => Object.fromEntries((dashboard.queue_summary || []).map(item => [item.key, item])))
 const selectedSectionMeta = computed(() => (dashboard.console_sections || []).find(item => item.key === selectedConsoleSection.value) || null)
@@ -830,7 +787,7 @@ const filteredSeries = computed(() => {
     if (seriesFilter.value === '待配置') return !item.bangumi_id || !item.group_count || !item.resolution_count
     if (seriesFilter.value === '已入云盘') return Number(item.cloud_asset_count || 0) > 0
     if (seriesFilter.value === '已同步') return Number(item.local_asset_count || 0) > 0
-    if (seriesFilter.value === '失败') return failedQueueEntryIds.value.has(Number(item.id || 0))
+    if (seriesFilter.value === '失败') return Boolean(item.has_failed_task)
     return true
   })
 })
@@ -946,104 +903,8 @@ function queuePendingHint(queue) {
   return '任务已入队，等待调度执行。'
 }
 
-function priorityCanResolve(item, field, priority = []) {
-  if (!Array.isArray(priority) || !priority.length) return false
-  const source = {
-    subtitle_group: item.subtitle_groups,
-    resolution: item.resolutions,
-    language: item.languages
-  }[field]
-  const values = splitCandidateValues(source)
-  if (new Set(values).size <= 1) return true
-  return Boolean(priorityPick([...new Set(values)], priority))
-}
-
-function subtitleLanguageCanResolve(item) {
-  const values = [...new Set(splitCandidateValues(item.languages))]
-  if (values.length <= 1) return true
-  return Boolean(subtitleLanguagePick(values, settings.language_priority, settings.secondary_language_priority))
-}
-
-function splitCandidateValues(value) {
-  return String(value || '')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
-}
-
-function priorityPick(values, priority = []) {
-  for (const preferred of priority) {
-    const preferredLower = String(preferred).toLowerCase()
-    const exact = values.filter(value => String(value).toLowerCase() === preferredLower)
-    if (exact.length === 1) return exact[0]
-    const matched = values.filter(value => {
-      const valueText = String(value)
-      const valueLower = valueText.toLowerCase()
-      if (valueLower === preferredLower || valueLower.includes(preferredLower)) return true
-      if (['简体', '简中'].includes(preferred) && valueText.startsWith('简')) return true
-      if (['繁体', '繁中'].includes(preferred) && valueText.startsWith('繁')) return true
-      if (['日语', '日文'].includes(preferred) && valueText.includes('日')) return true
-      if (['英语', '英文'].includes(preferred) && valueText.includes('英')) return true
-      return false
-    })
-    if (matched.length === 1) return matched[0]
-    if (matched.length > 1) {
-      const exact = matched.filter(value => String(value).toLowerCase() === preferredLower)
-      if (exact.length === 1) return exact[0]
-      return ''
-    }
-  }
-  return ''
-}
-
-function subtitleLanguageTokens(value) {
-  const text = String(value || '')
-  const tokens = []
-  if (text.startsWith('简') || text.includes('简体') || text.includes('简中')) tokens.push('简体')
-  if (text.startsWith('繁') || text.includes('繁体') || text.includes('繁中')) tokens.push('繁体')
-  if (text.includes('日')) tokens.push('日语')
-  if (text.includes('英')) tokens.push('英语')
-  if (text === '中文' && !tokens.length) tokens.push('中文')
-  return tokens
-}
-
-function languageMatches(token, preferred) {
-  if (!token || !preferred) return false
-  if (token === preferred) return true
-  if (['简体', '简中'].includes(preferred)) return token.startsWith('简')
-  if (['繁体', '繁中'].includes(preferred)) return token.startsWith('繁')
-  if (['日语', '日文'].includes(preferred)) return token.includes('日')
-  if (['英语', '英文'].includes(preferred)) return token.includes('英')
-  return false
-}
-
-function rankSubtitleLanguages(values, priority = [], index = 0) {
-  if (!Array.isArray(priority) || !priority.length) return values
-  for (const preferred of priority) {
-    const matched = values.filter(value => languageMatches(subtitleLanguageTokens(value)[index], preferred))
-    if (matched.length) return matched
-  }
-  return values
-}
-
-function subtitleLanguagePick(values, primary = [], secondary = []) {
-  let candidates = rankSubtitleLanguages(values, primary, 0)
-  if (candidates.length === 1) return candidates[0]
-  candidates = rankSubtitleLanguages(candidates, secondary, 1)
-  return candidates.length === 1 ? candidates[0] : ''
-}
-
 function seasonalStatusSummary(item) {
-  const id = Number(item?.id || 0)
-  if (!id) return ''
-  const messages = issueMap.value.get(id) || []
-  if (!messages.length) {
-    if (Number(item.local_asset_count || 0) > 0) return '本地同步已就绪'
-    if (Number(item.cloud_asset_count || 0) > 0) return '云盘资源已就绪，等待或按需同步到本地'
-    if (Number(item.release_count || 0) > 0) return '已入库，等待自动选择或入云盘'
-    return ''
-  }
-  return messages[0]
+  return String(item?.status_summary || '')
 }
 
 function progressOf(item) {

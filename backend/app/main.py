@@ -18,7 +18,7 @@ from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagn
 from .queue_bridge import register_queue_trigger
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
-from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
+from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, language_tokens, mark_selected_releases, poll_submitted_tasks, priority_match, priority_pick, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
 from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, enqueue_sync_plan_tasks, process_cloud_asset_tasks, process_local_presence_tasks, process_nfo_tasks, process_sync_plan_tasks, process_sync_tasks, queue_sync_for_series, reconcile_rclone_submitted_tasks, scan_cloud_library
 
 
@@ -170,6 +170,226 @@ def enrich_retry_rows(rows: list[Any]) -> list[dict[str, Any]]:
 
 def split_setting(value: str) -> list[str]:
     return [x.strip() for x in (value or "").splitlines() if x.strip()]
+
+
+def split_candidate_values(value: Any) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def can_resolve_priority(values: list[str], priority: list[str], field: str = "") -> bool:
+    values_clean = sorted({value for value in values if value})
+    if len(values_clean) <= 1:
+        return True
+    return bool(priority_pick(values_clean, priority, field))
+
+
+def rank_subtitle_languages(values: list[str], priority: list[str], token_index: int) -> list[str]:
+    values_clean = sorted({value for value in values if value})
+    if not values_clean or not priority:
+        return values_clean
+    for preferred in priority:
+        matched = [
+            value
+            for value in values_clean
+            if len(language_tokens(value)) > token_index
+            and priority_match(language_tokens(value)[token_index], preferred, "language")
+        ]
+        if matched:
+            return matched
+    return values_clean
+
+
+def pick_subtitle_language(values: list[str], primary: list[str], secondary: list[str]) -> str:
+    candidates = rank_subtitle_languages(values, primary, 0)
+    if len(candidates) == 1:
+        return candidates[0]
+    candidates = rank_subtitle_languages(candidates, secondary, 1)
+    if len(candidates) == 1:
+        return candidates[0]
+    return ""
+
+
+SEASONAL_STATUS_QUEUE_ORDER = [
+    "mikan_match",
+    "metadata",
+    "selection",
+    "backfill",
+    "cloud_presence",
+    "download_enqueue",
+    "cloud",
+    "cloud_poll",
+    "cloud_assets",
+    "sync_plan",
+    "sync",
+    "nfo",
+    "local_presence",
+]
+
+SEASONAL_STATUS_QUEUE_NAMES = {
+    "mikan_match": "Mikan 匹配",
+    "metadata": "元数据",
+    "selection": "自动选集",
+    "backfill": "整季补全",
+    "cloud_presence": "云盘存在性检查",
+    "download_enqueue": "下载准备",
+    "cloud": "PikPak 入库",
+    "cloud_poll": "PikPak 状态",
+    "cloud_assets": "云盘资源登记",
+    "sync_plan": "同步计划",
+    "sync": "本地同步",
+    "nfo": "NFO",
+    "local_presence": "本地存在性检查",
+}
+
+
+def build_entry_queue_index(queue_details: dict[str, dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    result: dict[int, list[dict[str, Any]]] = {}
+    for queue_key in SEASONAL_STATUS_QUEUE_ORDER:
+        details = queue_details.get(queue_key, {})
+        for item in details.get("items", []):
+            entry_id = int(item.get("entry_id") or 0)
+            if entry_id <= 0:
+                continue
+            row = dict(item)
+            row["_queue_key"] = queue_key
+            row["_queue_name"] = SEASONAL_STATUS_QUEUE_NAMES.get(queue_key, queue_key)
+            result.setdefault(entry_id, []).append(row)
+    return result
+
+
+def compact_task_reason(item: dict[str, Any]) -> str:
+    reason = str(item.get("display_reason") or item.get("reason") or item.get("last_error") or "").strip()
+    return reason[:160] if reason else ""
+
+
+def summarize_seasonal_entry(
+    item: dict[str, Any],
+    entry_tasks: list[dict[str, Any]],
+    settings: dict[str, str],
+) -> dict[str, Any]:
+    result = dict(item)
+    subtitle_priority = split_setting(settings.get("subtitle_priority", ""))
+    resolution_priority = split_setting(settings.get("resolution_priority", ""))
+    language_priority = split_setting(settings.get("language_priority", ""))
+    secondary_language_priority = split_setting(settings.get("secondary_language_priority", ""))
+
+    result["has_failed_task"] = False
+    result["needs_attention"] = False
+    result["status_category"] = "idle"
+    result["status_level"] = "info"
+    result["status_summary"] = ""
+
+    for status, category, level, prefix in (
+        ("failed", "failed", "danger", "失败"),
+        ("running", "running", "warning", "处理中"),
+    ):
+        for task in entry_tasks:
+            if str(task.get("status") or "") != status:
+                continue
+            reason = compact_task_reason(task) or "任务执行异常"
+            result["has_failed_task"] = status == "failed"
+            result["status_category"] = category
+            result["status_level"] = level
+            result["status_summary"] = f"{task['_queue_name']}{prefix}: {reason}"
+            return result
+
+    for task in entry_tasks:
+        if str(task.get("status") or "") != "pending" or not bool(task.get("waiting_retry")):
+            continue
+        reason = compact_task_reason(task) or f"剩余 {int(task.get('retry_seconds') or 0)} 秒"
+        result["status_category"] = "cooldown"
+        result["status_level"] = "warning"
+        result["status_summary"] = f"{task['_queue_name']}等待重试: {reason}"
+        return result
+
+    for task in entry_tasks:
+        if str(task.get("status") or "") != "pending":
+            continue
+        reason = compact_task_reason(task) or "已入队，等待处理"
+        result["status_category"] = "pending"
+        result["status_level"] = "primary"
+        result["status_summary"] = f"{task['_queue_name']}待处理: {reason}"
+        return result
+
+    if not result.get("bangumi_id"):
+        result["needs_attention"] = True
+        result["status_category"] = "attention"
+        result["status_level"] = "warning"
+        result["status_summary"] = "缺少 Bangumi 关联，不能进入正式处理"
+        return result
+
+    subtitle_groups = split_candidate_values(result.get("subtitle_groups"))
+    if (
+        int(result.get("group_count") or 0) > 1
+        and not str(result.get("selected_group") or "").strip()
+        and not can_resolve_priority(subtitle_groups, subtitle_priority)
+    ):
+        result["needs_attention"] = True
+        result["status_category"] = "attention"
+        result["status_level"] = "warning"
+        result["status_summary"] = "存在多个字幕组，当前规则不能唯一选择"
+        return result
+
+    resolutions = split_candidate_values(result.get("resolutions"))
+    if (
+        int(result.get("resolution_count") or 0) > 1
+        and not str(result.get("selected_resolution") or "").strip()
+        and not can_resolve_priority(resolutions, resolution_priority)
+    ):
+        result["needs_attention"] = True
+        result["status_category"] = "attention"
+        result["status_level"] = "warning"
+        result["status_summary"] = "存在多个分辨率，当前规则不能唯一选择"
+        return result
+
+    languages = split_candidate_values(result.get("languages"))
+    if int(result.get("language_count") or 0) > 1 and not pick_subtitle_language(languages, language_priority, secondary_language_priority):
+        result["needs_attention"] = True
+        result["status_category"] = "attention"
+        result["status_level"] = "warning"
+        result["status_summary"] = "存在多个字幕语言组合，当前规则不能唯一选择"
+        return result
+
+    auto_download_enabled = result.get("auto_download") == "on" or (
+        result.get("auto_download") == "inherit" and bool_setting(settings.get("auto_download_unique", "true"))
+    )
+    if int(result.get("release_count") or 0) > 0 and not auto_download_enabled and int(result.get("cloud_asset_count") or 0) <= 0:
+        result["status_category"] = "paused"
+        result["status_level"] = "info"
+        result["status_summary"] = "自动下载已关闭，等待手动启用或调整规则"
+        return result
+
+    if int(result.get("local_asset_count") or 0) > 0:
+        result["status_category"] = "ready_local"
+        result["status_level"] = "success"
+        result["status_summary"] = "本地同步已就绪"
+        return result
+
+    if int(result.get("sync_enabled") or 0) > 0 and int(result.get("cloud_asset_count") or 0) > 0:
+        result["status_category"] = "ready_cloud"
+        result["status_level"] = "success"
+        result["status_summary"] = "已开启同步，等待或处理本地同步"
+        return result
+
+    if int(result.get("cloud_asset_count") or 0) > 0:
+        result["status_category"] = "ready_cloud"
+        result["status_level"] = "success"
+        result["status_summary"] = "云盘资源已就绪"
+        return result
+
+    if int(result.get("downloaded_count") or 0) > 0:
+        result["status_category"] = "submitted"
+        result["status_level"] = "warning"
+        result["status_summary"] = "云盘任务已提交，等待云盘完成"
+        return result
+
+    if int(result.get("release_count") or 0) > 0:
+        result["status_category"] = "ready"
+        result["status_level"] = "info"
+        result["status_summary"] = "已入库，等待自动选择或入云盘"
+        return result
+
+    return result
 
 
 def settings_response() -> dict[str, Any]:
@@ -1784,15 +2004,22 @@ def dashboard_data() -> dict[str, Any]:
               e.part_label,
               e.special_label,
               e.title_cn,
+              e.poster_url,
               e.bangumi_id,
               e.year,
               e.season_number,
+              e.auto_download,
+              e.selected_group,
+              e.selected_resolution,
               w.title_root AS work_title,
               COUNT(DISTINCT ep.id) AS episode_count,
               COUNT(DISTINCT r.id) AS release_count,
               COUNT(DISTINCT r.subtitle_group) AS group_count,
               COUNT(DISTINCT r.resolution) AS resolution_count,
               COUNT(DISTINCT r.language) AS language_count,
+              GROUP_CONCAT(DISTINCT r.subtitle_group) AS subtitle_groups,
+              GROUP_CONCAT(DISTINCT r.resolution) AS resolutions,
+              GROUP_CONCAT(DISTINCT r.language) AS languages,
               COUNT(DISTINCT CASE WHEN dt.status IN ('submitted','completed') THEN dt.id END) AS downloaded_count,
               COUNT(DISTINCT ca.id) AS cloud_asset_count,
               COUNT(DISTINCT la.id) AS local_asset_count,
@@ -1948,8 +2175,14 @@ def dashboard_data() -> dict[str, Any]:
     scheduled_jobs = scheduled_jobs_summary()
     server_logs = read_server_logs(160)
     operations_list = rows_to_dicts(operations)
+    queue_details = queue_detail_map()
+    seasonal_task_index = build_entry_queue_index(queue_details)
+    seasonal_rows = [
+        summarize_seasonal_entry(row, seasonal_task_index.get(int(row.get("id") or 0), []), settings)
+        for row in rows_to_dicts(seasonal_items)
+    ]
     return {
-        "seasonal_items": rows_to_dicts(seasonal_items),
+        "seasonal_items": seasonal_rows,
         "library_items": rows_to_dicts(library_items),
         "library_summary": {
             "work_count": int((library_summary_row["work_count"] if library_summary_row else 0) or 0),
@@ -1965,7 +2198,7 @@ def dashboard_data() -> dict[str, Any]:
         "scheduled_jobs": scheduled_jobs,
         "scheduled_runs": rows_to_dicts(scheduled_runs),
         "queue_summary": queue_items,
-        "queue_details": queue_detail_map(),
+        "queue_details": queue_details,
         "console_sections": console_sections(),
         "server_logs": server_logs,
         "console_overview": console_overview(queue_items, scheduled_jobs, operations_list, server_logs),
