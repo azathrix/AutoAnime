@@ -2256,30 +2256,23 @@ async def api_trigger_queue(queue_name: str) -> dict[str, str]:
 @app.post("/api/tasks/process")
 async def api_process_tasks(force: bool = Query(False)) -> dict[str, str]:
     async def run() -> str:
-        settings = get_settings()
-        await process_tasks(settings, force=force)
-        return "已执行云盘提交；后续状态、资源登记与同步计划会按任务链自动推进"
+        trigger_queue("download", delay=0)
+        return "已触发云盘提交队列；后续状态、资源登记与同步计划会按任务链自动推进"
 
     operation_id = run_operation(
         "云盘队列立即处理" if force else "云盘队列处理",
         run,
         "正在立即提交 PikPak 云盘任务" if force else "正在提交 PikPak 云盘任务",
     )
-    trigger_queue("download", delay=0)
     return {"status": "started", "operation_id": str(operation_id), "message": "云盘队列已立即触发" if force else "队列处理已启动"}
 
 
 @app.post("/api/tasks/poll")
 async def api_poll_tasks() -> dict[str, str]:
-    settings = get_settings()
     async def run() -> str:
-        rclone_done, rclone_missing = await reconcile_rclone_submitted_tasks(settings)
-        poll_done, poll_failed = await poll_submitted_tasks(settings, force=True)
-        cloud_done, cloud_failed = await process_cloud_asset_tasks(settings, force=True)
-        count = backfill_cloud_assets_from_completed_tasks(settings)
-        await process_sync_plan_tasks(settings)
-        await process_sync_tasks(settings)
-        return f"rclone 发现已完成 {rclone_done} 个，未发现 {rclone_missing} 个；PikPak 完成 {poll_done} 个，轮询失败 {poll_failed} 个；云盘登记 {cloud_done} 个，失败 {cloud_failed} 个；补齐云盘 {count} 个；同步计划与本地同步已继续执行"
+        trigger_queue("cloud_poll", delay=0)
+        trigger_queue("cloud_asset", delay=0)
+        return "已触发 PikPak 状态轮询与云盘资源登记；同步计划与本地同步会按任务链自动推进"
 
     operation_id = run_operation("刷新云盘状态", run, "正在刷新 PikPak 任务和同步状态")
     return {"status": "started", "operation_id": str(operation_id), "message": "状态刷新已启动"}
@@ -2364,12 +2357,10 @@ async def api_process_sync_tasks() -> dict[str, str]:
                 ).fetchall()
             ]
         planned = enqueue_sync_plan_tasks(entry_ids, now())
-        await process_sync_plan_tasks(settings)
-        await process_sync_tasks(settings)
-        return f"同步计划入队 {planned} 个，本地同步已继续执行"
+        trigger_queue("sync_plan", delay=0)
+        return f"同步计划入队 {planned} 个；本地同步会按任务链自动推进"
 
     operation_id = run_operation("本地同步", run, "正在把云盘资源同步到本地")
-    trigger_queue("sync", delay=0)
     return {"status": "started", "operation_id": str(operation_id), "message": "本地同步处理已启动"}
 
 

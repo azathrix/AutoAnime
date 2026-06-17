@@ -55,7 +55,7 @@
         </div>
         <div class="metric-card">
           <span>待处理</span>
-          <strong>{{ issueCount }}</strong>
+          <strong>{{ dashboard.console_overview?.pending_task_count || 0 }}</strong>
         </div>
 
         <el-card class="span-4 console-card">
@@ -662,9 +662,6 @@ const activeSeriesRows = computed(() => seasonalRows.value)
 const activeDetailRows = computed(() => selectedSeriesDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
 const cloudAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
-const cloudQueueCount = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted'].includes(t.status)).length)
-const syncQueueCount = computed(() => dashboard.sync_tasks.filter(t => ['pending', 'running', 'failed'].includes(t.status)).length)
-const metadataIssueCount = computed(() => dashboard.rss_candidates.length)
 const issues = computed(() => {
   const rows = []
   for (const item of dashboard.rss_candidates) {
@@ -694,9 +691,6 @@ const issues = computed(() => {
   }
   return rows
 })
-const issueCount = computed(() => issues.value.length)
-const runningRows = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted', 'failed'].includes(t.status)))
-const syncActiveRows = computed(() => dashboard.sync_tasks.filter(t => ['pending', 'running', 'failed'].includes(t.status)))
 const scanOperation = computed(() => dashboard.operations.find(op => op.name === '扫描全部' && op.status === 'running'))
 const queueMap = computed(() => Object.fromEntries((dashboard.queue_summary || []).map(item => [item.key, item])))
 const selectedSectionMeta = computed(() => (dashboard.console_sections || []).find(item => item.key === selectedConsoleSection.value) || null)
