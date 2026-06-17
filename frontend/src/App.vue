@@ -42,8 +42,8 @@
 
       <section v-if="view === 'dashboard'" class="content-grid">
         <div class="metric-card">
-          <span>番剧</span>
-          <strong>{{ dashboard.series.length }}</strong>
+          <span>新番条目</span>
+          <strong>{{ dashboard.seasonal_items.length }}</strong>
         </div>
         <div class="metric-card">
           <span>云盘资源</span>
@@ -57,6 +57,17 @@
           <span>待处理</span>
           <strong>{{ issueCount }}</strong>
         </div>
+
+        <el-card class="span-4 console-card">
+          <template #header>最近 7 天已同步新番</template>
+          <el-table :data="dashboard.seasonal_sync_calendar || []" height="240" class="candidate-table">
+            <el-table-column prop="work_title" label="作品" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="display_title" label="条目" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="episode_number" label="集" width="70" />
+            <el-table-column prop="synced_at" label="同步时间" width="220" />
+            <el-table-column prop="local_path" label="本地路径" min-width="320" show-overflow-tooltip />
+          </el-table>
+        </el-card>
 
         <el-card class="span-4 console-card">
           <template #header>系统概览</template>
@@ -239,17 +250,18 @@
 
       <section v-if="view === 'library'" class="library">
         <div class="toolbar">
-          <el-input v-model="keyword" clearable placeholder="搜索番剧、Bangumi ID、字幕组" />
+          <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
           <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
         </div>
         <div class="anime-grid">
           <article v-for="item in filteredSeries" :key="item.id" class="anime-card" @click="openSeries(item.id)">
             <div class="cover">
               <img v-if="item.poster_url" :src="item.poster_url" />
-              <span v-else>{{ item.title_cn?.slice(0, 2) || 'AN' }}</span>
+              <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
             </div>
             <div class="anime-body">
-              <h3>{{ item.title_cn }}</h3>
+              <h3>{{ item.display_title || item.title_cn }}</h3>
+              <p>{{ item.work_title || item.title_root || '-' }}</p>
               <p>Bangumi: {{ item.bangumi_id || '未关联' }}</p>
               <div class="tagline">
                 <el-tag size="small">{{ item.group_count }} 字幕组</el-tag>
@@ -498,6 +510,9 @@ const seriesFilter = ref('全部')
 const seriesDrawer = ref(false)
 const selectedSeries = ref(null)
 const dashboard = reactive({
+  seasonal_items: [],
+  library_items: [],
+  seasonal_sync_calendar: [],
   series: [],
   rss_candidates: [],
   tasks: [],
@@ -527,8 +542,9 @@ const pageTitle = computed(() => ({
   settings: '设置中心'
 }[view.value]))
 
-const cloudAssetTotal = computed(() => dashboard.series.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
-const localAssetTotal = computed(() => dashboard.series.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
+const activeSeriesRows = computed(() => (dashboard.seasonal_items?.length ? dashboard.seasonal_items : dashboard.series))
+const cloudAssetTotal = computed(() => activeSeriesRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
+const localAssetTotal = computed(() => activeSeriesRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
 const cloudQueueCount = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted'].includes(t.status)).length)
 const syncQueueCount = computed(() => dashboard.sync_tasks.filter(t => ['pending', 'running', 'failed'].includes(t.status)).length)
 const metadataIssueCount = computed(() => dashboard.rss_candidates.length)
@@ -539,7 +555,7 @@ const issues = computed(() => {
       rows.push({ type: 'RSS 候选', level: 'warning', title: item.series_title || item.title, message: item.reason || '候选处理失败', series_id: null })
     }
   }
-  for (const item of dashboard.series) {
+  for (const item of activeSeriesRows.value) {
     if (!item.bangumi_id) {
       rows.push({ type: '元数据', level: 'warning', title: item.title_cn, message: '缺少 Bangumi 绑定，不能可靠入库', series_id: item.id })
     }
@@ -614,7 +630,7 @@ const filteredServerLogs = computed(() => {
 const filteredServerLogText = computed(() => filteredServerLogs.value.join('\n'))
 const selectedSeriesStats = computed(() => {
   const id = selectedSeries.value?.series?.id
-  return dashboard.series.find(item => item.id === id) || {}
+  return activeSeriesRows.value.find(item => item.id === id) || {}
 })
 const selectedSyncRule = computed(() => {
   const id = selectedSeries.value?.series?.id
@@ -631,8 +647,8 @@ const syncSummary = computed(() => {
 
 const filteredSeries = computed(() => {
   const text = keyword.value.toLowerCase()
-  return dashboard.series.filter(item => {
-    const matched = !text || `${item.title_cn} ${item.bangumi_id}`.toLowerCase().includes(text)
+  return activeSeriesRows.value.filter(item => {
+    const matched = !text || `${item.display_title || item.title_cn} ${item.work_title || item.title_root || ''} ${item.bangumi_id}`.toLowerCase().includes(text)
     if (!matched) return false
     if (seriesFilter.value === '待配置') return !item.bangumi_id || !item.group_count || !item.resolution_count
     if (seriesFilter.value === '已入云盘') return Number(item.cloud_asset_count || 0) > 0

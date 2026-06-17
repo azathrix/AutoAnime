@@ -10,7 +10,7 @@ import httpx
 import feedparser
 
 from .db import connect, hide_orphan_series, log, merge_duplicate_series, now
-from .library import bool_setting, render_episode_name, target_dir
+from .library import bool_setting, parse_entry_labels, render_episode_name, target_dir
 from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_year, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
@@ -248,8 +248,34 @@ async def gather_limited(coros, limit: int = 4):
 def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[int, int]:
     fp = fingerprint(item.series_title or item.title, item.bangumi_id)
     metadata = metadata or {}
+    labels = parse_entry_labels(metadata.get("title_cn") or item.series_title)
+    root_title = str(labels["title_root"] or (metadata.get("title_cn") or item.series_title))
+    work_key = fingerprint(root_title, "")
     with connect() as conn:
         ts = now()
+        conn.execute(
+            """
+            INSERT INTO works
+              (root_key, title_root, title_root_raw, bangumi_id, metadata_source, hidden, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'bangumi', 0, ?, ?)
+            ON CONFLICT(root_key) DO UPDATE SET
+              title_root=excluded.title_root,
+              title_root_raw=excluded.title_root_raw,
+              bangumi_id=CASE WHEN works.bangumi_id='' THEN excluded.bangumi_id ELSE works.bangumi_id END,
+              metadata_source='bangumi',
+              hidden=0,
+              updated_at=excluded.updated_at
+            """,
+            (
+                work_key,
+                root_title,
+                item.series_title,
+                item.bangumi_id,
+                ts,
+                ts,
+            ),
+        )
+        work_id = conn.execute("SELECT id FROM works WHERE root_key=?", (work_key,)).fetchone()["id"]
         conn.execute(
             """
             INSERT INTO series
@@ -281,24 +307,92 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
             ),
         )
         series_id = conn.execute("SELECT id FROM series WHERE fingerprint=?", (fp,)).fetchone()["id"]
+        conn.execute(
+            """
+            INSERT INTO entries
+              (work_id, fingerprint, domain_kind, entry_kind, display_title, title_root,
+               season_label, arc_label, part_label, special_label,
+               title_raw, title_cn, bangumi_id, mikan_bangumi_id, tmdb_id, year, season_number,
+               poster_url, summary, metadata_source, hidden, auto_download, selected_group, selected_resolution,
+               backfill_mode, created_at, updated_at)
+            VALUES (?, ?, 'seasonal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'bangumi', 0, 'inherit', '', '', 'inherit', ?, ?)
+            ON CONFLICT(fingerprint) DO UPDATE SET
+              work_id=excluded.work_id,
+              domain_kind='seasonal',
+              entry_kind=excluded.entry_kind,
+              display_title=excluded.display_title,
+              title_root=excluded.title_root,
+              season_label=excluded.season_label,
+              arc_label=excluded.arc_label,
+              part_label=excluded.part_label,
+              special_label=excluded.special_label,
+              title_raw=excluded.title_raw,
+              title_cn=excluded.title_cn,
+              bangumi_id=CASE WHEN entries.bangumi_id='' THEN excluded.bangumi_id ELSE entries.bangumi_id END,
+              mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE entries.mikan_bangumi_id END,
+              year=CASE WHEN excluded.year!=0 THEN excluded.year ELSE entries.year END,
+              season_number=CASE WHEN excluded.season_number!=0 THEN excluded.season_number ELSE entries.season_number END,
+              poster_url=CASE WHEN excluded.poster_url!='' THEN excluded.poster_url ELSE entries.poster_url END,
+              summary=CASE WHEN excluded.summary!='' THEN excluded.summary ELSE entries.summary END,
+              metadata_source='bangumi',
+              hidden=0,
+              updated_at=excluded.updated_at
+            """,
+            (
+                work_id,
+                fp,
+                labels["entry_kind"],
+                metadata.get("title_cn") or item.series_title,
+                root_title,
+                str(labels["season_label"] or ""),
+                str(labels["arc_label"] or ""),
+                str(labels["part_label"] or ""),
+                str(labels["special_label"] or ""),
+                item.series_title,
+                metadata.get("title_cn") or item.series_title,
+                item.bangumi_id,
+                item.mikan_bangumi_id,
+                metadata.get("year") or item.year,
+                int(labels["season_number"] or 1),
+                metadata.get("poster_url") or "",
+                metadata.get("summary") or "",
+                ts,
+                ts,
+            ),
+        )
+        entry_id = conn.execute("SELECT id FROM entries WHERE fingerprint=?", (fp,)).fetchone()["id"]
+        conn.execute(
+            """
+            INSERT INTO seasonal_entries
+              (entry_id, source_type, source_ref, following, sync_enabled, archived, created_at, updated_at)
+            VALUES (?, 'mikan_rss', ?, 1, 1, 0, ?, ?)
+            ON CONFLICT(entry_id) DO UPDATE SET
+              source_ref=excluded.source_ref,
+              following=1,
+              archived=0,
+              updated_at=excluded.updated_at
+            """,
+            (entry_id, item.guid, ts, ts),
+        )
         if item.episode_number:
             conn.execute(
                 """
                 INSERT INTO episodes
-                  (series_id, episode_number, title, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                  (series_id, entry_id, episode_number, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(series_id, episode_number) DO UPDATE SET updated_at=excluded.updated_at
                 """,
-                (series_id, item.episode_number, f"第{item.episode_number:02d}话", ts, ts),
+                (series_id, entry_id, item.episode_number, f"第{item.episode_number:02d}话", ts, ts),
             )
         conn.execute(
             """
             INSERT INTO releases
-              (series_id, episode_number, guid, title, subtitle_group, resolution, language,
+              (series_id, entry_id, episode_number, guid, title, subtitle_group, resolution, language,
                torrent_url, magnet, published_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
               series_id=excluded.series_id,
+              entry_id=excluded.entry_id,
               episode_number=excluded.episode_number,
               title=excluded.title,
               subtitle_group=excluded.subtitle_group,
@@ -310,6 +404,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
             """,
             (
                 series_id,
+                entry_id,
                 item.episode_number,
                 item.guid,
                 item.title,

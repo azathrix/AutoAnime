@@ -56,9 +56,78 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS works (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                root_key TEXT NOT NULL UNIQUE,
+                title_root TEXT NOT NULL,
+                title_root_raw TEXT NOT NULL DEFAULT '',
+                bangumi_id TEXT NOT NULL DEFAULT '',
+                metadata_source TEXT NOT NULL DEFAULT '',
+                hidden INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                work_id INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL UNIQUE,
+                domain_kind TEXT NOT NULL DEFAULT 'seasonal',
+                entry_kind TEXT NOT NULL DEFAULT 'season',
+                display_title TEXT NOT NULL,
+                title_root TEXT NOT NULL,
+                season_label TEXT NOT NULL DEFAULT '',
+                arc_label TEXT NOT NULL DEFAULT '',
+                part_label TEXT NOT NULL DEFAULT '',
+                special_label TEXT NOT NULL DEFAULT '',
+                title_raw TEXT NOT NULL DEFAULT '',
+                title_cn TEXT NOT NULL DEFAULT '',
+                title_romaji TEXT NOT NULL DEFAULT '',
+                bangumi_id TEXT NOT NULL DEFAULT '',
+                mikan_bangumi_id TEXT NOT NULL DEFAULT '',
+                tmdb_id TEXT NOT NULL DEFAULT '',
+                year INTEGER NOT NULL DEFAULT 0,
+                season_number INTEGER NOT NULL DEFAULT 1,
+                poster_url TEXT NOT NULL DEFAULT '',
+                poster_path TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                metadata_source TEXT NOT NULL DEFAULT '',
+                nfo_status TEXT NOT NULL DEFAULT 'pending',
+                hidden INTEGER NOT NULL DEFAULT 0,
+                auto_download TEXT NOT NULL DEFAULT 'inherit',
+                selected_group TEXT NOT NULL DEFAULT '',
+                selected_resolution TEXT NOT NULL DEFAULT '',
+                backfill_mode TEXT NOT NULL DEFAULT 'inherit',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS seasonal_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_id INTEGER NOT NULL UNIQUE,
+                source_type TEXT NOT NULL DEFAULT 'mikan_rss',
+                source_ref TEXT NOT NULL DEFAULT '',
+                following INTEGER NOT NULL DEFAULT 1,
+                sync_enabled INTEGER NOT NULL DEFAULT 1,
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS library_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_id INTEGER NOT NULL UNIQUE,
+                source_type TEXT NOT NULL DEFAULT '',
+                source_ref TEXT NOT NULL DEFAULT '',
+                archived INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS episodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 series_id INTEGER NOT NULL,
+                entry_id INTEGER NOT NULL DEFAULT 0,
                 episode_number INTEGER NOT NULL,
                 title TEXT NOT NULL DEFAULT '',
                 air_date TEXT NOT NULL DEFAULT '',
@@ -71,6 +140,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS releases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 series_id INTEGER NOT NULL,
+                entry_id INTEGER NOT NULL DEFAULT 0,
                 episode_number INTEGER NOT NULL,
                 guid TEXT NOT NULL UNIQUE,
                 title TEXT NOT NULL,
@@ -359,6 +429,86 @@ def init_db() -> None:
 
 
 def migrate(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS works (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            root_key TEXT NOT NULL UNIQUE,
+            title_root TEXT NOT NULL,
+            title_root_raw TEXT NOT NULL DEFAULT '',
+            bangumi_id TEXT NOT NULL DEFAULT '',
+            metadata_source TEXT NOT NULL DEFAULT '',
+            hidden INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_id INTEGER NOT NULL,
+            fingerprint TEXT NOT NULL UNIQUE,
+            domain_kind TEXT NOT NULL DEFAULT 'seasonal',
+            entry_kind TEXT NOT NULL DEFAULT 'season',
+            display_title TEXT NOT NULL,
+            title_root TEXT NOT NULL,
+            season_label TEXT NOT NULL DEFAULT '',
+            arc_label TEXT NOT NULL DEFAULT '',
+            part_label TEXT NOT NULL DEFAULT '',
+            special_label TEXT NOT NULL DEFAULT '',
+            title_raw TEXT NOT NULL DEFAULT '',
+            title_cn TEXT NOT NULL DEFAULT '',
+            title_romaji TEXT NOT NULL DEFAULT '',
+            bangumi_id TEXT NOT NULL DEFAULT '',
+            mikan_bangumi_id TEXT NOT NULL DEFAULT '',
+            tmdb_id TEXT NOT NULL DEFAULT '',
+            year INTEGER NOT NULL DEFAULT 0,
+            season_number INTEGER NOT NULL DEFAULT 1,
+            poster_url TEXT NOT NULL DEFAULT '',
+            poster_path TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '',
+            metadata_source TEXT NOT NULL DEFAULT '',
+            nfo_status TEXT NOT NULL DEFAULT 'pending',
+            hidden INTEGER NOT NULL DEFAULT 0,
+            auto_download TEXT NOT NULL DEFAULT 'inherit',
+            selected_group TEXT NOT NULL DEFAULT '',
+            selected_resolution TEXT NOT NULL DEFAULT '',
+            backfill_mode TEXT NOT NULL DEFAULT 'inherit',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS seasonal_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id INTEGER NOT NULL UNIQUE,
+            source_type TEXT NOT NULL DEFAULT 'mikan_rss',
+            source_ref TEXT NOT NULL DEFAULT '',
+            following INTEGER NOT NULL DEFAULT 1,
+            sync_enabled INTEGER NOT NULL DEFAULT 1,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS library_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id INTEGER NOT NULL UNIQUE,
+            source_type TEXT NOT NULL DEFAULT '',
+            source_ref TEXT NOT NULL DEFAULT '',
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     series_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(series)").fetchall()
@@ -380,6 +530,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     }
     release_additions = {
         "language": "TEXT NOT NULL DEFAULT ''",
+        "entry_id": "INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in release_additions.items():
         if column not in release_columns:
@@ -644,6 +795,12 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in sync_task_additions.items():
         if column not in sync_task_columns:
             conn.execute(f"ALTER TABLE sync_tasks ADD COLUMN {column} {ddl}")
+    episode_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(episodes)").fetchall()
+    }
+    if "entry_id" not in episode_columns:
+        conn.execute("ALTER TABLE episodes ADD COLUMN entry_id INTEGER NOT NULL DEFAULT 0")
     merge_duplicate_series(conn)
     ensure_scheduled_jobs(conn)
 
@@ -1009,6 +1166,10 @@ def diagnostics() -> dict[str, Any]:
     with connect() as conn:
         tables = [
             "settings",
+            "works",
+            "entries",
+            "seasonal_entries",
+            "library_entries",
             "series",
             "episodes",
             "releases",
@@ -1064,6 +1225,10 @@ def clear_runtime_data() -> None:
             "metadata_tasks",
             "mikan_match_tasks",
             "rss_candidates",
+            "library_entries",
+            "seasonal_entries",
+            "entries",
+            "works",
             "releases",
             "episodes",
             "series",
@@ -1071,7 +1236,7 @@ def clear_runtime_data() -> None:
             "logs",
         ]:
             conn.execute(f"DELETE FROM {table}")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('series_state_tasks','sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','cloud_submissions','download_tasks','backfill_tasks','selection_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','releases','episodes','series','operations','logs')")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('series_state_tasks','sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','cloud_submissions','download_tasks','backfill_tasks','selection_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series','operations','logs')")
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('runtime_generation', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

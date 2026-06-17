@@ -1107,7 +1107,71 @@ def run_progress_operation(name: str, coro_factory, start_message: str = "") -> 
 
 def dashboard_data() -> dict[str, Any]:
     settings = get_settings()
+    recent_cutoff = datetime.now(timezone.utc).timestamp() - 7 * 24 * 60 * 60
     with connect() as conn:
+        seasonal_items = conn.execute(
+            """
+            SELECT e.id,
+              e.work_id,
+              e.display_title,
+              e.title_root,
+              e.entry_kind,
+              e.season_label,
+              e.arc_label,
+              e.part_label,
+              e.special_label,
+              e.title_cn,
+              e.bangumi_id,
+              e.year,
+              e.season_number,
+              w.title_root AS work_title,
+              COUNT(DISTINCT ep.id) AS episode_count,
+              COUNT(DISTINCT r.id) AS release_count,
+              COUNT(DISTINCT r.subtitle_group) AS group_count,
+              COUNT(DISTINCT r.resolution) AS resolution_count,
+              COUNT(DISTINCT r.language) AS language_count,
+              COUNT(DISTINCT CASE WHEN dt.status IN ('submitted','completed') THEN dt.id END) AS downloaded_count,
+              COUNT(DISTINCT ca.id) AS cloud_asset_count,
+              COUNT(DISTINCT la.id) AS local_asset_count,
+              COALESCE(MAX(sr.sync_enabled), 0) AS sync_enabled
+            FROM entries e
+            JOIN seasonal_entries se ON se.entry_id=e.id
+            JOIN works w ON w.id=e.work_id
+            LEFT JOIN episodes ep ON ep.entry_id=e.id
+            LEFT JOIN releases r ON r.entry_id=e.id
+            LEFT JOIN download_tasks dt ON dt.release_id=r.id
+            LEFT JOIN cloud_assets ca ON ca.release_id=r.id
+            LEFT JOIN local_assets la ON la.release_id=r.id AND la.status='synced'
+            LEFT JOIN sync_rules sr ON sr.series_id=e.id
+            WHERE COALESCE(e.hidden, 0)=0
+              AND e.bangumi_id != ''
+            GROUP BY e.id
+            ORDER BY e.updated_at DESC
+            """
+        ).fetchall()
+        library_items = conn.execute(
+            """
+            SELECT e.id,
+              e.work_id,
+              e.display_title,
+              e.title_root,
+              e.entry_kind,
+              e.season_label,
+              e.arc_label,
+              e.part_label,
+              e.special_label,
+              e.title_cn,
+              e.bangumi_id,
+              e.year,
+              e.season_number,
+              w.title_root AS work_title
+            FROM entries e
+            JOIN library_entries le ON le.entry_id=e.id
+            JOIN works w ON w.id=e.work_id
+            WHERE COALESCE(e.hidden, 0)=0
+            ORDER BY e.updated_at DESC
+            """
+        ).fetchall()
         series = conn.execute(
             """
             SELECT s.*,
@@ -1267,7 +1331,38 @@ def dashboard_data() -> dict[str, Any]:
             LIMIT 80
             """
         ).fetchall()
+        seasonal_sync_calendar = conn.execute(
+            """
+            SELECT la.id,
+              la.local_path,
+              la.updated_at AS synced_at,
+              ca.episode_number,
+              e.display_title,
+              e.title_root,
+              e.entry_kind,
+              e.season_label,
+              e.arc_label,
+              e.part_label,
+              e.special_label,
+              w.title_root AS work_title
+            FROM local_assets la
+            JOIN cloud_assets ca ON ca.id=la.cloud_asset_id
+            JOIN releases r ON r.id=la.release_id
+            JOIN entries e ON e.id=r.entry_id
+            JOIN seasonal_entries se ON se.entry_id=e.id
+            JOIN works w ON w.id=e.work_id
+            WHERE la.status='synced'
+              AND COALESCE(e.hidden, 0)=0
+              AND strftime('%s', la.updated_at) >= ?
+            ORDER BY la.updated_at DESC
+            LIMIT 120
+            """,
+            (int(recent_cutoff),),
+        ).fetchall()
     return {
+        "seasonal_items": rows_to_dicts(seasonal_items),
+        "library_items": rows_to_dicts(library_items),
+        "seasonal_sync_calendar": rows_to_dicts(seasonal_sync_calendar),
         "series": rows_to_dicts(series),
         "rss_candidates": rows_to_dicts(rss_candidates),
         "tasks": enrich_download_tasks(tasks),

@@ -42,6 +42,10 @@ Mikan RSS -> RSS 候选暂存 -> Mikan 页面匹配 bgm.tv subject ID -> Bangumi
 - 多补番索引器，例如 Nyaa、动漫花园/末日动漫、ACG.RIP、蜜柑历史资源等
 - PikPak 云盘状态识别和本地同步
 - 明确的任务状态和失败原因
+- 新番追更域与番剧库域分离：
+  - 新番域只处理“当季追更/正在追/想看同步”
+  - 番剧库域处理“补番/归档/老番导入/云盘已有资源导入”
+  - 两个域共享后半段任务能力，但不能继续混成一个列表语义
 
 ## 2. 目标架构
 
@@ -70,6 +74,53 @@ local library
 jellyfin
   只扫描本地真实文件；当前不接 Jellyfin API
 ```
+
+### 业务域分层
+
+后续业务模型不能再只围绕一张 `series` 表展开，而要明确分成两个上层域：
+
+```txt
+seasonal tracker（新番域）
+  Mikan RSS 订阅
+  当季追更
+  自动选集
+  自动入云盘
+  自动同步到本地
+
+library（番剧库域）
+  老番补番
+  Nyaa/其他索引器搜索
+  云盘已有资源导入
+  本地导入
+  完结归档
+```
+
+两个域共享：
+
+- 候选池
+- 元数据
+- 季/篇章识别
+- 云盘任务
+- 本地同步
+- NFO
+
+但展示层和上层实体必须区分：
+
+- 新番域强调“本季在追的具体条目”
+- 番剧库强调“作品归档、季度/篇章层级、长期保存”
+
+因此后续至少要补出：
+
+- `works`：作品根，例如“咒术回战”“石纪元”
+- `entries`：具体季度/篇章/部分/OVA 条目
+- `seasonal_entries`：新番域中的追更条目或订阅关系
+- `library_entries`：番剧库中的补番/归档条目
+
+约束：
+
+- 相同 `root_name`、不同 `display_name` 的条目，在新番域必须显示为不同 item。
+- 篇章与季度在“具体可管理条目”维度上同级，不能因为归一化目录名而直接合并成一条。
+- UI 可以做“作品 -> 季度/篇章条目”的二层展开，但任务执行仍以具体条目为单位。
 
 ### 队列表规则
 
@@ -663,6 +714,33 @@ POST /api/jellyfin/scan
 - `sync_tasks`: 云盘到本地的同步任务
 - `logs`: 操作日志
 
+结合当前动画主线，后续更推荐的细化模型为：
+
+- `works`
+  - 作品根；用于归档、别名、合集展示
+- `entries`
+  - 具体季度/篇章/部分/OVA；是实际配置、下载、同步的最小管理单元
+- `seasonal_entries`
+  - 新番域中的追更关系；例如 RSS 订阅、是否追更、是否自动同步
+- `library_entries`
+  - 番剧库域中的归档关系；例如来源、是否补番、是否收藏、是否完结归档
+- `episodes`
+- `releases`
+- `rss_candidates`
+- `mikan_match_tasks`
+- `metadata_tasks`
+- `selection_tasks`
+- `backfill_tasks`
+- `cloud_presence_tasks`
+- `download_enqueue_tasks`
+- `download_tasks`
+- `cloud_poll_tasks`
+- `cloud_asset_tasks`
+- `sync_plan_tasks`
+- `sync_tasks`
+- `nfo_tasks`
+- `logs`
+
 关键身份字段：
 
 - `media_items.bangumi_id`
@@ -849,6 +927,28 @@ access_token + refresh_token
 
 状态：未开始。现有 `mikan_match_tasks`、`metadata_tasks`、`cloud_poll_tasks` 已形成基础，但还不够细。
 
+### P1.5: 新番域 / 番剧库域分离
+
+目标：把“追更”和“补番/归档”从上层语义上拆开，避免后续功能继续挤在一张表和一个列表里。
+
+- 引入 `works -> entries` 二层结构。
+- 新番域使用：
+  - `seasonal_entries`
+  - 强调 RSS、订阅、追更、同步意图
+- 番剧库域使用：
+  - `library_entries`
+  - 强调补番、归档、导入、长期保存
+- 同一个 `work` 下允许多个 `entry`：
+  - 第 X 季
+  - 第 X 部分
+  - 前篇 / 后篇
+  - OVA / SP / 特别篇
+- 新番页显示具体 `entry`，不因为 `root_name` 相同而自动合并成一条。
+- 番剧库页显示 `work` 分组，并支持展开到 `entry`。
+- 所有后半段任务仍挂在 `entry_id` 上，而不是挂在 `work_id` 上。
+
+状态：未开始。
+
 ### P2: 可观测任务和数据安全
 
 目标：先解决“点了没反应”和“看起来数据被清空”的问题。
@@ -887,6 +987,17 @@ access_token + refresh_token
 - `operations` 降级为辅助信息，主界面不再依赖它解释系统状态。
 - 日常界面不显示“存入云盘”“处理同步”“处理云盘任务”这种主流程按钮。
 - 维护动作只放在维护区。
+- 日历视图需要补一块“最近一周已同步到本地的新番”：
+  - 只统计新番域（`seasonal_entries`），不统计番剧库域（`library_entries`）。
+  - 时间窗口默认最近 7 天。
+  - 数据来源应以本地同步完成时间为准，而不是放送日。
+  - 展示至少包括：
+    - 番剧名
+    - 具体季度/篇章条目名
+    - 集数
+    - 同步完成时间
+    - 本地路径
+  - 后续可作为控制台或新番页的一个侧栏/卡片，而不是放到番剧库页。
 
 状态：未开始。当前控制台还是旧布局。
 
