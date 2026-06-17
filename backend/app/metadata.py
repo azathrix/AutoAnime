@@ -104,6 +104,58 @@ async def refresh_series_metadata(series_id: int, proxy: str = "") -> None:
     log("info", f"已刷新 Bangumi 元数据: {title_cn}")
 
 
+async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        series = None
+        if entry:
+            series = conn.execute(
+                "SELECT * FROM series WHERE bangumi_id=? ORDER BY id ASC LIMIT 1",
+                (entry["bangumi_id"],),
+            ).fetchone()
+    if not entry:
+        return
+
+    bangumi_id = entry["bangumi_id"]
+    try:
+        if not bangumi_id:
+            log("warn", f"跳过 Bangumi 元数据: {entry['display_title']} - 缺少 Bangumi ID")
+            return
+        subject = await fetch_bangumi_subject(bangumi_id, proxy)
+    except Exception as exc:
+        log("error", f"Bangumi 元数据失败: {entry['display_title']} - {exc}")
+        return
+
+    title_cn = subject_cn_name(subject) or entry["title_cn"]
+    images = subject.get("images") or {}
+    poster = images.get("large") or images.get("common") or images.get("medium") or ""
+    summary = subject.get("summary") or ""
+    year = subject_year(subject) or entry["year"]
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE entries
+            SET title_cn=?, display_title=CASE WHEN display_title='' THEN ? ELSE display_title END,
+                bangumi_id=?, poster_url=?, summary=?, year=?,
+                metadata_source='bangumi', updated_at=?
+            WHERE id=?
+            """,
+            (title_cn, title_cn, bangumi_id, poster, summary, year, now(), entry_id),
+        )
+        if series:
+            conn.execute(
+                """
+                UPDATE series
+                SET title_cn=?, bangumi_id=?, poster_url=?, summary=?, year=?,
+                    metadata_source='bangumi', updated_at=?
+                WHERE id=?
+                """,
+                (title_cn, bangumi_id, poster, summary, year, now(), series["id"]),
+            )
+            merge_duplicate_series(conn)
+    log("info", f"已刷新 Bangumi 元数据: {title_cn}")
+
+
 def xml_text(value: str) -> str:
     return html.escape(value or "", quote=False)
 
@@ -158,3 +210,50 @@ def generate_nfo_for_series(series_id: int, settings: dict[str, str]) -> None:
             (now(), series_id),
         )
     log("info", f"已生成 NFO: {series['title_cn']}")
+
+
+def generate_nfo_for_entry(entry_id: int, settings: dict[str, str]) -> None:
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        episodes = conn.execute(
+            "SELECT * FROM episodes WHERE entry_id=? ORDER BY episode_number ASC",
+            (entry_id,),
+        ).fetchall()
+    if not entry:
+        return
+
+    entry_dict = dict(entry)
+    output_root = settings.get("nfo_output_root") or str(DATA_DIR / "nfo")
+    base = Path(output_root) / clean_name(render_series_dir(entry_dict, settings))
+    tvshow = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<tvshow>
+  <title>{xml_text(entry['title_cn'])}</title>
+  <originaltitle>{xml_text(entry['title_raw'])}</originaltitle>
+  <plot>{xml_text(entry['summary'])}</plot>
+  <year>{entry['year'] or ''}</year>
+  <uniqueid type="bangumi" default="true">{xml_text(entry['bangumi_id'])}</uniqueid>
+  <uniqueid type="tmdb">{xml_text(entry['tmdb_id'])}</uniqueid>
+</tvshow>
+"""
+    write_text(base / "tvshow.nfo", tvshow)
+
+    season_dir = base / render_season_dir(int(entry["season_number"] or 1), settings)
+    for ep in episodes:
+        name = render_episode_name(entry_dict, ep["episode_number"], ep["title"], settings)
+        nfo = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<episodedetails>
+  <title>{xml_text(ep['title'] or f"第{ep['episode_number']:02d}话")}</title>
+  <season>{entry['season_number'] or 1}</season>
+  <episode>{ep['episode_number']}</episode>
+  <showtitle>{xml_text(entry['title_cn'])}</showtitle>
+  <aired>{xml_text(ep['air_date'])}</aired>
+</episodedetails>
+"""
+        write_text(season_dir / f"{name}.nfo", nfo)
+
+    with connect() as conn:
+        conn.execute(
+            "UPDATE entries SET nfo_status='generated', updated_at=? WHERE id=?",
+            (now(), entry_id),
+        )
+    log("info", f"已生成 NFO: {entry['display_title'] or entry['title_cn']}")

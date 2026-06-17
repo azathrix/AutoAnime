@@ -982,6 +982,17 @@ access_token + refresh_token
 - `series` 汇总列表和云盘库扫描导入还保留一部分旧 `series_id` 兼容查询。
 - `generate_nfo_for_series(...)` 仍使用旧 `series` 模型，后续需要补 `entry` 版 NFO 生成入口。
 
+新增完成：
+
+- 已补 `refresh_entry_metadata(...)`，新番详情页的“刷新元数据”接口已改为按 `entry.id` 执行。
+- 已补 `generate_nfo_for_entry(...)`，本地同步完成后和手动生成 NFO 都已切到 `entry` 视角。
+- 新番首页列表已不再回退到旧 `series` 汇总作为主数据源，后续可以继续安全收缩 `series` 兼容视图。
+
+剩余调整：
+
+- `metadata.py` 和 `sync_service.py` 中仍保留旧 `series` 版兼容函数，后续等番剧库域稳定后再统一裁剪。
+- dashboard 返回里的 `series` 汇总仍存在，当前只作为兼容副视图。
+
 ### P2: 可观测任务和数据安全
 
 目标：先解决“点了没反应”和“看起来数据被清空”的问题。

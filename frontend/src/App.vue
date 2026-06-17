@@ -542,7 +542,7 @@ const pageTitle = computed(() => ({
   settings: '设置中心'
 }[view.value]))
 
-const activeSeriesRows = computed(() => (dashboard.seasonal_items?.length ? dashboard.seasonal_items : dashboard.series))
+const activeSeriesRows = computed(() => dashboard.seasonal_items || [])
 const cloudAssetTotal = computed(() => activeSeriesRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
 const localAssetTotal = computed(() => activeSeriesRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
 const cloudQueueCount = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted'].includes(t.status)).length)

@@ -10,7 +10,7 @@ import httpx
 
 from .db import connect, log, now
 from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
-from .metadata import generate_nfo_for_series
+from .metadata import generate_nfo_for_entry, generate_nfo_for_series
 from .parser import normalize_title_key, parse_episode
 from .pikpak_service import get_cloud_download_url, list_cloud_files
 from . import rclone_service
@@ -1040,7 +1040,7 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
             )
         nfo_settings = dict(settings)
         nfo_settings["nfo_output_root"] = settings.get("local_library_root") or "/media/pikpak-anime"
-        generate_nfo_for_series(task["series_id"], nfo_settings)
+        generate_nfo_for_entry(task["entry_id"], nfo_settings)
         with connect() as conn:
             conn.execute(
                 "UPDATE local_assets SET nfo_status='generated', updated_at=? WHERE cloud_asset_id=?",
