@@ -61,8 +61,8 @@
         <el-card class="span-4 console-card">
           <template #header>最近 7 天已同步新番</template>
           <el-table :data="dashboard.seasonal_sync_calendar || []" height="240" class="candidate-table">
-            <el-table-column prop="work_title" label="作品" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="display_title" label="条目" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="work_display_title" label="作品" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="entry_display_title" label="条目" min-width="220" show-overflow-tooltip />
             <el-table-column prop="episode_number" label="集" width="70" />
             <el-table-column prop="synced_at" label="同步时间" width="220" />
             <el-table-column prop="local_path" label="本地路径" min-width="320" show-overflow-tooltip />
@@ -78,13 +78,13 @@
                 <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
               </div>
               <div class="anime-body">
-                <h3>{{ item.display_title || item.title_cn }}</h3>
-                <p>{{ item.work_title || item.title_root || item.bangumi_id || '未关联' }}</p>
+                <h3>{{ item.entry_display_title || item.display_title || item.title_cn }}</h3>
+                <p>{{ item.entry_secondary_title || item.work_display_title || item.bangumi_id || '未关联' }}</p>
                 <div class="tagline">
                   <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
                   <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
                   <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
-                  <el-tag size="small">{{ item.entry_kind || 'season' }}</el-tag>
+                  <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
                 </div>
                 <p v-if="seasonalStatusSummary(item)" class="queue-note">{{ seasonalStatusSummary(item) }}</p>
                 <el-progress :percentage="progressOf(item)" :show-text="false" />
@@ -391,13 +391,13 @@
                   <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
                 </div>
                 <div class="anime-body">
-                  <h3>{{ item.display_title || item.title_cn }}</h3>
+                  <h3>{{ item.entry_display_title || item.display_title || item.title_cn }}</h3>
                   <p>Bangumi: {{ item.bangumi_id || '未关联' }}</p>
                   <div class="tagline">
                     <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
                     <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
                     <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
-                    <el-tag size="small">{{ item.entry_kind || 'season' }}</el-tag>
+                    <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
                   </div>
                   <el-progress :percentage="libraryProgressOf(item)" :show-text="false" />
                 </div>
@@ -783,7 +783,7 @@ const filteredSeries = computed(() => {
   const text = keyword.value.toLowerCase()
   const source = view.value === 'library' ? libraryRows.value : seasonalRows.value
   return source.filter(item => {
-    const matched = !text || `${item.display_title || item.title_cn} ${item.work_title || item.title_root || ''} ${item.bangumi_id}`.toLowerCase().includes(text)
+    const matched = !text || `${item.entry_display_title || item.display_title || item.title_cn} ${item.work_display_title || item.work_title || item.title_root || ''} ${item.entry_scope_label || ''} ${item.bangumi_id}`.toLowerCase().includes(text)
     if (!matched) return false
     if (view.value === 'library') return true
     if (seriesFilter.value === '待配置') return !item.bangumi_id || !item.group_count || !item.resolution_count
@@ -797,11 +797,11 @@ const filteredSeries = computed(() => {
 const libraryWorks = computed(() => {
   const groups = new Map()
   for (const item of filteredSeries.value) {
-    const key = `${item.work_id || 0}:${item.work_title || item.title_root || item.display_title || item.title_cn || 'work'}`
+    const key = `${item.work_id || 0}:${item.work_display_title || item.work_title || item.title_root || item.display_title || item.title_cn || 'work'}`
     if (!groups.has(key)) {
       groups.set(key, {
         work_id: item.work_id || 0,
-        work_title: item.work_title || item.title_root || item.display_title || item.title_cn || '未命名作品',
+        work_title: item.work_display_title || item.work_title || item.title_root || item.display_title || item.title_cn || '未命名作品',
         entry_count: 0,
         cloud_asset_count: 0,
         local_asset_count: 0,

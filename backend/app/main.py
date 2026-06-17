@@ -198,6 +198,43 @@ def split_candidate_values(value: Any) -> list[str]:
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
+def entry_scope_label(item: dict[str, Any]) -> str:
+    for key in ("season_label", "arc_label", "part_label", "special_label"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    season_number = int(item.get("season_number") or 0)
+    if season_number > 1:
+        return f"Season {season_number:02d}"
+    return ""
+
+
+def entry_badge_text(item: dict[str, Any]) -> str:
+    scope = entry_scope_label(item)
+    if scope:
+        return scope
+    kind = str(item.get("entry_kind") or "").strip()
+    if kind == "special":
+        return "特别篇"
+    if kind == "part":
+        return "篇章"
+    if kind == "arc":
+        return "章节"
+    return "Season 01"
+
+
+def enrich_catalog_entry(item: dict[str, Any]) -> dict[str, Any]:
+    result = dict(item)
+    work_display_title = str(result.get("work_title") or result.get("title_root") or result.get("display_title") or result.get("title_cn") or "").strip()
+    scope_label = entry_scope_label(result)
+    result["work_display_title"] = work_display_title
+    result["entry_scope_label"] = scope_label
+    result["entry_badge_text"] = entry_badge_text(result)
+    result["entry_display_title"] = str(result.get("display_title") or result.get("title_cn") or work_display_title).strip()
+    result["entry_secondary_title"] = scope_label or work_display_title
+    return result
+
+
 def can_resolve_priority(values: list[str], priority: list[str], field: str = "") -> bool:
     values_clean = sorted({value for value in values if value})
     if len(values_clean) <= 1:
@@ -473,7 +510,7 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
     groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
     resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
     languages = sorted({r["language"] for r in releases if r["language"]})
-    entry_payload = {**row_to_dict(entry), "domain_kind": entry["domain_kind"]}
+    entry_payload = enrich_catalog_entry({**row_to_dict(entry), "domain_kind": entry["domain_kind"]})
     return {
         "entry": entry_payload,
         "series": entry_payload,
@@ -2234,12 +2271,16 @@ def dashboard_data() -> dict[str, Any]:
     queue_details = queue_detail_map()
     seasonal_task_index = build_entry_queue_index(queue_details)
     seasonal_rows = [
-        summarize_seasonal_entry(row, seasonal_task_index.get(int(row.get("id") or 0), []), settings)
+        enrich_catalog_entry(
+            summarize_seasonal_entry(row, seasonal_task_index.get(int(row.get("id") or 0), []), settings)
+        )
         for row in rows_to_dicts(seasonal_items)
     ]
+    library_rows = [enrich_catalog_entry(row) for row in rows_to_dicts(library_items)]
+    seasonal_calendar_rows = [enrich_catalog_entry(row) for row in rows_to_dicts(seasonal_sync_calendar)]
     return {
         "seasonal_items": seasonal_rows,
-        "library_items": rows_to_dicts(library_items),
+        "library_items": library_rows,
         "library_summary": {
             "work_count": int((library_summary_row["work_count"] if library_summary_row else 0) or 0),
             "entry_count": int((library_summary_row["entry_count"] if library_summary_row else 0) or 0),
@@ -2248,7 +2289,7 @@ def dashboard_data() -> dict[str, Any]:
             "local_asset_count": int((library_summary_row["local_asset_count"] if library_summary_row else 0) or 0),
             "failed_entry_count": int((library_failed_row["failed_entry_count"] if library_failed_row else 0) or 0),
         },
-        "seasonal_sync_calendar": rows_to_dicts(seasonal_sync_calendar),
+        "seasonal_sync_calendar": seasonal_calendar_rows,
         "sync_rules": rows_to_dicts(sync_rules),
         "operations": operations_list,
         "scheduled_jobs": scheduled_jobs,

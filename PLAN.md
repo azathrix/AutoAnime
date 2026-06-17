@@ -1256,6 +1256,10 @@ access_token + refresh_token
   - 队列明细默认只保留 `pending / running / failed`（下载队列额外保留 `submitted`）
   - 已完成历史不再长期堆在控制台主表里，避免误判为“卡住”
   - 历史完成项继续交给 `cleanup` 和独立历史视图处理，而不是留在主工作台
+- 首页与详情读模型已开始向 `works -> entries` 统一口径收口：
+  - 后端补出统一字段：`work_display_title / entry_scope_label / entry_badge_text / entry_display_title / entry_secondary_title`
+  - 首页新番列表、番剧库列表、最近同步日历不再各自拼作品名/季名/篇章名
+  - 条目详情接口已同步返回 `entry` 主字段，前端逐步摆脱 `series` 误导命名
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 
