@@ -18,7 +18,7 @@ from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagn
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
 from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
-from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_cloud_asset_tasks, process_nfo_tasks, process_sync_tasks, queue_sync_for_series, reconcile_rclone_submitted_tasks, reconcile_sync_intents, scan_cloud_library
+from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_cloud_asset_tasks, process_local_presence_tasks, process_nfo_tasks, process_sync_tasks, queue_sync_for_series, reconcile_rclone_submitted_tasks, reconcile_sync_intents, scan_cloud_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -548,6 +548,18 @@ def ready_count_nfo() -> int:
     )
 
 
+def ready_count_local_presence() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM local_presence_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
 def ready_queue_names() -> list[str]:
     checks = [
         ("mikan_match", ready_count_mikan_match),
@@ -562,6 +574,7 @@ def ready_queue_names() -> list[str]:
         ("sync_plan", ready_count_sync_plan),
         ("sync", ready_count_sync),
         ("nfo", ready_count_nfo),
+        ("local_presence", ready_count_local_presence),
     ]
     return [name for name, fn in checks if fn() > 0]
 
@@ -776,6 +789,22 @@ async def handle_nfo_queue() -> None:
         trigger_queue("nfo")
 
 
+async def handle_local_presence_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        before = ready_count_local_presence()
+        await process_local_presence_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        after = ready_count_local_presence()
+        if before == 0 or after >= before:
+            break
+        if after <= 0:
+            break
+    if ready_count_local_presence() > 0:
+        trigger_queue("local_presence")
+
+
 async def run_scan_source(settings: dict[str, str], operation_id: int | None = None) -> str:
     generation = get_runtime_generation()
     reclaimed_mikan = reclaim_mikan_match_tasks(now())
@@ -796,6 +825,7 @@ async def run_scan_source(settings: dict[str, str], operation_id: int | None = N
     trigger_queue("sync_plan", delay=0)
     trigger_queue("sync", delay=0)
     trigger_queue("nfo", delay=0)
+    trigger_queue("local_presence", delay=0)
     message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续队列已自动触发"
     log("info", f"扫描全部: RSS 完成，{message}")
     return message
@@ -817,6 +847,7 @@ def ensure_queue_handlers() -> None:
             "sync_plan": handle_sync_plan_queue,
             "sync": handle_sync_queue,
             "nfo": handle_nfo_queue,
+            "local_presence": handle_local_presence_queue,
         }
     )
 
@@ -1222,6 +1253,17 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "next_retry_seconds": seconds_until(nfo_retry["next_retry_after"] if nfo_retry else ""),
             "description": "本地同步完成后独立生成 NFO，避免和同步执行器耦合",
         },
+        {
+            "key": "local_presence",
+            "name": "本地存在性检查",
+            "pending": local_presence_rows.get("pending", 0),
+            "running": local_presence_rows.get("running", 0),
+            "failed": local_presence_rows.get("failed", 0),
+            "waiting": 0,
+            "next_retry_after": "",
+            "next_retry_seconds": 0,
+            "description": "独立检查本地文件和 NFO 是否仍然存在，纠正绕过系统的删除",
+        },
     ]
     for item in items:
         key = str(item["key"])
@@ -1433,6 +1475,18 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 """
             ).fetchall()
         )}
+        details["local_presence"] = {"items": enrich_retry_rows(
+            conn.execute(
+                """
+                SELECT lpt.*, e.display_title AS title_cn, e.domain_kind, la.local_path, la.nfo_status
+                FROM local_presence_tasks lpt
+                JOIN entries e ON e.id=lpt.entry_id
+                JOIN local_assets la ON la.id=lpt.local_asset_id
+                ORDER BY lpt.updated_at DESC
+                LIMIT 120
+                """
+            ).fetchall()
+        )}
         details["rss"] = {"items": rows_to_dicts(
             conn.execute(
                 """
@@ -1461,6 +1515,7 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:cloud_assets", "name": "云盘资源登记", "kind": "queue", "queue_key": "cloud_assets"},
         {"key": "queue:sync", "name": "本地同步", "kind": "queue", "queue_key": "sync"},
         {"key": "queue:nfo", "name": "NFO", "kind": "queue", "queue_key": "nfo"},
+        {"key": "queue:local_presence", "name": "本地存在性检查", "kind": "queue", "queue_key": "local_presence"},
         {"key": "scheduler", "name": "定时任务", "kind": "group"},
         {"key": "scheduler:rss_scan", "name": "RSS 定时扫描", "kind": "scheduled", "job_key": "rss_scan"},
         {"key": "scheduler:queue_dispatch", "name": "队列分发", "kind": "scheduled", "job_key": "queue_dispatch"},

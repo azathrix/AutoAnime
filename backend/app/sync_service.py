@@ -19,6 +19,7 @@ cloud_asset_tasks_lock = asyncio.Lock()
 sync_tasks_lock = asyncio.Lock()
 state_tasks_lock = asyncio.Lock()
 nfo_tasks_lock = asyncio.Lock()
+local_presence_tasks_lock = asyncio.Lock()
 
 
 def task_retry_after_minutes(minutes: int) -> str:
@@ -50,6 +51,25 @@ def enqueue_nfo_task(conn, local_asset_id: int, release_id: int, series_id: int,
           series_id=excluded.series_id,
           entry_id=excluded.entry_id,
           status=CASE WHEN nfo_tasks.status='completed' THEN nfo_tasks.status ELSE 'pending' END,
+          retry_after='',
+          last_error='',
+          updated_at=excluded.updated_at
+        """,
+        (local_asset_id, release_id, series_id, entry_id, ts, ts),
+    )
+
+
+def enqueue_local_presence_task(conn, local_asset_id: int, release_id: int, series_id: int, entry_id: int, ts: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO local_presence_tasks
+          (local_asset_id, release_id, series_id, entry_id, status, retry_after, last_error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', '', '', ?, ?)
+        ON CONFLICT(local_asset_id) DO UPDATE SET
+          release_id=excluded.release_id,
+          series_id=excluded.series_id,
+          entry_id=excluded.entry_id,
+          status='pending',
           retry_after='',
           last_error='',
           updated_at=excluded.updated_at
@@ -1112,6 +1132,7 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                     ).fetchone()
                     if local_asset:
                         enqueue_nfo_task(conn, int(local_asset["id"]), int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), ts)
+                        enqueue_local_presence_task(conn, int(local_asset["id"]), int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), ts)
                 return True
 
             await download_cloud_file_to_local(
@@ -1166,6 +1187,7 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
             ).fetchone()
             if local_asset:
                 enqueue_nfo_task(conn, int(local_asset["id"]), int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), ts)
+                enqueue_local_presence_task(conn, int(local_asset["id"]), int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), ts)
         log("info", f"已同步到本地: {task['cloud_name']}")
         return True
 
@@ -1253,6 +1275,94 @@ async def _process_nfo_tasks(settings: dict[str, str], limit: int = 10) -> tuple
     return completed, failed
 
 
+async def process_local_presence_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    async with local_presence_tasks_lock:
+        return await _process_local_presence_tasks(settings, limit)
+
+
+async def _process_local_presence_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE local_presence_tasks
+            SET status='pending', last_error='上次本地存在性检查中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
+        rows = conn.execute(
+            """
+            SELECT lpt.*, la.local_path, la.nfo_status
+            FROM local_presence_tasks lpt
+            JOIN local_assets la ON la.id=lpt.local_asset_id
+            WHERE lpt.status IN ('pending', 'failed')
+              AND (lpt.retry_after='' OR lpt.retry_after <= ?)
+            ORDER BY lpt.id ASC
+            LIMIT ?
+            """,
+            (now(), limit),
+        ).fetchall()
+
+    completed = 0
+    failed = 0
+    for task in rows:
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE local_presence_tasks
+                SET status='running', attempts=attempts+1, updated_at=?
+                WHERE id=?
+                """,
+                (now(), task["id"]),
+            )
+        try:
+            local_path = Path(str(task["local_path"] or ""))
+            nfo_path = local_path.with_suffix(".nfo")
+            local_exists = local_path.exists()
+            nfo_exists = nfo_path.exists()
+            with connect() as conn:
+                ts = now()
+                conn.execute(
+                    """
+                    UPDATE local_assets
+                    SET status=?, nfo_status=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        "synced" if local_exists else "removed",
+                        "generated" if nfo_exists else "pending",
+                        ts,
+                        task["local_asset_id"],
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE local_presence_tasks
+                    SET status='completed', retry_after='', last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        "" if local_exists else "检测到本地文件已不存在",
+                        ts,
+                        task["id"],
+                    ),
+                )
+            completed += 1
+        except Exception as exc:
+            failed += 1
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE local_presence_tasks
+                    SET status='failed', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(task["attempts"] or 0) + 1), str(exc)[:2000], now(), task["id"]),
+                )
+            log("error", f"本地存在性检查失败: {task['local_path']} - {exc}")
+    return completed, failed
+
+
 def cancel_sync_for_series(series_id: int) -> tuple[int, str]:
     entry_id = series_id
     with connect() as conn:
@@ -1285,6 +1395,7 @@ def cancel_sync_for_series(series_id: int) -> tuple[int, str]:
                 "UPDATE local_assets SET status='removed', updated_at=? WHERE id=?",
                 (now(), row["id"]),
             )
+            enqueue_local_presence_task(conn, int(row["id"]), int(row["release_id"]), int(row["series_id"]), int(row["entry_id"]), now())
         conn.execute(
             "UPDATE sync_rules SET sync_enabled=0, updated_at=? WHERE entry_id=?",
             (now(), entry_id),
