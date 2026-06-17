@@ -940,6 +940,23 @@ access_token + refresh_token
   - `local_presence_tasks`
   - `cleanup_tasks`
 
+本阶段新增完成：
+
+- 已正式补出：
+  - `cloud_presence_tasks`
+  - `download_enqueue_tasks`
+- 追番下载前半段现已拆成：
+  - 自动选集
+  - 云盘存在性检查
+  - 下载准备
+  - 真正提交 PikPak
+- `queue_release()` 不再直接做“云盘是否已存在 + 是否已提交 + 建 download_tasks/cloud_submissions”三件事，而是先写入 `cloud_presence_tasks`。
+- 控制台已补：
+  - `云盘存在性检查`
+  - `下载准备`
+
+这样后续如果要再接其他云盘 provider、补番搜索源、或者做云盘状态纠偏，就能在下载前半段独立扩展，而不会继续把判断逻辑塞进提交执行器里。
+
 ### P1.5: 新番域 / 番剧库域分离
 
 目标：把“追更”和“补番/归档”从上层语义上拆开，避免后续功能继续挤在一张表和一个列表里。

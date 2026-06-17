@@ -220,6 +220,35 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS cloud_presence_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                release_id INTEGER NOT NULL UNIQUE,
+                series_id INTEGER NOT NULL,
+                entry_id INTEGER NOT NULL DEFAULT 0,
+                episode_number INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                cloud_asset_id INTEGER NOT NULL DEFAULT 0,
+                retry_after TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS download_enqueue_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                release_id INTEGER NOT NULL UNIQUE,
+                series_id INTEGER NOT NULL,
+                entry_id INTEGER NOT NULL DEFAULT 0,
+                episode_number INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                retry_after TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS cloud_submissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 series_id INTEGER NOT NULL,
@@ -853,6 +882,41 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cloud_presence_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL UNIQUE,
+            series_id INTEGER NOT NULL,
+            entry_id INTEGER NOT NULL DEFAULT 0,
+            episode_number INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            cloud_asset_id INTEGER NOT NULL DEFAULT 0,
+            retry_after TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS download_enqueue_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL UNIQUE,
+            series_id INTEGER NOT NULL,
+            entry_id INTEGER NOT NULL DEFAULT 0,
+            episode_number INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            retry_after TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     merge_duplicate_series(conn)
     ensure_scheduled_jobs(conn)
 
@@ -866,6 +930,8 @@ def ensure_scheduled_jobs(conn: sqlite3.Connection) -> None:
         ("metadata_dispatch", "queue_dispatch", 0, 10, 1),
         ("selection_dispatch", "queue_dispatch", 0, 10, 1),
         ("backfill_dispatch", "queue_dispatch", 0, 10, 1),
+        ("cloud_presence_dispatch", "queue_dispatch", 0, 10, 1),
+        ("download_enqueue_dispatch", "queue_dispatch", 0, 10, 1),
         ("download_dispatch", "queue_dispatch", 0, 10, 1),
         ("cloud_poll_dispatch", "queue_dispatch", 0, 10, 1),
         ("cloud_asset_dispatch", "queue_dispatch", 0, 10, 1),

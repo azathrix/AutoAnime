@@ -17,7 +17,7 @@ from .config import APP_DIR
 from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, start_scheduled_job_run, update_operation
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
-from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
+from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
 from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_series, process_cloud_asset_tasks, process_nfo_tasks, process_sync_tasks, queue_sync_for_series, reconcile_rclone_submitted_tasks, reconcile_sync_intents, scan_cloud_library
 
 
@@ -412,6 +412,30 @@ def ready_count_backfill() -> int:
     )
 
 
+def ready_count_cloud_presence() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM cloud_presence_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
+def ready_count_download_enqueue() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM download_enqueue_tasks
+        WHERE status IN ('pending', 'failed')
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
 def ready_count_download() -> int:
     return count_ready(
         """
@@ -530,6 +554,8 @@ def ready_queue_names() -> list[str]:
         ("metadata", ready_count_metadata),
         ("selection", ready_count_selection),
         ("backfill", ready_count_backfill),
+        ("cloud_presence", ready_count_cloud_presence),
+        ("download_enqueue", ready_count_download_enqueue),
         ("download", ready_count_download),
         ("cloud_poll", ready_count_cloud_poll),
         ("cloud_asset", ready_count_cloud_asset),
@@ -586,8 +612,8 @@ async def handle_selection_queue() -> None:
             break
         if ready_count_selection() <= 0:
             break
-    if ready_count_download() > 0:
-        trigger_queue("download")
+    if ready_count_cloud_presence() > 0:
+        trigger_queue("cloud_presence")
     if ready_count_selection() > 0:
         trigger_queue("selection")
 
@@ -606,6 +632,38 @@ async def handle_backfill_queue() -> None:
         trigger_queue("mikan_match")
     if ready_count_backfill() > 0:
         trigger_queue("backfill")
+
+
+async def handle_cloud_presence_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        done, failed = await process_cloud_presence_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        if done == 0 and failed == 0:
+            break
+        if ready_count_cloud_presence() <= 0:
+            break
+    if ready_count_download_enqueue() > 0:
+        trigger_queue("download_enqueue")
+    if ready_count_cloud_presence() > 0:
+        trigger_queue("cloud_presence")
+
+
+async def handle_download_enqueue_queue() -> None:
+    generation = get_runtime_generation()
+    for _ in range(12):
+        done, failed = await process_download_enqueue_tasks(get_settings())
+        if not runtime_generation_alive(generation):
+            return
+        if done == 0 and failed == 0:
+            break
+        if ready_count_download_enqueue() <= 0:
+            break
+    if ready_count_download() > 0:
+        trigger_queue("download")
+    if ready_count_download_enqueue() > 0:
+        trigger_queue("download_enqueue")
 
 
 async def handle_download_queue() -> None:
@@ -731,6 +789,8 @@ async def run_scan_source(settings: dict[str, str], operation_id: int | None = N
     if operation_id:
         update_operation(operation_id, "2/2 已触发后续队列")
     trigger_queue("mikan_match", delay=0)
+    trigger_queue("cloud_presence", delay=0)
+    trigger_queue("download_enqueue", delay=0)
     trigger_queue("cloud_poll", delay=0)
     trigger_queue("cloud_asset", delay=0)
     trigger_queue("sync_plan", delay=0)
@@ -749,6 +809,8 @@ def ensure_queue_handlers() -> None:
             "metadata": handle_metadata_queue,
             "selection": handle_selection_queue,
             "backfill": handle_backfill_queue,
+            "cloud_presence": handle_cloud_presence_queue,
+            "download_enqueue": handle_download_enqueue_queue,
             "download": handle_download_queue,
             "cloud_poll": handle_cloud_poll_queue,
             "cloud_asset": handle_cloud_asset_queue,
@@ -929,6 +991,18 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
                 "SELECT status, COUNT(*) AS count FROM cloud_asset_tasks GROUP BY status"
             ).fetchall()
         }
+        cloud_presence_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM cloud_presence_tasks GROUP BY status"
+            ).fetchall()
+        }
+        download_enqueue_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM download_enqueue_tasks GROUP BY status"
+            ).fetchall()
+        }
         selection_retry = conn.execute(
             """
             SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
@@ -950,6 +1024,22 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
             FROM cloud_asset_tasks
             WHERE status='pending' AND retry_after != '' AND retry_after > ?
+            """,
+            (now(),),
+        ).fetchone()
+        cloud_presence_retry = conn.execute(
+            """
+            SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
+            FROM cloud_presence_tasks
+            WHERE status IN ('pending', 'failed') AND retry_after != '' AND retry_after > ?
+            """,
+            (now(),),
+        ).fetchone()
+        download_enqueue_retry = conn.execute(
+            """
+            SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
+            FROM download_enqueue_tasks
+            WHERE status IN ('pending', 'failed') AND retry_after != '' AND retry_after > ?
             """,
             (now(),),
         ).fetchone()
@@ -1057,6 +1147,28 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "running": 0,
             "failed": 0,
             "description": "相同 Bangumi ID 的重复条目",
+        },
+        {
+            "key": "cloud_presence",
+            "name": "云盘存在性检查",
+            "pending": cloud_presence_rows.get("pending", 0),
+            "running": cloud_presence_rows.get("running", 0),
+            "failed": cloud_presence_rows.get("failed", 0),
+            "waiting": cloud_presence_retry["count"] if cloud_presence_retry else 0,
+            "next_retry_after": cloud_presence_retry["next_retry_after"] if cloud_presence_retry else "",
+            "next_retry_seconds": seconds_until(cloud_presence_retry["next_retry_after"] if cloud_presence_retry else ""),
+            "description": "先检查云盘是否已有该集，避免重复提交下载",
+        },
+        {
+            "key": "download_enqueue",
+            "name": "下载准备",
+            "pending": download_enqueue_rows.get("pending", 0),
+            "running": download_enqueue_rows.get("running", 0),
+            "failed": download_enqueue_rows.get("failed", 0),
+            "waiting": download_enqueue_retry["count"] if download_enqueue_retry else 0,
+            "next_retry_after": download_enqueue_retry["next_retry_after"] if download_enqueue_retry else "",
+            "next_retry_seconds": seconds_until(download_enqueue_retry["next_retry_after"] if download_enqueue_retry else ""),
+            "description": "在确认未存在后，生成 download_tasks 与 cloud_submissions",
         },
         {
             "key": "cloud",
@@ -1232,6 +1344,30 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 ).fetchall()
             )
         }
+        details["cloud_presence"] = {"items": enrich_retry_rows(
+            conn.execute(
+                """
+                SELECT cpt.*, e.display_title AS title_cn, e.domain_kind, r.title AS release_title
+                FROM cloud_presence_tasks cpt
+                JOIN releases r ON r.id=cpt.release_id
+                JOIN entries e ON e.id=cpt.entry_id
+                ORDER BY cpt.updated_at DESC
+                LIMIT 120
+                """
+            ).fetchall()
+        )}
+        details["download_enqueue"] = {"items": enrich_retry_rows(
+            conn.execute(
+                """
+                SELECT det.*, e.display_title AS title_cn, e.domain_kind, r.title AS release_title
+                FROM download_enqueue_tasks det
+                JOIN releases r ON r.id=det.release_id
+                JOIN entries e ON e.id=det.entry_id
+                ORDER BY det.updated_at DESC
+                LIMIT 120
+                """
+            ).fetchall()
+        )}
         details["cloud"] = {"items": enrich_download_tasks(
             conn.execute(
                 """
@@ -1318,6 +1454,8 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:metadata", "name": "元数据", "kind": "queue", "queue_key": "metadata"},
         {"key": "queue:selection", "name": "自动选集", "kind": "queue", "queue_key": "selection"},
         {"key": "queue:backfill", "name": "整季补全", "kind": "queue", "queue_key": "backfill"},
+        {"key": "queue:cloud_presence", "name": "云盘存在性检查", "kind": "queue", "queue_key": "cloud_presence"},
+        {"key": "queue:download_enqueue", "name": "下载准备", "kind": "queue", "queue_key": "download_enqueue"},
         {"key": "queue:cloud", "name": "PikPak 入库", "kind": "queue", "queue_key": "cloud"},
         {"key": "queue:cloud_poll", "name": "PikPak 状态", "kind": "queue", "queue_key": "cloud_poll"},
         {"key": "queue:cloud_assets", "name": "云盘资源登记", "kind": "queue", "queue_key": "cloud_assets"},

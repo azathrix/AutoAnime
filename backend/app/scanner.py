@@ -18,6 +18,8 @@ from .sync_service import enqueue_cloud_asset_task
 from . import rclone_service
 
 download_tasks_lock = asyncio.Lock()
+cloud_presence_tasks_lock = asyncio.Lock()
+download_enqueue_tasks_lock = asyncio.Lock()
 mikan_match_lock = asyncio.Lock()
 metadata_tasks_lock = asyncio.Lock()
 selection_tasks_lock = asyncio.Lock()
@@ -1307,6 +1309,7 @@ async def _process_backfill_tasks(settings: dict[str, str], limit: int = 8) -> t
 
 
 def queue_release(release_id: int, settings: dict[str, str]) -> None:
+    ts = now()
     with connect() as conn:
         release = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
         if not release:
@@ -1318,118 +1321,46 @@ def queue_release(release_id: int, settings: dict[str, str]) -> None:
         if not entry["bangumi_id"]:
             log("warn", f"云盘入库跳过: {entry['display_title']} - 缺少 Bangumi ID")
             return
-        existing_cloud = conn.execute(
-            """
-            SELECT id
-            FROM cloud_assets
-            WHERE release_id=? OR (entry_id=? AND episode_number=?)
-            LIMIT 1
-            """,
-            (release_id, release["entry_id"], release["episode_number"]),
-        ).fetchone()
-        if existing_cloud:
-            return
-        existing_submission = conn.execute(
-            """
-            SELECT id, status
-            FROM cloud_submissions
-            WHERE entry_id=? AND episode_number=? AND provider='pikpak'
-            LIMIT 1
-            """,
-            (release["entry_id"], release["episode_number"]),
-        ).fetchone()
-        if existing_submission and existing_submission["status"] in {"pending", "submitted", "running", "completed"}:
-            return
-        entry_dict = dict(entry)
-        target = target_dir(entry_dict, settings)
-        name = render_episode_name(entry_dict, release["episode_number"], "", settings)
-        ts = now()
-        conn.execute(
-            """
-            INSERT INTO download_tasks
-              (release_id, series_id, entry_id, status, target_dir, normalized_name, retry_after, created_at, updated_at)
-            VALUES (?, ?, ?, 'pending', ?, ?, '', ?, ?)
-            ON CONFLICT(release_id) DO UPDATE SET
-              status=CASE
-                WHEN download_tasks.status IN ('completed','submitted','running') THEN download_tasks.status
-                ELSE 'pending'
-              END,
-              entry_id=excluded.entry_id,
-              target_dir=excluded.target_dir,
-              normalized_name=excluded.normalized_name,
-              updated_at=excluded.updated_at
-            """,
-            (release_id, release["series_id"], release["entry_id"], target, name, ts, ts),
-        )
-        task = conn.execute("SELECT * FROM download_tasks WHERE release_id=?", (release_id,)).fetchone()
-        if task:
-            conn.execute(
-                """
-                UPDATE download_tasks
-                SET status='superseded', retry_after='', last_error='已被新的自动选择替代', updated_at=?
-                WHERE id IN (
-                  SELECT dt.id
-                  FROM download_tasks dt
-                  JOIN releases r ON r.id=dt.release_id
-                  WHERE dt.id != ?
-                    AND dt.entry_id=?
-                    AND r.episode_number=?
-                    AND dt.status IN ('pending','running','submitted','failed')
-                )
-                """,
-                (ts, task["id"], release["entry_id"], release["episode_number"]),
-            )
-            conn.execute(
-                """
-                UPDATE cloud_submissions
-                SET status='superseded', retry_after='', last_error='已被新的自动选择替代', updated_at=?, last_seen_at=?
-                WHERE download_task_id IN (
-                  SELECT dt.id
-                  FROM download_tasks dt
-                  JOIN releases r ON r.id=dt.release_id
-                  WHERE dt.id != ?
-                    AND dt.entry_id=?
-                    AND r.episode_number=?
-                )
-                  AND provider='pikpak'
-                  AND status IN ('pending','running','submitted','failed')
-                """,
-                (ts, ts, task["id"], release["entry_id"], release["episode_number"]),
-            )
-            conn.execute(
-                """
-                INSERT INTO cloud_submissions
-                  (series_id, entry_id, episode_number, release_id, provider, download_task_id, status,
-                   target_dir, normalized_name, created_at, updated_at, last_seen_at)
-                VALUES (?, ?, ?, ?, 'pikpak', ?, 'pending', ?, ?, ?, ?, ?)
-                ON CONFLICT(entry_id, episode_number, provider) DO UPDATE SET
-                  series_id=excluded.series_id,
-                  release_id=excluded.release_id,
-                  download_task_id=excluded.download_task_id,
-                  status=CASE
-                    WHEN cloud_submissions.status='completed' THEN cloud_submissions.status
-                    ELSE 'pending'
-                  END,
-                  target_dir=excluded.target_dir,
-                  normalized_name=excluded.normalized_name,
-                  retry_after='',
-                  last_error='',
-                  updated_at=excluded.updated_at,
-                  last_seen_at=excluded.last_seen_at
-                """,
-                (
-                    release["series_id"],
-                    release["entry_id"],
-                    release["episode_number"],
-                    release_id,
-                    task["id"],
-                    target,
-                    name,
-                    ts,
-                    ts,
-                    ts,
-                ),
-            )
+        enqueue_cloud_presence_task(conn, int(release_id), int(release["series_id"]), int(release["entry_id"]), int(release["episode_number"]), ts)
+
+
+def enqueue_cloud_presence_task(conn, release_id: int, series_id: int, entry_id: int, episode_number: int, ts: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO cloud_presence_tasks
+          (release_id, series_id, entry_id, episode_number, status, retry_after, last_error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', '', '', ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+          series_id=excluded.series_id,
+          entry_id=excluded.entry_id,
+          episode_number=excluded.episode_number,
+          status='pending',
+          cloud_asset_id=0,
+          retry_after='',
+          last_error='',
+          updated_at=excluded.updated_at
+        """,
+        (release_id, series_id, entry_id, episode_number, ts, ts),
+    )
+
+
+def enqueue_download_enqueue_task(conn, release_id: int, series_id: int, entry_id: int, episode_number: int, ts: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO download_enqueue_tasks
+          (release_id, series_id, entry_id, episode_number, status, retry_after, last_error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', '', '', ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+          series_id=excluded.series_id,
+          entry_id=excluded.entry_id,
+          episode_number=excluded.episode_number,
+          status='pending',
+          retry_after='',
+          last_error='',
+          updated_at=excluded.updated_at
+        """,
+        (release_id, series_id, entry_id, episode_number, ts, ts),
+    )
 
 
 def sync_cloud_submission(
@@ -1488,6 +1419,107 @@ def sync_cloud_submission(
             ts,
         ),
     )
+
+
+def ensure_download_task_for_release(conn, release_id: int, settings: dict[str, str]) -> int | None:
+    release = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
+    if not release:
+        return None
+    entry = conn.execute("SELECT * FROM entries WHERE id=?", (release["entry_id"],)).fetchone()
+    if not entry:
+        return None
+    entry_dict = dict(entry)
+    target = target_dir(entry_dict, settings)
+    name = render_episode_name(entry_dict, release["episode_number"], "", settings)
+    ts = now()
+    conn.execute(
+        """
+        INSERT INTO download_tasks
+          (release_id, series_id, entry_id, status, target_dir, normalized_name, retry_after, created_at, updated_at)
+        VALUES (?, ?, ?, 'pending', ?, ?, '', ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+          status=CASE
+            WHEN download_tasks.status IN ('completed','submitted','running') THEN download_tasks.status
+            ELSE 'pending'
+          END,
+          entry_id=excluded.entry_id,
+          target_dir=excluded.target_dir,
+          normalized_name=excluded.normalized_name,
+          updated_at=excluded.updated_at
+        """,
+        (release_id, release["series_id"], release["entry_id"], target, name, ts, ts),
+    )
+    task = conn.execute("SELECT * FROM download_tasks WHERE release_id=?", (release_id,)).fetchone()
+    if not task:
+        return None
+    conn.execute(
+        """
+        UPDATE download_tasks
+        SET status='superseded', retry_after='', last_error='已被新的自动选择替代', updated_at=?
+        WHERE id IN (
+          SELECT dt.id
+          FROM download_tasks dt
+          JOIN releases r ON r.id=dt.release_id
+          WHERE dt.id != ?
+            AND dt.entry_id=?
+            AND r.episode_number=?
+            AND dt.status IN ('pending','running','submitted','failed')
+        )
+        """,
+        (ts, task["id"], release["entry_id"], release["episode_number"]),
+    )
+    conn.execute(
+        """
+        UPDATE cloud_submissions
+        SET status='superseded', retry_after='', last_error='已被新的自动选择替代', updated_at=?, last_seen_at=?
+        WHERE download_task_id IN (
+          SELECT dt.id
+          FROM download_tasks dt
+          JOIN releases r ON r.id=dt.release_id
+          WHERE dt.id != ?
+            AND dt.entry_id=?
+            AND r.episode_number=?
+        )
+          AND provider='pikpak'
+          AND status IN ('pending','running','submitted','failed')
+        """,
+        (ts, ts, task["id"], release["entry_id"], release["episode_number"]),
+    )
+    conn.execute(
+        """
+        INSERT INTO cloud_submissions
+          (series_id, entry_id, episode_number, release_id, provider, download_task_id, status,
+           target_dir, normalized_name, created_at, updated_at, last_seen_at)
+        VALUES (?, ?, ?, ?, 'pikpak', ?, 'pending', ?, ?, ?, ?, ?)
+        ON CONFLICT(entry_id, episode_number, provider) DO UPDATE SET
+          series_id=excluded.series_id,
+          release_id=excluded.release_id,
+          download_task_id=excluded.download_task_id,
+          status=CASE
+            WHEN cloud_submissions.status='completed' THEN cloud_submissions.status
+            ELSE 'pending'
+          END,
+          target_dir=excluded.target_dir,
+          normalized_name=excluded.normalized_name,
+          retry_after='',
+          last_error='',
+          updated_at=excluded.updated_at,
+          last_seen_at=excluded.last_seen_at
+        """,
+        (
+            release["series_id"],
+            release["entry_id"],
+            release["episode_number"],
+            release_id,
+            task["id"],
+            target,
+            name,
+            ts,
+            ts,
+            ts,
+        ),
+    )
+    return int(task["id"])
 
 
 def enqueue_cloud_poll_task(conn, download_task_id: int, ts: str) -> None:
@@ -1558,6 +1590,172 @@ def task_retry_after(settings: dict[str, str], attempts: int) -> str:
 
 def stale_running_cutoff(minutes: int = 10) -> str:
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+async def process_cloud_presence_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    async with cloud_presence_tasks_lock:
+        return await _process_cloud_presence_tasks(settings, limit)
+
+
+async def _process_cloud_presence_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE cloud_presence_tasks
+            SET status='pending', last_error='上次云盘存在性检查中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
+        rows = conn.execute(
+            """
+            SELECT cpt.*, r.title
+            FROM cloud_presence_tasks cpt
+            JOIN releases r ON r.id=cpt.release_id
+            WHERE cpt.status IN ('pending', 'failed')
+              AND (cpt.retry_after='' OR cpt.retry_after <= ?)
+            ORDER BY cpt.id ASC
+            LIMIT ?
+            """,
+            (now(), limit),
+        ).fetchall()
+
+    completed = 0
+    failed = 0
+    for task in rows:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE cloud_presence_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                (now(), task["id"]),
+            )
+        try:
+            with connect() as conn:
+                existing_cloud = conn.execute(
+                    """
+                    SELECT id
+                    FROM cloud_assets
+                    WHERE release_id=? OR (entry_id=? AND episode_number=?)
+                    LIMIT 1
+                    """,
+                    (task["release_id"], task["entry_id"], task["episode_number"]),
+                ).fetchone()
+                ts = now()
+                if existing_cloud:
+                    conn.execute(
+                        """
+                        UPDATE cloud_presence_tasks
+                        SET status='completed', cloud_asset_id=?, retry_after='', last_error='云盘资源已存在，跳过提交', updated_at=?
+                        WHERE id=?
+                        """,
+                        (int(existing_cloud["id"]), ts, task["id"]),
+                    )
+                else:
+                    enqueue_download_enqueue_task(conn, int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), int(task["episode_number"]), ts)
+                    conn.execute(
+                        """
+                        UPDATE cloud_presence_tasks
+                        SET status='completed', cloud_asset_id=0, retry_after='', last_error='', updated_at=?
+                        WHERE id=?
+                        """,
+                        (ts, task["id"]),
+                    )
+            completed += 1
+        except Exception as exc:
+            failed += 1
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE cloud_presence_tasks
+                    SET status='failed', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(task["attempts"] or 0) + 1), str(exc)[:2000], now(), task["id"]),
+                )
+            log("error", f"云盘存在性检查失败: {task['title']} - {exc}")
+    return completed, failed
+
+
+async def process_download_enqueue_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    async with download_enqueue_tasks_lock:
+        return await _process_download_enqueue_tasks(settings, limit)
+
+
+async def _process_download_enqueue_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE download_enqueue_tasks
+            SET status='pending', last_error='上次下载准备中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
+        rows = conn.execute(
+            """
+            SELECT det.*, r.title
+            FROM download_enqueue_tasks det
+            JOIN releases r ON r.id=det.release_id
+            WHERE det.status IN ('pending', 'failed')
+              AND (det.retry_after='' OR det.retry_after <= ?)
+            ORDER BY det.id ASC
+            LIMIT ?
+            """,
+            (now(), limit),
+        ).fetchall()
+
+    completed = 0
+    failed = 0
+    for task in rows:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE download_enqueue_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
+                (now(), task["id"]),
+            )
+        try:
+            with connect() as conn:
+                existing_submission = conn.execute(
+                    """
+                    SELECT id, status
+                    FROM cloud_submissions
+                    WHERE entry_id=? AND episode_number=? AND provider='pikpak'
+                    LIMIT 1
+                    """,
+                    (task["entry_id"], task["episode_number"]),
+                ).fetchone()
+                ts = now()
+                if existing_submission and existing_submission["status"] in {"pending", "submitted", "running", "completed"}:
+                    conn.execute(
+                        """
+                        UPDATE download_enqueue_tasks
+                        SET status='completed', retry_after='', last_error='已存在云盘提交记录，跳过重复准备', updated_at=?
+                        WHERE id=?
+                        """,
+                        (ts, task["id"]),
+                    )
+                else:
+                    ensure_download_task_for_release(conn, int(task["release_id"]), settings)
+                    conn.execute(
+                        """
+                        UPDATE download_enqueue_tasks
+                        SET status='completed', retry_after='', last_error='', updated_at=?
+                        WHERE id=?
+                        """,
+                        (ts, task["id"]),
+                    )
+            completed += 1
+        except Exception as exc:
+            failed += 1
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE download_enqueue_tasks
+                    SET status='failed', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(task["attempts"] or 0) + 1), str(exc)[:2000], now(), task["id"]),
+                )
+            log("error", f"下载准备失败: {task['title']} - {exc}")
+    return completed, failed
 
 
 async def process_tasks(settings: dict[str, str], limit: int = 6, force: bool = False) -> None:
