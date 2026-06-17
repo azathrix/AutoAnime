@@ -29,10 +29,18 @@ queue_handlers: dict[str, QueueHandler] = {}
 queue_debounce_tasks: dict[str, asyncio.Task] = {}
 queue_running: set[str] = set()
 queue_rerun_requested: set[str] = set()
+QUEUE_KEY_ALIASES = {
+    "cloud": "download",
+    "cloud_assets": "cloud_asset",
+}
+
+
+def canonical_queue_key(name: str) -> str:
+    return QUEUE_KEY_ALIASES.get(name, name)
 
 
 def queue_job_key(name: str) -> str:
-    return f"{name}_dispatch"
+    return f"{canonical_queue_key(name)}_dispatch"
 
 
 class SettingsPayload(BaseModel):
@@ -907,6 +915,7 @@ def ensure_queue_handlers() -> None:
 
 
 async def run_queue(name: str) -> None:
+    name = canonical_queue_key(name)
     handler = queue_handlers.get(name)
     if not handler:
         return
@@ -935,6 +944,7 @@ async def run_queue(name: str) -> None:
 
 
 def trigger_queue(name: str, delay: float | None = None) -> None:
+    name = canonical_queue_key(name)
     if name not in queue_handlers:
         return
     try:
@@ -971,6 +981,7 @@ def trigger_queue(name: str, delay: float | None = None) -> None:
 def trigger_queues(names: list[str], delay: float | None = None) -> None:
     seen: set[str] = set()
     for name in names:
+        name = canonical_queue_key(name)
         if name in seen:
             continue
         seen.add(name)
@@ -1343,18 +1354,19 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
     ]
     for item in items:
         key = str(item["key"])
+        runtime_key = canonical_queue_key(key)
         running = int(item.get("running", 0) or 0)
         pending = int(item.get("pending", 0) or 0)
         failed = int(item.get("failed", 0) or 0)
         waiting = int(item.get("waiting", 0) or 0)
-        if key in queue_running or running > 0:
+        if runtime_key in queue_running or running > 0:
             item["queue_state"] = "running"
             item["state_reason"] = "队列正在处理当前批次任务"
-        elif key in queue_rerun_requested:
+        elif runtime_key in queue_rerun_requested:
             item["queue_state"] = "rerun_pending"
             item["state_reason"] = "当前批次结束后会立刻重跑"
         elif pending > 0:
-            task = queue_debounce_tasks.get(key)
+            task = queue_debounce_tasks.get(runtime_key)
             if task and not task.done():
                 item["queue_state"] = "debouncing"
                 item["state_reason"] = f"检测到新任务，等待 {int(QUEUE_DEBOUNCE_SECONDS)} 秒聚合后自动执行"
@@ -1371,6 +1383,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         else:
             item["queue_state"] = item.get("queue_state", "idle")
             item["state_reason"] = "当前没有可处理任务"
+        item["runtime_queue_key"] = runtime_key
         if item["queue_state"] == "ready" and pending > 0:
             item["state_detail"] = f"当前批次可执行 {pending} 个"
         elif item["queue_state"] == "debouncing":
@@ -2145,13 +2158,14 @@ async def api_scan() -> dict[str, str]:
 
 @app.post("/api/queues/{queue_name}/trigger")
 async def api_trigger_queue(queue_name: str) -> dict[str, str]:
-    name = (queue_name or "").strip()
-    if name == "rss":
+    requested_name = (queue_name or "").strip()
+    if requested_name == "rss":
         return await api_scan()
+    name = canonical_queue_key(requested_name)
     if name not in queue_handlers:
         return {"status": "invalid", "message": "不支持的队列"}
     trigger_queue(name, delay=0)
-    return {"status": "started", "message": f"队列 {name} 已立即触发"}
+    return {"status": "started", "message": f"队列 {requested_name} 已立即触发"}
 
 
 @app.post("/api/tasks/process")

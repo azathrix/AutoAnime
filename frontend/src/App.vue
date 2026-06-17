@@ -150,7 +150,7 @@
                   <div><span>聚合中</span><strong>{{ selectedQueue.queue_state === 'debouncing' ? '是' : '否' }}</strong></div>
                   <div><span>等待重试</span><strong>{{ selectedQueue.waiting || 0 }}</strong></div>
                   <div><span>状态细节</span><strong>{{ selectedQueue.state_detail || '-' }}</strong></div>
-                  <div><span>可执行入口</span><strong>{{ selectedQueueAction ? '支持' : '无' }}</strong></div>
+                  <div><span>运行队列</span><strong>{{ selectedQueue.runtime_queue_key || selectedQueue.key || '-' }}</strong></div>
                 </div>
                 <el-table :data="selectedQueueItems" height="520" class="candidate-table" empty-text="当前队列没有任务明细">
                   <el-table-column prop="status" label="状态" width="110">
