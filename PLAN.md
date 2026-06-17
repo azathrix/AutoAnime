@@ -164,9 +164,26 @@ library（番剧库域）
   - 到时后批量处理当前可执行任务。
   - worker 正在处理时新任务进入，只加入下一批，不打断当前批次。
 - 失败任务不能阻塞队列：
-  - 单项失败后立刻记录 `last_error`、`retry_after`。
-  - worker 继续处理后续任务。
-  - 冷却结束后该任务自动重新进入可执行状态。
+- 单项失败后立刻记录 `last_error`、`retry_after`。
+- worker 继续处理后续任务。
+- 冷却结束后该任务自动重新进入可执行状态。
+
+当前已开始按该模型落地：
+
+- 新增 `queue_bridge` 作为轻量桥接层。
+- `main.py` 负责注册真实的 `trigger_queue` 实现。
+- `scanner.py` / `sync_service.py` 在写入下游任务表后，直接请求触发对应队列。
+- 现阶段已经接通的自动触发链包括：
+  - `rss_candidates -> mikan_match`
+  - `mikan_match -> metadata`
+  - `metadata -> selection/backfill`
+  - `selection -> cloud_presence`
+  - `cloud_presence -> download_enqueue`
+  - `download_enqueue -> download`
+  - `download -> cloud_poll/cloud_asset`
+  - `cloud_asset -> sync_plan/sync`
+  - `sync -> nfo/local_presence`
+- `扫描全部` 与 `定时 RSS 扫描` 已收窄为源头触发，不再手工串行触发所有后续阶段。
 
 反对继续使用的旧模式：
 

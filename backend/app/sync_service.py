@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 import httpx
 
 from .db import connect, log, now
+from .queue_bridge import request_queue_trigger, request_queue_triggers
 from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
 from .metadata import generate_nfo_for_entry
 from .parser import normalize_title_key, parse_episode
@@ -57,6 +58,7 @@ def enqueue_nfo_task(conn, local_asset_id: int, release_id: int, series_id: int,
         """,
         (local_asset_id, release_id, series_id, entry_id, ts, ts),
     )
+    request_queue_trigger("nfo")
 
 
 def enqueue_local_presence_task(conn, local_asset_id: int, release_id: int, series_id: int, entry_id: int, ts: str) -> None:
@@ -76,6 +78,7 @@ def enqueue_local_presence_task(conn, local_asset_id: int, release_id: int, seri
         """,
         (local_asset_id, release_id, series_id, entry_id, ts, ts),
     )
+    request_queue_trigger("local_presence")
 
 
 def enqueue_cloud_asset_task(conn, download_task_id: int, ts: str) -> None:
@@ -92,6 +95,7 @@ def enqueue_cloud_asset_task(conn, download_task_id: int, ts: str) -> None:
         """,
         (download_task_id, ts, ts),
     )
+    request_queue_trigger("cloud_asset")
 
 
 def cloud_asset_path(task: dict, release: dict, entry: dict, settings: dict[str, str]) -> tuple[str, str]:
@@ -289,6 +293,7 @@ async def _process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, 
 
     if completed:
         reconcile_sync_intents(settings)
+        request_queue_triggers(["sync_plan", "sync"])
     return completed, failed
 
 
@@ -451,6 +456,8 @@ def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int
             ).fetchone()
             if task_row and task_row["status"] != "synced":
                 queued += 1
+    if queued > 0:
+        request_queue_trigger("sync")
     return queued, f"已加入本地同步队列: {queued} 条"
 
 

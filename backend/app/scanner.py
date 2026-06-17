@@ -10,6 +10,7 @@ import httpx
 import feedparser
 
 from .db import connect, hide_orphan_series, log, merge_duplicate_series, now
+from .queue_bridge import request_queue_trigger, request_queue_triggers
 from .library import bool_setting, parse_entry_labels, render_episode_name, target_dir
 from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_year, split_lines
@@ -532,6 +533,7 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
                 """,
                 (candidate_id, item.page_url, item.mikan_bangumi_id, ts, ts),
             )
+            request_queue_trigger("mikan_match")
         return candidate_id
 
 
@@ -549,6 +551,7 @@ def enqueue_metadata_task(conn, candidate_id: int, bangumi_id: str, ts: str) -> 
         """,
         (candidate_id, bangumi_id, ts, ts),
     )
+    request_queue_trigger("metadata")
 
 
 def enqueue_missing_mikan_match_tasks(ts: str) -> int:
@@ -585,6 +588,8 @@ def enqueue_missing_mikan_match_tasks(ts: str) -> int:
                 """,
                 (row["id"], row["page_url"], row["mikan_bangumi_id"], ts, ts),
             )
+    if rows:
+        request_queue_trigger("mikan_match")
     return len(rows)
 
 
@@ -671,6 +676,7 @@ def enqueue_selection_task(conn, series_id: int, entry_id: int, ts: str, reason:
         """,
         (series_id, entry_id, reason[:500], ts, ts),
     )
+    request_queue_trigger("selection")
 
 
 def enqueue_backfill_task(conn, series_id: int, entry_id: int, settings: dict[str, str], ts: str) -> None:
@@ -695,6 +701,7 @@ def enqueue_backfill_task(conn, series_id: int, entry_id: int, settings: dict[st
         """,
         (series_id, entry_id, backfill_mode, ts, ts),
     )
+    request_queue_trigger("backfill")
 
 
 async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
@@ -1285,6 +1292,8 @@ async def _process_backfill_tasks(settings: dict[str, str], limit: int = 8) -> t
                     candidate_id = upsert_rss_candidate(release, "整季补全写入候选，等待后续识别/元数据处理")
                     if candidate_id:
                         written += 1
+                if written:
+                    request_queue_trigger("mikan_match")
             with connect() as conn:
                 conn.execute(
                     "UPDATE backfill_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
@@ -1342,6 +1351,7 @@ def enqueue_cloud_presence_task(conn, release_id: int, series_id: int, entry_id:
         """,
         (release_id, series_id, entry_id, episode_number, ts, ts),
     )
+    request_queue_trigger("cloud_presence")
 
 
 def enqueue_download_enqueue_task(conn, release_id: int, series_id: int, entry_id: int, episode_number: int, ts: str) -> None:
@@ -1361,6 +1371,7 @@ def enqueue_download_enqueue_task(conn, release_id: int, series_id: int, entry_i
         """,
         (release_id, series_id, entry_id, episode_number, ts, ts),
     )
+    request_queue_trigger("download_enqueue")
 
 
 def sync_cloud_submission(
@@ -1519,6 +1530,7 @@ def ensure_download_task_for_release(conn, release_id: int, settings: dict[str, 
             ts,
         ),
     )
+    request_queue_trigger("download")
     return int(task["id"])
 
 
@@ -1536,6 +1548,7 @@ def enqueue_cloud_poll_task(conn, download_task_id: int, ts: str) -> None:
         """,
         (download_task_id, ts, ts),
     )
+    request_queue_trigger("cloud_poll")
 
 
 def extract_task_id(result: dict) -> str:
@@ -1955,6 +1968,7 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
                         (ts, task["id"]),
                     )
                     enqueue_cloud_asset_task(conn, task["id"], ts)
+                    request_queue_triggers(["cloud_asset", "sync_plan"])
                 else:
                     if not rclone_service.enabled(settings):
                         enqueue_cloud_poll_task(conn, task["id"], ts)
@@ -2059,6 +2073,7 @@ async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force:
                         (ts, task["poll_task_id"]),
                     )
                     enqueue_cloud_asset_task(conn, task["id"], ts)
+                    request_queue_triggers(["cloud_asset", "sync_plan"])
                 completed += 1
                 continue
             with connect() as conn:
@@ -2133,6 +2148,7 @@ async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force:
                     (ts, task["poll_task_id"]),
                 )
                 enqueue_cloud_asset_task(conn, task["id"], ts)
+                request_queue_triggers(["cloud_asset", "sync_plan"])
                 completed += 1
             elif status == "failed":
                 conn.execute(

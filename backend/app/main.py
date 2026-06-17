@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from .config import APP_DIR
 from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, run_cleanup_tasks, save_settings, start_operation, start_scheduled_job_run, update_operation
+from .queue_bridge import register_queue_trigger
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
 from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, mark_selected_releases, poll_submitted_tasks, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
@@ -869,18 +870,9 @@ async def run_scan_source(settings: dict[str, str], operation_id: int | None = N
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
-        update_operation(operation_id, "2/2 已触发后续队列")
-    trigger_queue("mikan_match", delay=0)
-    trigger_queue("cloud_presence", delay=0)
-    trigger_queue("download_enqueue", delay=0)
-    trigger_queue("cloud_poll", delay=0)
-    trigger_queue("cloud_asset", delay=0)
-    trigger_queue("sync_plan", delay=0)
-    trigger_queue("sync", delay=0)
-    trigger_queue("nfo", delay=0)
-    trigger_queue("local_presence", delay=0)
+        update_operation(operation_id, "2/2 RSS 已写入，后续由任务链自动推进")
     trigger_queue("cleanup", delay=0)
-    message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续队列已自动触发"
+    message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续由任务链自动推进"
     log("info", f"扫描全部: RSS 完成，{message}")
     return message
 
@@ -905,6 +897,7 @@ def ensure_queue_handlers() -> None:
             "cleanup": handle_cleanup_queue,
         }
     )
+    register_queue_trigger(trigger_queue)
 
 
 async def run_queue(name: str) -> None:
@@ -1012,7 +1005,6 @@ async def scheduled_scan() -> None:
     try:
         if bool_setting(settings.get("auto_scan", "false")):
             message = await scan_and_queue(settings)
-            trigger_queue("mikan_match", delay=0)
             finish_scheduled_job_run(run_id, "completed", message)
         else:
             finish_scheduled_job_run(run_id, "completed", "已关闭自动 RSS 扫描")
