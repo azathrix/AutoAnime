@@ -130,6 +130,12 @@
                   <div class="detail-tags">
                     <el-tag :type="queueTag(selectedQueue)">{{ queueState(selectedQueue) }}</el-tag>
                     <el-tag v-if="selectedQueue.waiting" type="warning">重试 {{ selectedQueue.waiting }}</el-tag>
+                    <el-segmented
+                      v-if="selectedQueueDomainOptions.length > 1"
+                      v-model="selectedQueueDomainFilter"
+                      :options="selectedQueueDomainOptions"
+                      size="small"
+                    />
                     <el-button v-if="selectedQueueAction" size="small" plain @click="runAction(selectedQueueAction)">立即执行</el-button>
                   </div>
                 </div>
@@ -547,6 +553,7 @@ const loading = ref(false)
 const savingSettings = ref(false)
 const autoRefresh = ref(true)
 const refreshInterval = ref(5000)
+const selectedQueueDomainFilter = ref('全部')
 let refreshTimer = null
 const keyword = ref('')
 const seriesFilter = ref('全部')
@@ -639,7 +646,22 @@ const selectedQueue = computed(() => {
 const selectedQueueItems = computed(() => {
   const section = selectedSectionMeta.value
   if (!section || section.kind !== 'queue') return []
-  return dashboard.queue_details?.[section.queue_key]?.items || []
+  const items = dashboard.queue_details?.[section.queue_key]?.items || []
+  if (selectedQueueDomainFilter.value === '全部') return items
+  if (selectedQueueDomainFilter.value === '新番') return items.filter(item => (item.domain_kind || 'seasonal') !== 'library')
+  if (selectedQueueDomainFilter.value === '番剧库') return items.filter(item => item.domain_kind === 'library')
+  return items
+})
+const selectedQueueDomainOptions = computed(() => {
+  const section = selectedSectionMeta.value
+  if (!section || section.kind !== 'queue') return ['全部']
+  const items = dashboard.queue_details?.[section.queue_key]?.items || []
+  const hasLibrary = items.some(item => item.domain_kind === 'library')
+  const hasSeasonal = items.some(item => (item.domain_kind || 'seasonal') !== 'library')
+  const options = ['全部']
+  if (hasSeasonal) options.push('新番')
+  if (hasLibrary) options.push('番剧库')
+  return options
 })
 const selectedQueueAction = computed(() => {
   const queue = selectedQueue.value
@@ -1068,6 +1090,9 @@ const PriorityList = {
 
 watch([autoRefresh, refreshInterval], startAutoRefresh)
 watch(seriesDrawer, startAutoRefresh)
+watch(selectedConsoleSection, () => {
+  selectedQueueDomainFilter.value = '全部'
+})
 watch(view, value => {
   if (value === 'settings') reloadDiagnostics().catch(error => ElMessage.error(apiErrorMessage(error)))
 })
