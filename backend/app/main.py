@@ -1543,6 +1543,20 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
                 "SELECT status, COUNT(*) AS count FROM cleanup_tasks GROUP BY status"
             ).fetchall()
         }
+        processor_rows = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS count FROM processor_tasks GROUP BY status"
+            ).fetchall()
+        }
+        processor_retry = conn.execute(
+            """
+            SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
+            FROM processor_tasks
+            WHERE status='pending' AND retry_after != '' AND retry_after > ?
+            """,
+            (now(),),
+        ).fetchone()
         cleanup_retry = conn.execute(
             """
             SELECT COUNT(*) AS count, MIN(retry_after) AS next_retry_after
@@ -1573,6 +1587,17 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "failed": 0,
             "description": "周期读取 RSS，新增发布后进入后续队列",
             "queue_state": "scheduled" if bool_setting(settings.get("auto_scan", "false")) else "disabled",
+        },
+        {
+            "key": "processor",
+            "name": "流水线处理器",
+            "pending": processor_rows.get("pending", 0),
+            "running": processor_rows.get("running", 0),
+            "failed": processor_rows.get("failed", 0),
+            "waiting": processor_retry["count"] if processor_retry else 0,
+            "next_retry_after": processor_retry["next_retry_after"] if processor_retry else "",
+            "next_retry_seconds": seconds_until(processor_retry["next_retry_after"] if processor_retry else ""),
+            "description": "新架构统一处理器队列，按流水线定义推进 RSS、元数据、云盘和本地同步",
         },
         {
             "key": "mikan_match",
@@ -1867,6 +1892,42 @@ def scheduled_jobs_summary() -> list[dict[str, Any]]:
 def queue_detail_map() -> dict[str, dict[str, Any]]:
     with connect() as conn:
         details: dict[str, dict[str, Any]] = {}
+        details["processor"] = {
+            "items": enrich_retry_rows(
+                conn.execute(
+                    """
+                    SELECT
+                      pt.*,
+                      p.name AS pipeline_name,
+                      ps.step_key,
+                      COALESCE(e.display_title, rc.title, r.title, rdt.title, ca.cloud_name, la.local_path, '') AS title_cn,
+                      COALESCE(e.domain_kind, pt.domain_kind, '') AS domain_kind,
+                      CASE
+                        WHEN pt.subject_type='entry' THEN e.display_title
+                        WHEN pt.subject_type='rss_candidate' THEN rc.title
+                        WHEN pt.subject_type='release' THEN r.title
+                        WHEN pt.subject_type='download_task' THEN rdt.title
+                        WHEN pt.subject_type='cloud_asset' THEN ca.cloud_name
+                        WHEN pt.subject_type='local_asset' THEN la.local_path
+                        ELSE pt.subject_type || ':' || pt.subject_id
+                      END AS release_title
+                    FROM processor_tasks pt
+                    JOIN pipelines p ON p.id=pt.pipeline_id
+                    JOIN pipeline_steps ps ON ps.id=pt.step_id
+                    LEFT JOIN entries e ON pt.subject_type='entry' AND e.id=pt.subject_id
+                    LEFT JOIN rss_candidates rc ON pt.subject_type='rss_candidate' AND rc.id=pt.subject_id
+                    LEFT JOIN releases r ON pt.subject_type='release' AND r.id=pt.subject_id
+                    LEFT JOIN download_tasks dt ON pt.subject_type='download_task' AND dt.id=pt.subject_id
+                    LEFT JOIN releases rdt ON rdt.id=dt.release_id
+                    LEFT JOIN cloud_assets ca ON pt.subject_type='cloud_asset' AND ca.id=pt.subject_id
+                    LEFT JOIN local_assets la ON pt.subject_type='local_asset' AND la.id=pt.subject_id
+                    WHERE pt.status IN ('pending', 'running', 'failed')
+                    ORDER BY pt.updated_at DESC
+                    LIMIT 160
+                    """
+                ).fetchall()
+            )
+        }
         details["mikan_match"] = {
             "items": enrich_retry_rows(
                 conn.execute(
@@ -2074,6 +2135,7 @@ def console_sections() -> list[dict[str, Any]]:
     return [
         {"key": "queues", "name": "队列", "kind": "group"},
         {"key": "queue:rss", "name": "RSS 扫描", "kind": "queue", "queue_key": "rss"},
+        {"key": "queue:processor", "name": "流水线处理器", "kind": "queue", "queue_key": "processor"},
         {"key": "queue:mikan_match", "name": "Mikan 匹配", "kind": "queue", "queue_key": "mikan_match"},
         {"key": "queue:metadata", "name": "元数据", "kind": "queue", "queue_key": "metadata"},
         {"key": "queue:selection", "name": "自动选集", "kind": "queue", "queue_key": "selection"},
