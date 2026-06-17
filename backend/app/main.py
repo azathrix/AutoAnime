@@ -131,10 +131,16 @@ def enrich_download_tasks(rows: list[Any]) -> list[dict[str, Any]]:
             row["display_reason"] = row.get("progress_text")
         elif row.get("reason"):
             row["display_reason"] = row.get("reason")
+        elif row.get("status") == "running":
+            row["display_reason"] = "worker 正在处理当前任务"
         elif row["waiting_retry"]:
-            row["display_reason"] = "等待重试"
+            row["display_reason"] = f"等待重试，剩余 {retry_seconds} 秒"
         elif row.get("last_error"):
             row["display_reason"] = row.get("last_error")
+        elif row.get("status") == "submitted":
+            row["display_reason"] = "已提交到云盘，等待状态轮询确认完成"
+        elif row.get("status") == "pending":
+            row["display_reason"] = "已入队，等待当前批次执行"
         else:
             row["display_reason"] = ""
     return result
@@ -159,10 +165,14 @@ def enrich_retry_rows(rows: list[Any]) -> list[dict[str, Any]]:
             row["display_reason"] = row.get("progress_text")
         elif row.get("reason"):
             row["display_reason"] = row.get("reason")
+        elif row.get("status") == "running":
+            row["display_reason"] = "worker 正在处理当前任务"
         elif row["waiting_retry"]:
             row["display_reason"] = f"等待重试，剩余 {retry_seconds} 秒"
         elif row.get("last_error"):
             row["display_reason"] = row.get("last_error")
+        elif row.get("status") == "pending":
+            row["display_reason"] = "已入队，等待当前批次执行"
         else:
             row["display_reason"] = ""
     return result
@@ -1236,7 +1246,7 @@ async def scheduled_scan() -> None:
     settings = get_settings()
     try:
         if bool_setting(settings.get("auto_scan", "false")):
-            message = await scan_and_queue(settings)
+            message = await run_scan_source(settings)
             finish_scheduled_job_run(run_id, "completed", message)
         else:
             finish_scheduled_job_run(run_id, "completed", "已关闭自动 RSS 扫描")
@@ -2460,14 +2470,20 @@ async def api_retry_failed() -> dict[str, str]:
     with connect() as conn:
         total = 0
         reset_tables = [
+            "cloud_presence_tasks",
+            "download_enqueue_tasks",
             "download_tasks",
             "cloud_poll_tasks",
             "cloud_asset_tasks",
+            "sync_plan_tasks",
             "sync_tasks",
+            "nfo_tasks",
+            "local_presence_tasks",
             "selection_tasks",
             "backfill_tasks",
             "metadata_tasks",
             "mikan_match_tasks",
+            "cleanup_tasks",
         ]
         for table in [
             *reset_tables,
@@ -2496,10 +2512,16 @@ async def api_retry_failed() -> dict[str, str]:
             "metadata",
             "selection",
             "backfill",
+            "cloud_presence",
+            "download_enqueue",
             "download",
             "cloud_poll",
             "cloud_asset",
+            "sync_plan",
             "sync",
+            "nfo",
+            "local_presence",
+            "cleanup",
         ],
         delay=0,
     )

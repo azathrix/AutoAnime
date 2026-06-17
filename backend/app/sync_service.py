@@ -23,6 +23,14 @@ local_presence_tasks_lock = asyncio.Lock()
 sync_plan_tasks_lock = asyncio.Lock()
 
 
+def resolve_entry_series_id(conn, entry_id: int) -> int:
+    row = conn.execute(
+        "SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1",
+        (entry_id,),
+    ).fetchone()
+    return int(row["series_id"] or 0) if row else 0
+
+
 def task_retry_after_minutes(minutes: int) -> str:
     from datetime import datetime, timedelta, timezone
 
@@ -279,7 +287,7 @@ async def _process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, 
 
     completed = 0
     failed = 0
-    touched_series: set[int] = set()
+    touched_entries: set[int] = set()
     for row in rows:
         with connect() as conn:
             conn.execute(
@@ -309,24 +317,19 @@ async def _process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, 
                 "UPDATE cloud_asset_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
                 (now(), row["id"]),
             )
-            series = conn.execute(
-                "SELECT series_id FROM cloud_assets WHERE id=?",
+            entry = conn.execute(
+                "SELECT entry_id FROM cloud_assets WHERE id=?",
                 (asset_id,),
             ).fetchone()
-        if series:
-            touched_series.add(int(series["series_id"]))
+        if entry and int(entry["entry_id"] or 0) > 0:
+            touched_entries.add(int(entry["entry_id"]))
         completed += 1
 
     if completed:
         with connect() as conn:
             ts = now()
-            for series_id in touched_series:
-                entry_row = conn.execute(
-                    "SELECT entry_id FROM releases WHERE series_id=? AND entry_id != 0 ORDER BY id ASC LIMIT 1",
-                    (series_id,),
-                ).fetchone()
-                if entry_row:
-                    enqueue_sync_plan_task(conn, int(entry_row["entry_id"]), ts)
+            for entry_id in touched_entries:
+                enqueue_sync_plan_task(conn, entry_id, ts)
     return completed, failed
 
 
@@ -335,11 +338,7 @@ def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | No
     auto_sync = settings.get("auto_sync_following", "true").lower() == "true"
     sync_enabled = auto_sync if enabled is None else enabled
     with connect() as conn:
-        series_row = conn.execute(
-            "SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1",
-            (entry_id,),
-        ).fetchone()
-        series_id = int(series_row["series_id"]) if series_row else 0
+        series_id = resolve_entry_series_id(conn, entry_id)
         conn.execute(
             """
             INSERT INTO sync_rules
@@ -564,38 +563,38 @@ def synthetic_task_id(file_id: str) -> int:
     return 0 - (zlib.crc32(file_id.encode("utf-8")) % 2147483647) - 1
 
 
-def match_cloud_file_to_series(item: dict, series_rows: list[dict]) -> dict | None:
+def match_cloud_file_to_entry(item: dict, entry_rows: list[dict]) -> dict | None:
     path = str(item.get("cloud_path") or item.get("name") or "")
     match = re.search(r"bangumi[-_ ]?(\d+)", path, re.I)
     if match:
         bangumi_id = match.group(1)
-        for series in series_rows:
-            if str(series.get("bangumi_id") or "") == bangumi_id:
-                return series
+        for entry in entry_rows:
+            if str(entry.get("bangumi_id") or "") == bangumi_id:
+                return entry
     normalized_path = normalize_title_key(path)
     best: dict | None = None
     best_len = 0
-    for series in series_rows:
+    for entry in entry_rows:
         keys = {
-            normalize_title_key(str(series.get("title_cn") or "")),
-            normalize_title_key(str(series.get("title_raw") or "")),
+            normalize_title_key(str(entry.get("title_cn") or "")),
+            normalize_title_key(str(entry.get("title_raw") or "")),
         }
         for key in keys:
             if key and key in normalized_path and len(key) > best_len:
-                best = series
+                best = entry
                 best_len = len(key)
     return best
 
 
-def ensure_library_entry_for_series(
+def ensure_library_entry_for_reference(
     conn,
     *,
-    series_row: dict,
+    entry_row: dict,
     display_title: str,
     source_ref: str = "",
 ) -> tuple[int, int]:
     ts = now()
-    work_key = normalize_title_key(str(series_row.get("title_cn") or series_row.get("title_raw") or display_title or "Unknown"))
+    work_key = normalize_title_key(str(entry_row.get("title_cn") or entry_row.get("title_raw") or display_title or "Unknown"))
     conn.execute(
         """
         INSERT INTO works
@@ -609,15 +608,15 @@ def ensure_library_entry_for_series(
         """,
         (
             work_key,
-            str(series_row.get("title_cn") or series_row.get("title_raw") or display_title or "Unknown"),
-            str(series_row.get("title_raw") or series_row.get("title_cn") or display_title or "Unknown"),
-            str(series_row.get("bangumi_id") or ""),
+            str(entry_row.get("title_cn") or entry_row.get("title_raw") or display_title or "Unknown"),
+            str(entry_row.get("title_raw") or entry_row.get("title_cn") or display_title or "Unknown"),
+            str(entry_row.get("bangumi_id") or ""),
             ts,
             ts,
         ),
     )
     work_id = int(conn.execute("SELECT id FROM works WHERE root_key=?", (work_key,)).fetchone()["id"])
-    fingerprint_key = f"cloud-library:{series_row.get('bangumi_id') or ''}:{normalize_title_key(display_title)}"
+    fingerprint_key = f"cloud-library:{entry_row.get('bangumi_id') or ''}:{normalize_title_key(display_title)}"
     conn.execute(
         """
         INSERT INTO entries
@@ -646,16 +645,16 @@ def ensure_library_entry_for_series(
             work_id,
             fingerprint_key,
             display_title,
-            str(series_row.get("title_cn") or series_row.get("title_raw") or display_title or "Unknown"),
-            str(series_row.get("title_raw") or display_title or "Unknown"),
-            str(series_row.get("title_cn") or display_title or "Unknown"),
-            str(series_row.get("bangumi_id") or ""),
-            str(series_row.get("mikan_bangumi_id") or ""),
-            str(series_row.get("tmdb_id") or ""),
-            int(series_row.get("year") or 0),
-            int(series_row.get("season_number") or 1),
-            str(series_row.get("poster_url") or ""),
-            str(series_row.get("summary") or ""),
+            str(entry_row.get("title_cn") or entry_row.get("title_raw") or display_title or "Unknown"),
+            str(entry_row.get("title_raw") or display_title or "Unknown"),
+            str(entry_row.get("title_cn") or display_title or "Unknown"),
+            str(entry_row.get("bangumi_id") or ""),
+            str(entry_row.get("mikan_bangumi_id") or ""),
+            str(entry_row.get("tmdb_id") or ""),
+            int(entry_row.get("year") or 0),
+            int(entry_row.get("season_number") or 1),
+            str(entry_row.get("poster_url") or ""),
+            str(entry_row.get("summary") or ""),
             ts,
             ts,
         ),
@@ -674,10 +673,10 @@ def ensure_library_entry_for_series(
         """,
         (entry_id, source_ref, ts, ts),
     )
-    return int(series_row["id"]), entry_id
+    return resolve_entry_series_id(conn, entry_id), entry_id
 
 
-def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str]) -> int | None:
+def upsert_scanned_cloud_asset(item: dict, entry: dict, settings: dict[str, str]) -> int | None:
     file_id = cloud_file_id(item)
     name = str(item.get("name") or Path(str(item.get("cloud_path") or "")).name)
     path = str(item.get("cloud_path") or name)
@@ -687,10 +686,10 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
     if episode_number <= 0:
         return None
     with connect() as conn:
-        series_id, entry_id = ensure_library_entry_for_series(
+        series_id, entry_id = ensure_library_entry_for_reference(
             conn,
-            series_row=series,
-            display_title=str(series.get("title_cn") or series.get("title_raw") or name),
+            entry_row=entry,
+            display_title=str(entry.get("title_cn") or entry.get("title_raw") or name),
             source_ref=path,
         )
         release = conn.execute(
@@ -1020,13 +1019,15 @@ async def reconcile_rclone_submitted_tasks(settings: dict[str, str], limit: int 
 async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
     files = await list_cloud_files(settings, settings.get("library_root") or "/Anime")
     with connect() as conn:
-        series_rows = [
-            {**dict(row), "entry_id": dict(row).get("entry_id", 0)}
+        entry_rows = [
+            dict(row)
             for row in conn.execute(
                 """
-                SELECT s.*, COALESCE((SELECT r.entry_id FROM releases r WHERE r.series_id=s.id AND r.entry_id != 0 ORDER BY r.id ASC LIMIT 1), 0) AS entry_id
-                FROM series s
-                WHERE COALESCE(s.hidden, 0)=0 AND s.bangumi_id != ''
+                SELECT e.*, w.title_root_raw
+                FROM entries e
+                JOIN library_entries le ON le.entry_id=e.id
+                LEFT JOIN works w ON w.id=e.work_id
+                WHERE COALESCE(e.hidden, 0)=0 AND e.bangumi_id != ''
                 """
             ).fetchall()
         ]
@@ -1037,11 +1038,11 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
         name = str(item.get("name") or item.get("cloud_path") or "")
         if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
             continue
-        series = match_cloud_file_to_series(item, series_rows)
-        if not series:
+        entry = match_cloud_file_to_entry(item, entry_rows)
+        if not entry:
             skipped += 1
             continue
-        asset_id = upsert_scanned_cloud_asset(item, series, settings)
+        asset_id = upsert_scanned_cloud_asset(item, entry, settings)
         if not asset_id:
             skipped += 1
             continue
@@ -1053,10 +1054,7 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
             ).fetchone()
         if rule and rule["sync_enabled"]:
             synced_entries.add(int(rule["entry_id"]))
-    planned = enqueue_sync_plan_tasks(list(synced_entries), now())
-    if planned:
-        await process_sync_plan_tasks(settings)
-        await process_sync_tasks(settings)
+    enqueue_sync_plan_tasks(list(synced_entries), now())
     return imported, skipped
 
 

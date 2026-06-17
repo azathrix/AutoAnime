@@ -1220,6 +1220,34 @@ access_token + refresh_token
   - `queue_sync_for_series / cancel_sync_for_series` 已改为 `queue_sync_for_entry / cancel_sync_for_entry`
   - `refresh_series_metadata / generate_nfo_for_series / resolve_series_choice` 已删除
   - Mikan 补回逻辑已改为按 `entry_id` 反查和回填 `mikan_bangumi_id`
+- `cloud_asset -> sync_plan` 这段推进链已改为直接按 `entry_id` 聚合：
+  - 云盘资源登记完成后不再先收集 `series_id` 再反查 `entry_id`
+  - 现在直接把触达的 `entry_id` 送入 `sync_plan_tasks`
+- 同步规则和云盘扫描读模型已继续转到 `entry` 语义：
+  - `ensure_sync_rule()` 不再散落写 `SELECT series_id FROM releases ...`，统一走局部 `resolve_entry_series_id()`
+  - `scan_cloud_library()` 的匹配输入已从 `series_rows` 改成 `entry_rows`
+  - `match_cloud_file_to_series()` 已改为 `match_cloud_file_to_entry()`
+- 下载前两级队列入口已继续去 `series` 传参：
+  - `queue_release -> cloud_presence -> download_enqueue` 不再要求显式传入 `series_id`
+  - 两级 helper 改为按 `entry_id` 自行补齐 `series_id` 落库字段
+- 下载提交与轮询链已继续去 `series` 显式传参：
+  - `sync_cloud_submission()` 现在会按 `entry_id` 自行补齐 `series_id`
+  - 下载提交、失败重试、状态轮询各分支不再依赖调用方显式传入 `task.series_id`
+- 下载任务创建已继续去 `release.series_id` 运行依赖：
+  - `ensure_download_task_for_release()` 现在按 `release.entry_id` 反查 `series_id`
+  - 不再把 `release.series_id` 作为创建 `download_tasks / cloud_submissions` 的运行前提
+- 定时源头扫描与手动扫描入口已统一：
+  - `scheduled_scan()` 不再绕过运行时触发链直接只做 `scan_and_queue()`
+  - 现在定时 RSS 与手动“扫描全部”都走 `run_scan_source()`，统一回收挂起 Mikan 任务、补排匹配任务，并由后续队列自动推进
+- 云盘扫描后的推进已继续去串行调用：
+  - `scan_cloud_library()` 不再在函数尾部直接 `await process_sync_plan_tasks()` / `await process_sync_tasks()`
+  - 云盘扫描现在只负责写 `cloud_assets` / `sync_plan_tasks`，由 `sync_plan` / `sync` 队列各自触发处理
+- 失败重试入口已扩到完整正式任务链：
+  - 新增重置 `cloud_presence_tasks / download_enqueue_tasks / sync_plan_tasks / nfo_tasks / local_presence_tasks / cleanup_tasks`
+  - 重试失败后会按队列维度重新触发，而不是只重跑下载和同步的后半段
+- 控制台任务说明已补强一轮：
+  - `running / submitted / pending / waiting_retry` 都会给出更明确的 `display_reason`
+  - 避免出现“卡住但看不出是在等 worker、等轮询还是等冷却”的空白状态
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 

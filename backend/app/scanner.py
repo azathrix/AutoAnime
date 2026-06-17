@@ -1332,10 +1332,11 @@ def queue_release(release_id: int, settings: dict[str, str]) -> None:
         if not entry["bangumi_id"]:
             log("warn", f"云盘入库跳过: {entry['display_title']} - 缺少 Bangumi ID")
             return
-        enqueue_cloud_presence_task(conn, int(release_id), int(release["series_id"]), int(release["entry_id"]), int(release["episode_number"]), ts)
+        enqueue_cloud_presence_task(conn, int(release_id), 0, int(release["entry_id"]), int(release["episode_number"]), ts)
 
 
 def enqueue_cloud_presence_task(conn, release_id: int, series_id: int, entry_id: int, episode_number: int, ts: str) -> None:
+    resolved_series_id = int(series_id or 0) or resolve_entry_series_id(conn, entry_id)
     conn.execute(
         """
         INSERT INTO cloud_presence_tasks
@@ -1351,12 +1352,13 @@ def enqueue_cloud_presence_task(conn, release_id: int, series_id: int, entry_id:
           last_error='',
           updated_at=excluded.updated_at
         """,
-        (release_id, series_id, entry_id, episode_number, ts, ts),
+        (release_id, resolved_series_id, entry_id, episode_number, ts, ts),
     )
     request_queue_trigger("cloud_presence")
 
 
 def enqueue_download_enqueue_task(conn, release_id: int, series_id: int, entry_id: int, episode_number: int, ts: str) -> None:
+    resolved_series_id = int(series_id or 0) or resolve_entry_series_id(conn, entry_id)
     conn.execute(
         """
         INSERT INTO download_enqueue_tasks
@@ -1371,7 +1373,7 @@ def enqueue_download_enqueue_task(conn, release_id: int, series_id: int, entry_i
           last_error='',
           updated_at=excluded.updated_at
         """,
-        (release_id, series_id, entry_id, episode_number, ts, ts),
+        (release_id, resolved_series_id, entry_id, episode_number, ts, ts),
     )
     request_queue_trigger("download_enqueue")
 
@@ -1393,6 +1395,7 @@ def sync_cloud_submission(
     last_error: str = "",
 ) -> None:
     ts = now()
+    resolved_series_id = int(series_id or 0) or resolve_entry_series_id(conn, entry_id)
     conn.execute(
         """
         INSERT INTO cloud_submissions
@@ -1415,7 +1418,7 @@ def sync_cloud_submission(
           last_seen_at=excluded.last_seen_at
         """,
         (
-            series_id,
+            resolved_series_id,
             entry_id,
             episode_number,
             release_id,
@@ -1441,6 +1444,7 @@ def ensure_download_task_for_release(conn, release_id: int, settings: dict[str, 
     entry = conn.execute("SELECT * FROM entries WHERE id=?", (release["entry_id"],)).fetchone()
     if not entry:
         return None
+    resolved_series_id = resolve_entry_series_id(conn, int(release["entry_id"]))
     entry_dict = dict(entry)
     target = target_dir(entry_dict, settings)
     name = render_episode_name(entry_dict, release["episode_number"], "", settings)
@@ -1460,7 +1464,7 @@ def ensure_download_task_for_release(conn, release_id: int, settings: dict[str, 
           normalized_name=excluded.normalized_name,
           updated_at=excluded.updated_at
         """,
-        (release_id, release["series_id"], release["entry_id"], target, name, ts, ts),
+        (release_id, resolved_series_id, release["entry_id"], target, name, ts, ts),
     )
     task = conn.execute("SELECT * FROM download_tasks WHERE release_id=?", (release_id,)).fetchone()
     if not task:
@@ -1520,7 +1524,7 @@ def ensure_download_task_for_release(conn, release_id: int, settings: dict[str, 
           last_seen_at=excluded.last_seen_at
         """,
         (
-            release["series_id"],
+            resolved_series_id,
             release["entry_id"],
             release["episode_number"],
             release_id,
@@ -1665,7 +1669,7 @@ async def _process_cloud_presence_tasks(settings: dict[str, str], limit: int = 2
                         (int(existing_cloud["id"]), ts, task["id"]),
                     )
                 else:
-                    enqueue_download_enqueue_task(conn, int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), int(task["episode_number"]), ts)
+                    enqueue_download_enqueue_task(conn, int(task["release_id"]), 0, int(task["entry_id"]), int(task["episode_number"]), ts)
                     conn.execute(
                         """
                         UPDATE cloud_presence_tasks
@@ -1833,7 +1837,7 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
                 )
                 sync_cloud_submission(
                     conn,
-                    series_id=int(task["series_id"]),
+                    series_id=0,
                     entry_id=int(task["entry_id"]),
                     episode_number=int(task["episode_number"]),
                     release_id=int(task["release_id"]),
@@ -1859,7 +1863,7 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
             )
             sync_cloud_submission(
                 conn,
-                series_id=int(task["series_id"]),
+                series_id=0,
                 entry_id=int(task["entry_id"]),
                 episode_number=int(task["episode_number"]),
                 release_id=int(task["release_id"]),
@@ -1886,7 +1890,7 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
                     )
                     sync_cloud_submission(
                         conn,
-                        series_id=int(task["series_id"]),
+                        series_id=0,
                         entry_id=int(task["entry_id"]),
                         episode_number=int(task["episode_number"]),
                         release_id=int(task["release_id"]),
@@ -1924,7 +1928,7 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
                 )
                 sync_cloud_submission(
                     conn,
-                    series_id=int(task["series_id"]),
+                    series_id=0,
                     entry_id=int(task["entry_id"]),
                     episode_number=int(task["episode_number"]),
                     release_id=int(task["release_id"]),
@@ -1953,7 +1957,7 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
                 )
                 sync_cloud_submission(
                     conn,
-                    series_id=int(task["series_id"]),
+                    series_id=0,
                     entry_id=int(task["entry_id"]),
                     episode_number=int(task["episode_number"]),
                     release_id=int(task["release_id"]),
@@ -2059,7 +2063,7 @@ async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force:
                     )
                     sync_cloud_submission(
                         conn,
-                        series_id=int(task["series_id"]),
+                        series_id=0,
                         entry_id=int(task["entry_id"]),
                         episode_number=int(task["episode_number"]),
                         release_id=int(task["release_id"]),
@@ -2094,7 +2098,7 @@ async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force:
                 )
                 sync_cloud_submission(
                     conn,
-                    series_id=int(task["series_id"]),
+                    series_id=0,
                     entry_id=int(task["entry_id"]),
                     episode_number=int(task["episode_number"]),
                     release_id=int(task["release_id"]),
@@ -2128,7 +2132,8 @@ async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force:
             )
             sync_cloud_submission(
                 conn,
-                series_id=int(task["series_id"]),
+                series_id=0,
+                entry_id=int(task["entry_id"]),
                 episode_number=int(task["episode_number"]),
                 release_id=int(task["release_id"]),
                 download_task_id=int(task["id"]),
