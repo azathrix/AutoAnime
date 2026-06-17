@@ -21,14 +21,6 @@ export async function saveSettings(payload) {
   return (await api.put('/settings', payload)).data
 }
 
-export async function getSeries(id) {
-  return (await api.get(`/series/${id}`)).data
-}
-
-export async function saveSeries(id, payload) {
-  return (await api.put(`/series/${id}`, payload)).data
-}
-
 export async function getSeasonalEntry(id) {
   return (await api.get(`/seasonal/${id}`)).data
 }

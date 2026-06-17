@@ -1102,6 +1102,10 @@ access_token + refresh_token
   - `POST /api/seasonal/{entry_id}/sync/cancel`
 - 前端新番详情已改走 `/api/seasonal/*`。
 - 旧 `/api/series/*` 当前降级为兼容层，后续可以继续收缩，不再作为前端主调用路径。
+- 已删除不再参与运行路径的旧服务端 HTML 模板：
+  - `backend/app/templates/index.html`
+  - `backend/app/templates/series.html`
+- 已清理前端不再使用的 `getSeries/saveSeries` dead API。
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 
