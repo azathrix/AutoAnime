@@ -190,9 +190,9 @@ class PipelineOrchestratorTest(unittest.IsolatedAsyncioTestCase):
                 subject_id=1,
                 payload={"rss_url": "https://example.test/rss.xml"},
             )
-            processed = await run_ready_tasks(limit=12)
+            processed = await run_ready_tasks(limit=14)
 
-        self.assertEqual(processed, 12)
+        self.assertEqual(processed, 14)
         with connect() as conn:
             task_rows = conn.execute(
                 """
@@ -239,9 +239,17 @@ class PipelineOrchestratorTest(unittest.IsolatedAsyncioTestCase):
 
             selected_count = conn.execute("SELECT COUNT(*) AS count FROM releases WHERE selected=1").fetchone()["count"]
             cloud_presence_tasks = conn.execute("SELECT release_id, status FROM cloud_presence_tasks ORDER BY release_id").fetchall()
+            download_enqueue_tasks = conn.execute("SELECT release_id, status FROM download_enqueue_tasks ORDER BY release_id").fetchall()
+            download_tasks = conn.execute("SELECT release_id, status, target_dir, normalized_name FROM download_tasks ORDER BY release_id").fetchall()
             self.assertEqual(selected_count, 2)
             self.assertEqual(len(cloud_presence_tasks), 2)
-            self.assertTrue(all(row["status"] == "pending" for row in cloud_presence_tasks))
+            self.assertTrue(all(row["status"] == "completed" for row in cloud_presence_tasks))
+            self.assertEqual(len(download_enqueue_tasks), 2)
+            self.assertTrue(all(row["status"] == "completed" for row in download_enqueue_tasks))
+            self.assertEqual(len(download_tasks), 2)
+            self.assertTrue(all(row["status"] == "pending" for row in download_tasks))
+            self.assertTrue(all(row["target_dir"] for row in download_tasks))
+            self.assertTrue(all(row["normalized_name"] for row in download_tasks))
 
 
 if __name__ == "__main__":

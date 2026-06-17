@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .backfill import process_backfill
+from .cloud import process_cloud_presence, process_download_enqueue
 from .merge import process_entry_merge
 from .metadata import process_metadata
 from .mikan import process_mikan_match
@@ -20,5 +21,7 @@ def register_builtin_processors() -> None:
     register_processor("library_merge", process_entry_merge)
     register_processor("backfill", process_backfill)
     register_processor("selection", process_selection)
+    register_processor("cloud_presence", process_cloud_presence)
+    register_processor("download_enqueue", process_download_enqueue)
     register_processor("nfo", process_nfo)
     register_processor("sync_plan", process_sync_plan)
