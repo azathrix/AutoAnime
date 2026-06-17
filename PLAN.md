@@ -1106,6 +1106,10 @@ access_token + refresh_token
   - `backend/app/templates/index.html`
   - `backend/app/templates/series.html`
 - 已清理前端不再使用的 `getSeries/saveSeries` dead API。
+- 已开始收口 `seasonal / library / series` 三套重复动作实现：
+  - 抽出统一 `entry` 动作 helper
+  - `series` 路由当前仅保留兼容别名语义
+  - 后续继续裁掉兼容层时，不需要再同步改三份实现
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 
