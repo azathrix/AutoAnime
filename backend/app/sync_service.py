@@ -139,8 +139,7 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
             return None
         release = conn.execute("SELECT * FROM releases WHERE id=?", (task["release_id"],)).fetchone()
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (task["entry_id"],)).fetchone()
-        series = conn.execute("SELECT * FROM series WHERE id=?", (task["series_id"],)).fetchone()
-        if not release or not series or not entry:
+        if not release or not entry:
             return None
         if not entry["bangumi_id"]:
             log("warn", f"云盘资源登记跳过: {entry['display_title']} - 缺少 Bangumi ID")
@@ -407,8 +406,7 @@ def materialize_sync_tasks_for_entry(entry_id: int, settings: dict[str, str]) ->
         queued = 0
         for asset in assets:
             entry = conn.execute("SELECT * FROM entries WHERE id=?", (asset["entry_id"],)).fetchone()
-            series = conn.execute("SELECT * FROM series WHERE id=?", (asset["series_id"],)).fetchone()
-            if not entry or not series:
+            if not entry:
                 continue
             target = normalize_local_target_path(
                 local_episode_path(dict(asset), dict(entry), settings),
@@ -806,8 +804,7 @@ def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: di
             return None
         release = conn.execute("SELECT * FROM releases WHERE id=?", (task["release_id"],)).fetchone()
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (task["entry_id"],)).fetchone()
-        series = conn.execute("SELECT * FROM series WHERE id=?", (task["series_id"],)).fetchone()
-        if not release or not series or not entry:
+        if not release or not entry:
             return None
         ts = now()
         provider_file_id = file_id or f"rclone:{path}"

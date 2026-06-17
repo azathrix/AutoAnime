@@ -1301,6 +1301,9 @@ access_token + refresh_token
 - 条目详情接口已继续去掉无用兼容返回：
   - `build_entry_response()` 不再返回未被使用的 `legacy_series_id`
   - 旧 `/api/series/*` 路由本身暂时保留，只作为兼容壳层
+- 同步与云盘资源登记的主链依赖已继续去 `series` 化：
+  - `materialize_sync_tasks_for_entry()`、`upsert_cloud_asset*()` 已去掉仅用于存在性判断的 `series` 查询
+  - 当前主链优先依赖 `entries / releases / cloud_assets / sync_tasks`
 
 ### P4: 修复自动入云盘语义
 
