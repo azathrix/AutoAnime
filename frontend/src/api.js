@@ -29,6 +29,14 @@ export async function saveSeries(id, payload) {
   return (await api.put(`/series/${id}`, payload)).data
 }
 
+export async function getLibraryEntry(id) {
+  return (await api.get(`/library/${id}`)).data
+}
+
+export async function saveLibraryEntry(id, payload) {
+  return (await api.put(`/library/${id}`, payload)).data
+}
+
 export async function postAction(path) {
   return (await api.post(path)).data
 }

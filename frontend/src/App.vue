@@ -494,7 +494,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
 import { Collection, DataBoard, Refresh, Search, Setting } from '@element-plus/icons-vue'
-import { deleteAction, getDashboard, getDiagnostics, getSeries, getSettings, postAction, saveSeries, saveSettings } from './api'
+import { deleteAction, getDashboard, getDiagnostics, getLibraryEntry, getSeries, getSettings, postAction, saveLibraryEntry, saveSeries, saveSettings } from './api'
 import { APP_BUILD, APP_VERSION } from './version'
 
 const view = ref('dashboard')
@@ -887,12 +887,16 @@ function apiErrorMessage(error) {
 
 async function openSeries(id, domain = 'seasonal') {
   selectedSeriesDomain.value = domain
-  selectedSeries.value = await getSeries(id)
+  selectedSeries.value = domain === 'library' ? await getLibraryEntry(id) : await getSeries(id)
   seriesDrawer.value = true
 }
 
 async function saveCurrentSeries() {
-  await saveSeries(selectedSeries.value.series.id, selectedSeries.value.series)
+  if (selectedSeriesDomain.value === 'library') {
+    await saveLibraryEntry(selectedSeries.value.series.id, selectedSeries.value.series)
+  } else {
+    await saveSeries(selectedSeries.value.series.id, selectedSeries.value.series)
+  }
   ElMessage.success(selectedSeriesDomain.value === 'library' ? '番剧库条目已保存' : '番剧设置已保存')
   await reload()
 }

@@ -1032,6 +1032,13 @@ access_token + refresh_token
   - `seasonal` 保存后继续触发自动选集与整季补全
   - `library` 保存只更新条目本身，不再误触发追番队列
 - 前端保存提示已区分“番剧设置已保存”和“番剧库条目已保存”。
+- 已新增番剧库域专属详情/保存 API：
+  - `GET /api/library/{entry_id}`
+  - `PUT /api/library/{entry_id}`
+- 前端详情抽屉已按域分流：
+  - 新番域继续使用 `/api/series/{id}`
+  - 番剧库域改走 `/api/library/{id}`
+  - 番剧库保存不再通过新番兼容接口绕行
 
 后续继续：
 

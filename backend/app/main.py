@@ -134,6 +134,140 @@ def settings_response() -> dict[str, Any]:
     return result
 
 
+def empty_entry_response() -> dict[str, Any]:
+    return {
+        "series": None,
+        "releases": [],
+        "tasks": [],
+        "cloud_assets": [],
+        "local_assets": [],
+        "groups": [],
+        "resolutions": [],
+        "languages": [],
+    }
+
+
+def build_entry_response(entry_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            return empty_entry_response()
+        series = conn.execute(
+            "SELECT * FROM series WHERE bangumi_id=? ORDER BY id ASC LIMIT 1",
+            (entry["bangumi_id"],),
+        ).fetchone()
+        releases = conn.execute(
+            "SELECT * FROM releases WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
+            (entry_id,),
+        ).fetchall()
+        tasks = conn.execute(
+            """
+            SELECT *
+            FROM download_tasks
+            WHERE entry_id=?
+              AND status IN ('pending', 'running', 'submitted', 'failed')
+            ORDER BY id DESC
+            """,
+            (entry_id,),
+        ).fetchall()
+        cloud_assets = conn.execute(
+            "SELECT * FROM cloud_assets WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
+            (entry_id,),
+        ).fetchall()
+        local_assets = conn.execute(
+            "SELECT * FROM local_assets WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
+            (entry_id,),
+        ).fetchall()
+    groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
+    resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
+    languages = sorted({r["language"] for r in releases if r["language"]})
+    return {
+        "series": {**row_to_dict(entry), "legacy_series_id": series["id"] if series else 0, "domain_kind": entry["domain_kind"]},
+        "releases": rows_to_dicts(releases),
+        "tasks": enrich_download_tasks(tasks),
+        "cloud_assets": rows_to_dicts(cloud_assets),
+        "local_assets": rows_to_dicts(local_assets),
+        "groups": groups,
+        "resolutions": resolutions,
+        "languages": languages,
+    }
+
+
+def save_entry_payload(entry_id: int, payload: SeriesPayload, *, expected_domain: str | None = None) -> dict[str, Any]:
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            return empty_entry_response()
+        domain_kind = str(entry["domain_kind"] or "")
+        if expected_domain and domain_kind != expected_domain:
+            return empty_entry_response()
+        conn.execute(
+            """
+            UPDATE entries
+            SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?,
+                auto_download=?, selected_group=?, selected_resolution=?,
+                backfill_mode=?, updated_at=?
+            WHERE id=?
+            """,
+            (
+                payload.title_cn.strip(),
+                payload.bangumi_id.strip(),
+                payload.tmdb_id.strip(),
+                payload.year,
+                payload.season_number,
+                payload.auto_download,
+                payload.selected_group.strip(),
+                payload.selected_resolution.strip(),
+                payload.backfill_mode,
+                now(),
+                entry_id,
+            ),
+        )
+        ts = now()
+        if domain_kind == "seasonal":
+            conn.execute(
+                """
+                UPDATE series
+                SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?, updated_at=?
+                WHERE bangumi_id=?
+                """,
+                (
+                    payload.title_cn.strip(),
+                    payload.bangumi_id.strip(),
+                    payload.tmdb_id.strip(),
+                    payload.year,
+                    payload.season_number,
+                    now(),
+                    payload.bangumi_id.strip(),
+                ),
+            )
+            series_row = conn.execute(
+                "SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1",
+                (entry_id,),
+            ).fetchone()
+            enqueue_selection_task(
+                conn,
+                int(series_row["series_id"] or 0) if series_row else 0,
+                entry_id,
+                ts,
+                "番剧规则变更，重新计算自动选集",
+            )
+            enqueue_backfill_task(
+                conn,
+                int(series_row["series_id"] or 0) if series_row else 0,
+                entry_id,
+                get_settings(),
+                ts,
+            )
+    if domain_kind == "seasonal":
+        log("info", f"新番条目设置已保存: {payload.title_cn}")
+        with connect() as conn:
+            merge_duplicate_series(conn)
+    else:
+        log("info", f"番剧库条目已保存: {payload.title_cn}")
+    return build_entry_response(entry_id)
+
+
 def count_ready(query: str, params: tuple[Any, ...] = ()) -> int:
     with connect() as conn:
         row = conn.execute(query, params).fetchone()
@@ -1455,107 +1589,22 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
 
 @app.get("/api/series/{series_id}")
 async def api_series(series_id: int) -> dict[str, Any]:
-    with connect() as conn:
-        entry = conn.execute("SELECT * FROM entries WHERE id=?", (series_id,)).fetchone()
-        if not entry:
-            return {"series": None, "releases": [], "tasks": [], "cloud_assets": [], "local_assets": [], "groups": [], "resolutions": [], "languages": []}
-        series = conn.execute(
-            "SELECT * FROM series WHERE bangumi_id=? ORDER BY id ASC LIMIT 1",
-            (entry["bangumi_id"],),
-        ).fetchone()
-        releases = conn.execute(
-            "SELECT * FROM releases WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
-            (series_id,),
-        ).fetchall()
-        tasks = conn.execute(
-            """
-            SELECT *
-            FROM download_tasks
-            WHERE entry_id=?
-              AND status IN ('pending', 'running', 'submitted', 'failed')
-            ORDER BY id DESC
-            """,
-            (series_id,),
-        ).fetchall()
-        cloud_assets = conn.execute(
-            "SELECT * FROM cloud_assets WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
-            (series_id,),
-        ).fetchall()
-        local_assets = conn.execute(
-            "SELECT * FROM local_assets WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
-            (series_id,),
-        ).fetchall()
-    groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
-    resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
-    languages = sorted({r["language"] for r in releases if r["language"]})
-    return {
-        "series": {**row_to_dict(entry), "legacy_series_id": series["id"] if series else 0, "domain_kind": entry["domain_kind"]},
-        "releases": rows_to_dicts(releases),
-        "tasks": enrich_download_tasks(tasks),
-        "cloud_assets": rows_to_dicts(cloud_assets),
-        "local_assets": rows_to_dicts(local_assets),
-        "groups": groups,
-        "resolutions": resolutions,
-        "languages": languages,
-    }
+    return build_entry_response(series_id)
 
 
 @app.put("/api/series/{series_id}")
 async def api_update_series(series_id: int, payload: SeriesPayload) -> dict[str, Any]:
-    with connect() as conn:
-        entry = conn.execute("SELECT * FROM entries WHERE id=?", (series_id,)).fetchone()
-        if not entry:
-            return {"series": None, "releases": [], "tasks": [], "cloud_assets": [], "local_assets": [], "groups": [], "resolutions": [], "languages": []}
-        conn.execute(
-            """
-            UPDATE entries
-            SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?,
-                auto_download=?, selected_group=?, selected_resolution=?,
-                backfill_mode=?, updated_at=?
-            WHERE id=?
-            """,
-            (
-                payload.title_cn.strip(),
-                payload.bangumi_id.strip(),
-                payload.tmdb_id.strip(),
-                payload.year,
-                payload.season_number,
-                payload.auto_download,
-                payload.selected_group.strip(),
-                payload.selected_resolution.strip(),
-                payload.backfill_mode,
-                now(),
-                series_id,
-            ),
-        )
-        ts = now()
-        if entry["domain_kind"] == "seasonal":
-            conn.execute(
-                """
-                UPDATE series
-                SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?, updated_at=?
-                WHERE bangumi_id=?
-                """,
-                (
-                    payload.title_cn.strip(),
-                    payload.bangumi_id.strip(),
-                    payload.tmdb_id.strip(),
-                    payload.year,
-                    payload.season_number,
-                    now(),
-                    payload.bangumi_id.strip(),
-                ),
-            )
-            series_row = conn.execute("SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1", (series_id,)).fetchone()
-            enqueue_selection_task(conn, int(series_row["series_id"] or 0) if series_row else 0, series_id, ts, "番剧规则变更，重新计算自动选集")
-            enqueue_backfill_task(conn, int(series_row["series_id"] or 0) if series_row else 0, series_id, get_settings(), ts)
-    if entry["domain_kind"] == "seasonal":
-        log("info", f"新番条目设置已保存: {payload.title_cn}")
-    else:
-        log("info", f"番剧库条目已保存: {payload.title_cn}")
-    with connect() as conn:
-        merge_duplicate_series(conn)
-    return await api_series(series_id)
+    return save_entry_payload(series_id, payload)
+
+
+@app.get("/api/library/{entry_id}")
+async def api_library_entry(entry_id: int) -> dict[str, Any]:
+    return build_entry_response(entry_id)
+
+
+@app.put("/api/library/{entry_id}")
+async def api_update_library_entry(entry_id: int, payload: SeriesPayload) -> dict[str, Any]:
+    return save_entry_payload(entry_id, payload, expected_domain="library")
 
 
 @app.delete("/api/series/{series_id}")
