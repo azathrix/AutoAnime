@@ -234,7 +234,6 @@
                   <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
                   <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理云盘队列</el-button>
                   <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
-                  <el-button @click="runAction('/cloud/scan')">扫描云盘库</el-button>
                   <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
                   <el-popconfirm title="会清空番剧、候选、任务、云盘资源、本地同步记录和日志。确定？" @confirm="runAction('/system/clear-data')">
                     <template #reference>
@@ -253,6 +252,24 @@
           <el-input v-model="keyword" clearable placeholder="搜索番剧库条目、Bangumi ID、标题" />
           <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
           <el-button plain @click="runAction('/library/import')">导入云盘到番剧库</el-button>
+        </div>
+        <div class="library-summary-grid">
+          <div class="metric-card">
+            <span>作品数</span>
+            <strong>{{ dashboard.library_summary?.work_count || 0 }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>条目数</span>
+            <strong>{{ dashboard.library_summary?.entry_count || 0 }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>待关联</span>
+            <strong>{{ dashboard.library_summary?.unmatched_count || 0 }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>失败条目</span>
+            <strong>{{ dashboard.library_summary?.failed_entry_count || 0 }}</strong>
+          </div>
         </div>
         <div class="library-work-grid">
           <section v-for="work in libraryWorks" :key="work.work_id || work.work_title" class="library-work-card">
@@ -527,6 +544,7 @@ const selectedSeriesDomain = ref('seasonal')
 const dashboard = reactive({
   seasonal_items: [],
   library_items: [],
+  library_summary: {},
   seasonal_sync_calendar: [],
   series: [],
   rss_candidates: [],

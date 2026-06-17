@@ -1322,6 +1322,43 @@ def dashboard_data() -> dict[str, Any]:
             ORDER BY e.updated_at DESC
             """
         ).fetchall()
+        library_summary_row = conn.execute(
+            """
+            SELECT
+              COUNT(DISTINCT w.id) AS work_count,
+              COUNT(DISTINCT e.id) AS entry_count,
+              COUNT(DISTINCT CASE WHEN COALESCE(e.bangumi_id, '')='' THEN e.id END) AS unmatched_count,
+              COUNT(DISTINCT ca.id) AS cloud_asset_count,
+              COUNT(DISTINCT la.id) AS local_asset_count
+            FROM entries e
+            JOIN library_entries le ON le.entry_id=e.id
+            JOIN works w ON w.id=e.work_id
+            LEFT JOIN cloud_assets ca ON ca.entry_id=e.id
+            LEFT JOIN local_assets la ON la.entry_id=e.id AND la.status='synced'
+            WHERE COALESCE(e.hidden, 0)=0
+            """
+        ).fetchone()
+        library_failed_row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT entry_id) AS failed_entry_count
+            FROM (
+              SELECT dt.entry_id AS entry_id
+              FROM download_tasks dt
+              JOIN library_entries le ON le.entry_id=dt.entry_id
+              WHERE dt.status='failed'
+              UNION
+              SELECT st.entry_id AS entry_id
+              FROM sync_tasks st
+              JOIN library_entries le ON le.entry_id=st.entry_id
+              WHERE st.status='failed'
+              UNION
+              SELECT bt.entry_id AS entry_id
+              FROM backfill_tasks bt
+              JOIN library_entries le ON le.entry_id=bt.entry_id
+              WHERE bt.status='failed'
+            ) failed_entries
+            """
+        ).fetchone()
         # Legacy compatibility payload; primary UI no longer depends on series-wide aggregation.
         series = conn.execute(
             """
@@ -1493,6 +1530,14 @@ def dashboard_data() -> dict[str, Any]:
     return {
         "seasonal_items": rows_to_dicts(seasonal_items),
         "library_items": rows_to_dicts(library_items),
+        "library_summary": {
+            "work_count": int((library_summary_row["work_count"] if library_summary_row else 0) or 0),
+            "entry_count": int((library_summary_row["entry_count"] if library_summary_row else 0) or 0),
+            "unmatched_count": int((library_summary_row["unmatched_count"] if library_summary_row else 0) or 0),
+            "cloud_asset_count": int((library_summary_row["cloud_asset_count"] if library_summary_row else 0) or 0),
+            "local_asset_count": int((library_summary_row["local_asset_count"] if library_summary_row else 0) or 0),
+            "failed_entry_count": int((library_failed_row["failed_entry_count"] if library_failed_row else 0) or 0),
+        },
         "seasonal_sync_calendar": rows_to_dicts(seasonal_sync_calendar),
         "series": rows_to_dicts(series),
         "rss_candidates": rows_to_dicts(rss_candidates),
