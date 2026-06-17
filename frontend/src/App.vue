@@ -541,7 +541,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
 import { Collection, DataBoard, Refresh, Search, Setting } from '@element-plus/icons-vue'
-import { deleteAction, getDashboard, getDiagnostics, getLibraryEntry, getSeries, getSettings, postAction, saveLibraryEntry, saveSeries, saveSettings } from './api'
+import { deleteAction, getDashboard, getDiagnostics, getLibraryEntry, getSeasonalEntry, getSettings, postAction, saveLibraryEntry, saveSeasonalEntry, saveSettings } from './api'
 import { APP_BUILD, APP_VERSION } from './version'
 
 const view = ref('dashboard')
@@ -983,7 +983,7 @@ function apiErrorMessage(error) {
 
 async function openSeries(id, domain = 'seasonal') {
   selectedSeriesDomain.value = domain
-  selectedSeries.value = domain === 'library' ? await getLibraryEntry(id) : await getSeries(id)
+  selectedSeries.value = domain === 'library' ? await getLibraryEntry(id) : await getSeasonalEntry(id)
   seriesDrawer.value = true
 }
 
@@ -998,14 +998,14 @@ async function saveCurrentSeries() {
   if (selectedSeriesDomain.value === 'library') {
     await saveLibraryEntry(selectedSeries.value.series.id, selectedSeries.value.series)
   } else {
-    await saveSeries(selectedSeries.value.series.id, selectedSeries.value.series)
+    await saveSeasonalEntry(selectedSeries.value.series.id, selectedSeries.value.series)
   }
   ElMessage.success(selectedSeriesDomain.value === 'library' ? '番剧库条目已保存' : '番剧设置已保存')
   await reload()
 }
 
 async function toggleSeriesSync(enabled) {
-  const base = selectedSeriesDomain.value === 'library' ? '/library' : '/series'
+  const base = selectedSeriesDomain.value === 'library' ? '/library' : '/seasonal'
   const action = enabled ? 'sync' : 'sync/cancel'
   const result = await postAction(`${base}/${selectedSeries.value.series.id}/${action}`)
   if (result.status === 'skipped') {
@@ -1017,7 +1017,7 @@ async function toggleSeriesSync(enabled) {
 }
 
 async function runSeriesAction(action) {
-  const base = selectedSeriesDomain.value === 'library' ? '/library' : '/series'
+  const base = selectedSeriesDomain.value === 'library' ? '/library' : '/seasonal'
   try {
     const result = await postAction(`${base}/${selectedSeries.value.series.id}/${action}`)
     ElMessage.success(result.message || (action === 'metadata' ? '元数据任务已启动' : 'NFO 已生成'))
@@ -1030,7 +1030,7 @@ async function runSeriesAction(action) {
 async function deleteCurrentSeries() {
   const id = selectedSeries.value?.series?.id
   if (!id) return
-  const base = selectedSeriesDomain.value === 'library' ? '/library' : '/series'
+  const base = selectedSeriesDomain.value === 'library' ? '/library' : '/seasonal'
   const result = await deleteAction(`${base}/${id}`)
   if (result.status === 'not_found' || result.status === 'invalid_domain') {
     ElMessage.warning(result.message || '番剧不存在')

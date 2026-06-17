@@ -1091,6 +1091,17 @@ access_token + refresh_token
   - `全部`
   - `新番`
   - `番剧库`
+- 已新增新番域专属 API：
+  - `GET /api/seasonal/{entry_id}`
+  - `PUT /api/seasonal/{entry_id}`
+  - `DELETE /api/seasonal/{entry_id}`
+  - `POST /api/seasonal/{entry_id}/download`
+  - `POST /api/seasonal/{entry_id}/metadata`
+  - `POST /api/seasonal/{entry_id}/nfo`
+  - `POST /api/seasonal/{entry_id}/sync`
+  - `POST /api/seasonal/{entry_id}/sync/cancel`
+- 前端新番详情已改走 `/api/seasonal/*`。
+- 旧 `/api/series/*` 当前降级为兼容层，后续可以继续收缩，不再作为前端主调用路径。
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 

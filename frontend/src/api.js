@@ -29,6 +29,14 @@ export async function saveSeries(id, payload) {
   return (await api.put(`/series/${id}`, payload)).data
 }
 
+export async function getSeasonalEntry(id) {
+  return (await api.get(`/seasonal/${id}`)).data
+}
+
+export async function saveSeasonalEntry(id, payload) {
+  return (await api.put(`/seasonal/${id}`, payload)).data
+}
+
 export async function getLibraryEntry(id) {
   return (await api.get(`/library/${id}`)).data
 }

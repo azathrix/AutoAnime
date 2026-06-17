@@ -1649,6 +1649,16 @@ async def api_update_series(series_id: int, payload: SeriesPayload) -> dict[str,
     return save_entry_payload(series_id, payload)
 
 
+@app.get("/api/seasonal/{entry_id}")
+async def api_seasonal_entry(entry_id: int) -> dict[str, Any]:
+    return build_entry_response(entry_id)
+
+
+@app.put("/api/seasonal/{entry_id}")
+async def api_update_seasonal_entry(entry_id: int, payload: SeriesPayload) -> dict[str, Any]:
+    return save_entry_payload(entry_id, payload, expected_domain="seasonal")
+
+
 @app.get("/api/library/{entry_id}")
 async def api_library_entry(entry_id: int) -> dict[str, Any]:
     return build_entry_response(entry_id)
@@ -1673,6 +1683,27 @@ async def api_delete_series(series_id: int) -> dict[str, str]:
         )
     log("warn", f"已隐藏误识别番剧: {title}")
     return {"status": "completed", "message": "已隐藏误识别番剧，关联记录已保留"}
+
+
+@app.delete("/api/seasonal/{entry_id}")
+async def api_delete_seasonal_entry(entry_id: int) -> dict[str, str]:
+    with connect() as conn:
+        entry = conn.execute(
+            "SELECT display_title, domain_kind FROM entries WHERE id=?",
+            (entry_id,),
+        ).fetchone()
+        if not entry:
+            return {"status": "not_found", "message": "番剧不存在"}
+        if entry["domain_kind"] != "seasonal":
+            return {"status": "invalid_domain", "message": "该条目不属于新番域"}
+        title = entry["display_title"]
+        ts = now()
+        conn.execute(
+            "UPDATE entries SET hidden=1, updated_at=? WHERE id=?",
+            (ts, entry_id),
+        )
+    log("warn", f"已隐藏新番条目: {title}")
+    return {"status": "completed", "message": "已隐藏误识别条目，关联记录已保留"}
 
 
 @app.delete("/api/library/{entry_id}")
@@ -1940,6 +1971,54 @@ async def api_sync_series(series_id: int) -> dict[str, str]:
 @app.post("/api/series/{series_id}/sync/cancel")
 async def api_cancel_sync_series(series_id: int) -> dict[str, str]:
     count, message = cancel_sync_for_series(series_id)
+    return {"status": "completed", "count": str(count), "message": message}
+
+
+@app.post("/api/seasonal/{entry_id}/download")
+async def api_download_seasonal_entry(entry_id: int) -> dict[str, str]:
+    settings = get_settings()
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            return {"status": "not_found"}
+    ids, choice = resolve_entry_choice(entry_id, settings)
+    mark_selected_releases(entry_id, ids)
+    if not ids:
+        message = choice["reason"] or "没有可入云盘发布"
+        log("warn", f"手动入云盘跳过: {entry['display_title']} - {message}")
+        return {"status": "skipped", "count": "0", "message": message}
+    for release_id in ids:
+        queue_release(release_id, settings)
+    trigger_queue("download", delay=0)
+    return {"status": "queued", "count": str(len(ids)), "message": f"已加入云盘队列: {len(ids)} 条"}
+
+
+@app.post("/api/seasonal/{entry_id}/metadata")
+async def api_refresh_seasonal_metadata(entry_id: int) -> dict[str, str]:
+    settings = get_settings()
+    asyncio.create_task(refresh_entry_metadata(entry_id, settings.get("rss_proxy", "")))
+    return {"status": "started"}
+
+
+@app.post("/api/seasonal/{entry_id}/nfo")
+async def api_generate_seasonal_nfo(entry_id: int) -> dict[str, str]:
+    generate_nfo_for_entry(entry_id, get_settings())
+    return {"status": "generated"}
+
+
+@app.post("/api/seasonal/{entry_id}/sync")
+async def api_sync_seasonal_entry(entry_id: int) -> dict[str, str]:
+    settings = get_settings()
+    count, message = queue_sync_for_series(entry_id, settings)
+    if count > 0:
+        trigger_queue("sync", delay=0)
+        return {"status": "queued", "count": str(count), "message": message}
+    return {"status": "completed", "count": "0", "message": message}
+
+
+@app.post("/api/seasonal/{entry_id}/sync/cancel")
+async def api_cancel_sync_seasonal_entry(entry_id: int) -> dict[str, str]:
+    count, message = cancel_sync_for_series(entry_id)
     return {"status": "completed", "count": str(count), "message": message}
 
 
