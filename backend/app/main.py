@@ -1409,6 +1409,52 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
     return items
 
 
+def console_overview(
+    queue_items: list[dict[str, Any]],
+    scheduled_jobs: list[dict[str, Any]],
+    operations: list[dict[str, Any]],
+    server_logs: list[str],
+) -> dict[str, Any]:
+    queue_total = len(queue_items)
+    running_queue_count = sum(1 for item in queue_items if item.get("queue_state") == "running" or int(item.get("running", 0) or 0) > 0)
+    pending_queue_count = sum(1 for item in queue_items if int(item.get("pending", 0) or 0) > 0)
+    failed_queue_count = sum(1 for item in queue_items if int(item.get("failed", 0) or 0) > 0)
+    waiting_retry_count = sum(int(item.get("waiting", 0) or 0) for item in queue_items)
+    pending_task_count = sum(int(item.get("pending", 0) or 0) for item in queue_items)
+    running_task_count = sum(int(item.get("running", 0) or 0) for item in queue_items)
+    failed_task_count = sum(int(item.get("failed", 0) or 0) for item in queue_items)
+    running_operation_count = sum(1 for item in operations if str(item.get("status", "")) == "running")
+    failed_operation_count = sum(1 for item in operations if str(item.get("status", "")) == "failed")
+    scheduled_failed_count = sum(1 for item in scheduled_jobs if str(item.get("last_status", "")) == "failed")
+    scheduled_running_count = sum(1 for item in scheduled_jobs if str(item.get("last_status", "")) == "running")
+    recent_error_count = sum(1 for line in server_logs if "[ERROR]" in str(line))
+    recent_warn_count = sum(1 for line in server_logs if "[WARN]" in str(line))
+    active_queue_names = [
+        str(item.get("name", ""))
+        for item in queue_items
+        if item.get("queue_state") in {"running", "debouncing", "rerun_pending", "cooldown"}
+        or int(item.get("pending", 0) or 0) > 0
+        or int(item.get("failed", 0) or 0) > 0
+    ][:6]
+    return {
+        "queue_total": queue_total,
+        "running_queue_count": running_queue_count,
+        "pending_queue_count": pending_queue_count,
+        "failed_queue_count": failed_queue_count,
+        "waiting_retry_count": waiting_retry_count,
+        "pending_task_count": pending_task_count,
+        "running_task_count": running_task_count,
+        "failed_task_count": failed_task_count,
+        "running_operation_count": running_operation_count,
+        "failed_operation_count": failed_operation_count,
+        "scheduled_running_count": scheduled_running_count,
+        "scheduled_failed_count": scheduled_failed_count,
+        "recent_error_count": recent_error_count,
+        "recent_warn_count": recent_warn_count,
+        "active_queue_names": active_queue_names,
+    }
+
+
 def scheduled_jobs_summary() -> list[dict[str, Any]]:
     with connect() as conn:
         jobs = conn.execute(
@@ -1989,6 +2035,10 @@ def dashboard_data() -> dict[str, Any]:
             """,
             (int(recent_cutoff),),
         ).fetchall()
+    queue_items = queue_summary(settings)
+    scheduled_jobs = scheduled_jobs_summary()
+    server_logs = read_server_logs(160)
+    operations_list = rows_to_dicts(operations)
     return {
         "seasonal_items": rows_to_dicts(seasonal_items),
         "library_items": rows_to_dicts(library_items),
@@ -2010,16 +2060,17 @@ def dashboard_data() -> dict[str, Any]:
         "cloud_assets": rows_to_dicts(cloud_assets),
         "sync_rules": rows_to_dicts(sync_rules),
         "sync_tasks": enrich_retry_rows(sync_tasks),
-        "operations": rows_to_dicts(operations),
-        "scheduled_jobs": scheduled_jobs_summary(),
+        "operations": operations_list,
+        "scheduled_jobs": scheduled_jobs,
         "scheduled_runs": rows_to_dicts(scheduled_runs),
         "calendar": rows_to_dicts(calendar),
         "task_counts": {row["status"]: row["count"] for row in task_counts},
         "active_tasks": enrich_download_tasks(active_tasks),
-        "queue_summary": queue_summary(settings),
+        "queue_summary": queue_items,
         "queue_details": queue_detail_map(),
         "console_sections": console_sections(),
-        "server_logs": read_server_logs(160),
+        "server_logs": server_logs,
+        "console_overview": console_overview(queue_items, scheduled_jobs, operations_list, server_logs),
     }
 
 

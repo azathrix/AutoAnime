@@ -222,6 +222,10 @@ h1 {
   min-height: 720px;
 }
 
+.console-overview-grid {
+  margin-bottom: 14px;
+}
+
 .console-workbench {
   display: grid;
   gap: 14px;
@@ -273,6 +277,7 @@ h1 {
 .console-detail {
   display: grid;
   gap: 14px;
+  min-height: 700px;
   min-width: 0;
 }
 
@@ -430,7 +435,7 @@ h1 {
 .log-console {
   display: grid;
   gap: 10px;
-  min-height: 360px;
+  min-height: 520px;
   min-width: 0;
 }
 
@@ -448,8 +453,8 @@ h1 {
   font-size: 12px;
   line-height: 1.6;
   margin: 0;
-  max-height: 420px;
-  min-height: 320px;
+  max-height: 520px;
+  min-height: 420px;
   overflow: auto;
   padding: 14px;
   white-space: pre-wrap;

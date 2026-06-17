@@ -209,7 +209,7 @@ library（番剧库域）
 - `sync_plan` 已开始从虚拟阶段改为正式任务表：
   - 新增 `sync_plan_tasks`
   - 同步计划不再只靠 `ready_count + reconcile_sync_intents()` 的虚拟估算
-  - 同步相关入口正在继续收口到 `sync_plan_tasks -> process_sync_plan_tasks() -> sync_tasks`
+  - 同步相关入口已收口到 `sync_plan_tasks -> process_sync_plan_tasks() -> sync_tasks`
 - 旧架构残留已开始剔除：
   - `series_state_tasks` 已不再参与当前运行链路
   - 现阶段保留旧表本身只为兼容已有数据库文件，不再作为主架构的一部分
@@ -1269,7 +1269,7 @@ access_token + refresh_token
     - 本地路径
   - 后续可作为控制台或新番页的一个侧栏/卡片，而不是放到番剧库页。
 
-状态：未开始。当前控制台还是旧布局。
+状态：部分完成。控制台已补统一 `console_overview` 总览、队列/定时任务/运行操作/日志徽标，以及更一致的详情摘要；后续还需要继续把左侧导航进一步树化，并收掉剩余旧概览块的重复表达。
 
 ### P4: 修复自动入云盘语义
 

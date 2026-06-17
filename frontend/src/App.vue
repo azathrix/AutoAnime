@@ -78,6 +78,19 @@
             </div>
             <el-progress :percentage="scanProgress" :status="scanOperation.status === 'failed' ? 'exception' : undefined" />
           </div>
+          <div class="detail-summary-grid console-overview-grid">
+            <div><span>队列总数</span><strong>{{ dashboard.console_overview?.queue_total || 0 }}</strong></div>
+            <div><span>运行队列</span><strong>{{ dashboard.console_overview?.running_queue_count || 0 }}</strong></div>
+            <div><span>待处理任务</span><strong>{{ dashboard.console_overview?.pending_task_count || 0 }}</strong></div>
+            <div><span>失败任务</span><strong>{{ dashboard.console_overview?.failed_task_count || 0 }}</strong></div>
+            <div><span>等待重试</span><strong>{{ dashboard.console_overview?.waiting_retry_count || 0 }}</strong></div>
+            <div><span>运行操作</span><strong>{{ dashboard.console_overview?.running_operation_count || 0 }}</strong></div>
+            <div><span>最近警告</span><strong>{{ dashboard.console_overview?.recent_warn_count || 0 }}</strong></div>
+            <div><span>最近错误</span><strong>{{ dashboard.console_overview?.recent_error_count || 0 }}</strong></div>
+          </div>
+          <p class="muted" v-if="(dashboard.console_overview?.active_queue_names || []).length">
+            活跃队列：{{ dashboard.console_overview.active_queue_names.join(' / ') }}
+          </p>
           <div class="queue-grid">
             <div v-for="queue in dashboard.queue_summary" :key="queue.key" class="queue-card">
               <div class="queue-title">
@@ -116,6 +129,15 @@
                     :type="queueTag(queueMap[section.queue_key])"
                   >
                     {{ queueBadge(queueMap[section.queue_key]) }}
+                  </el-tag>
+                  <el-tag v-else-if="section.kind === 'scheduled'" size="small" :type="scheduledBadgeType(section.job_key)">
+                    {{ scheduledBadgeText(section.job_key) }}
+                  </el-tag>
+                  <el-tag v-else-if="section.kind === 'operations'" size="small" :type="operationsBadgeType">
+                    {{ operationsBadgeText }}
+                  </el-tag>
+                  <el-tag v-else-if="section.kind === 'logs'" size="small" :type="logsBadgeType">
+                    {{ logsBadgeText }}
                   </el-tag>
                 </button>
               </div>
@@ -220,7 +242,16 @@
                     <h3>运行操作</h3>
                     <p>手动触发任务和系统长操作</p>
                   </div>
-                  <el-button v-if="dashboard.operations.length" plain @click="runAction('/operations/clear')">清空已结束操作</el-button>
+                  <div class="detail-tags">
+                    <el-tag :type="operationsBadgeType">{{ operationsBadgeText }}</el-tag>
+                    <el-button v-if="dashboard.operations.length" plain @click="runAction('/operations/clear')">清空已结束操作</el-button>
+                  </div>
+                </div>
+                <div class="detail-summary-grid">
+                  <div><span>运行中</span><strong>{{ dashboard.console_overview?.running_operation_count || 0 }}</strong></div>
+                  <div><span>失败</span><strong>{{ dashboard.console_overview?.failed_operation_count || 0 }}</strong></div>
+                  <div><span>总数</span><strong>{{ dashboard.operations.length || 0 }}</strong></div>
+                  <div><span>说明</span><strong>只保留运行中和失败项</strong></div>
                 </div>
                 <div class="operation-list operation-list-full">
                   <div v-if="!dashboard.operations.length" class="operation-item">
@@ -246,6 +277,15 @@
                     <h3>服务日志</h3>
                     <p>直接读取服务端日志文件</p>
                   </div>
+                  <div class="detail-tags">
+                    <el-tag :type="logsBadgeType">{{ logsBadgeText }}</el-tag>
+                  </div>
+                </div>
+                <div class="detail-summary-grid">
+                  <div><span>最近错误</span><strong>{{ dashboard.console_overview?.recent_error_count || 0 }}</strong></div>
+                  <div><span>最近警告</span><strong>{{ dashboard.console_overview?.recent_warn_count || 0 }}</strong></div>
+                  <div><span>显示行数</span><strong>{{ filteredServerLogs.length || 0 }}</strong></div>
+                  <div><span>筛选</span><strong>{{ logKeyword || '全部' }}</strong></div>
                 </div>
                 <div class="log-console">
                   <div class="log-toolbar">
@@ -262,6 +302,12 @@
                     <h3>维护</h3>
                     <p>手动触发、失败重试和数据清理</p>
                   </div>
+                </div>
+                <div class="detail-summary-grid">
+                  <div><span>待处理任务</span><strong>{{ dashboard.console_overview?.pending_task_count || 0 }}</strong></div>
+                  <div><span>失败任务</span><strong>{{ dashboard.console_overview?.failed_task_count || 0 }}</strong></div>
+                  <div><span>等待重试</span><strong>{{ dashboard.console_overview?.waiting_retry_count || 0 }}</strong></div>
+                  <div><span>运行队列</span><strong>{{ dashboard.console_overview?.running_queue_count || 0 }}</strong></div>
                 </div>
                 <div class="maintenance-actions maintenance-pane">
                   <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
@@ -596,6 +642,7 @@ const dashboard = reactive({
   queue_summary: [],
   queue_details: {},
   console_sections: [],
+  console_overview: {},
   calendar: [],
   active_tasks: [],
   task_counts: {}
@@ -707,6 +754,34 @@ const filteredServerLogs = computed(() => {
   return rows.filter(line => String(line || '').toLowerCase().includes(keyword))
 })
 const filteredServerLogText = computed(() => filteredServerLogs.value.join('\n'))
+const operationsBadgeText = computed(() => {
+  const running = Number(dashboard.console_overview?.running_operation_count || 0)
+  const failed = Number(dashboard.console_overview?.failed_operation_count || 0)
+  if (failed > 0) return `${failed} 失败`
+  if (running > 0) return `${running} 运行`
+  return '空闲'
+})
+const operationsBadgeType = computed(() => {
+  const failed = Number(dashboard.console_overview?.failed_operation_count || 0)
+  const running = Number(dashboard.console_overview?.running_operation_count || 0)
+  if (failed > 0) return 'danger'
+  if (running > 0) return 'warning'
+  return 'success'
+})
+const logsBadgeText = computed(() => {
+  const errors = Number(dashboard.console_overview?.recent_error_count || 0)
+  const warns = Number(dashboard.console_overview?.recent_warn_count || 0)
+  if (errors > 0) return `${errors} 错误`
+  if (warns > 0) return `${warns} 警告`
+  return '正常'
+})
+const logsBadgeType = computed(() => {
+  const errors = Number(dashboard.console_overview?.recent_error_count || 0)
+  const warns = Number(dashboard.console_overview?.recent_warn_count || 0)
+  if (errors > 0) return 'danger'
+  if (warns > 0) return 'warning'
+  return 'success'
+})
 const selectedSeriesStats = computed(() => {
   const id = selectedSeries.value?.series?.id
   return activeDetailRows.value.find(item => item.id === id) || {}
@@ -788,6 +863,23 @@ function queueBadge(queue) {
   if (Number(queue.running || 0) > 0) return `${queue.running} 运行`
   if (Number(queue.pending || 0) > 0) return `${queue.pending} 待处理`
   return '空闲'
+}
+
+function scheduledBadgeText(jobKey) {
+  const job = (dashboard.scheduled_jobs || []).find(item => item.job_key === jobKey)
+  if (!job) return '-'
+  if (job.last_status === 'failed') return '失败'
+  if (job.last_status === 'running') return '运行'
+  const minutes = Number(job.interval_minutes || 0)
+  return minutes > 0 ? `${minutes} 分` : '已配置'
+}
+
+function scheduledBadgeType(jobKey) {
+  const job = (dashboard.scheduled_jobs || []).find(item => item.job_key === jobKey)
+  if (!job) return 'info'
+  if (job.last_status === 'failed') return 'danger'
+  if (job.last_status === 'running') return 'warning'
+  return 'success'
 }
 
 function taskStatusText(row) {
