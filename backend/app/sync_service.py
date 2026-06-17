@@ -54,9 +54,9 @@ def enqueue_cloud_asset_task(conn, download_task_id: int, ts: str) -> None:
     )
 
 
-def cloud_asset_path(task: dict, release: dict, series: dict, settings: dict[str, str]) -> tuple[str, str]:
-    name = task.get("normalized_name") or render_episode_name(series, release["episode_number"], "", settings)
-    directory = task.get("target_dir") or target_dir(series, settings)
+def cloud_asset_path(task: dict, release: dict, entry: dict, settings: dict[str, str]) -> tuple[str, str]:
+    name = task.get("normalized_name") or render_episode_name(entry, release["episode_number"], "", settings)
+    directory = task.get("target_dir") or target_dir(entry, settings)
     return str(PurePosixPath(directory) / name), name
 
 
@@ -67,13 +67,14 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
         if not task:
             return None
         release = conn.execute("SELECT * FROM releases WHERE id=?", (task["release_id"],)).fetchone()
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (task["entry_id"],)).fetchone()
         series = conn.execute("SELECT * FROM series WHERE id=?", (task["series_id"],)).fetchone()
-        if not release or not series:
+        if not release or not series or not entry:
             return None
-        if not series["bangumi_id"]:
-            log("warn", f"云盘资源登记跳过: {series['title_cn']} - 缺少 Bangumi ID")
+        if not entry["bangumi_id"]:
+            log("warn", f"云盘资源登记跳过: {entry['display_title']} - 缺少 Bangumi ID")
             return None
-        cloud_path, cloud_name = cloud_asset_path(dict(task), dict(release), dict(series), settings)
+        cloud_path, cloud_name = cloud_asset_path(dict(task), dict(release), dict(entry), settings)
         ts = now()
         existing_by_file = None
         if task["pikpak_file_id"]:
@@ -85,18 +86,18 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
             """
             SELECT id
             FROM cloud_assets
-            WHERE series_id=? AND episode_number=? AND provider='pikpak'
+            WHERE entry_id=? AND episode_number=? AND provider='pikpak'
             ORDER BY id ASC
             LIMIT 1
             """,
-            (task["series_id"], release["episode_number"]),
+            (task["entry_id"], release["episode_number"]),
         ).fetchone()
         existing_asset = existing_by_file or existing_by_episode
         if existing_asset:
             conn.execute(
                 """
                 UPDATE cloud_assets
-                SET task_id=?, release_id=?, series_id=?, episode_number=?,
+                SET task_id=?, release_id=?, series_id=?, entry_id=?, episode_number=?,
                     cloud_path=?, cloud_name=?, status='available', updated_at=?
                 WHERE id=?
                 """,
@@ -104,6 +105,7 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
                     task["id"],
                     task["release_id"],
                     task["series_id"],
+                    task["entry_id"],
                     release["episode_number"],
                     cloud_path,
                     cloud_name,
@@ -116,10 +118,11 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
             conn.execute(
                 """
                 INSERT INTO cloud_assets
-                  (task_id, release_id, series_id, episode_number, provider, provider_file_id,
+                  (task_id, release_id, series_id, entry_id, episode_number, provider, provider_file_id,
                    cloud_path, cloud_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
+                  entry_id=excluded.entry_id,
                   provider_file_id=excluded.provider_file_id,
                   cloud_path=excluded.cloud_path,
                   cloud_name=excluded.cloud_name,
@@ -130,6 +133,7 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
                     task["id"],
                     task["release_id"],
                     task["series_id"],
+                    task["entry_id"],
                     release["episode_number"],
                     task["pikpak_file_id"],
                     cloud_path,
@@ -188,13 +192,13 @@ async def _process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, 
             FROM cloud_asset_tasks cat
             JOIN download_tasks dt ON dt.id=cat.download_task_id
             JOIN releases r ON r.id=dt.release_id
-            JOIN series s ON s.id=dt.series_id
+            JOIN entries e ON e.id=dt.entry_id
             JOIN cloud_submissions cs ON cs.download_task_id=dt.id
             WHERE cat.status IN ('pending', 'failed')
               AND (cat.retry_after='' OR cat.retry_after <= ?)
               AND dt.status='completed'
               AND dt.pikpak_file_id != ''
-              AND s.bangumi_id != ''
+              AND e.bangumi_id != ''
               AND cs.provider='pikpak'
               AND cs.status='completed'
             ORDER BY cat.id ASC
@@ -302,13 +306,13 @@ def requeue_sync_tasks_for_series(series_id: int, settings: dict[str, str]) -> i
     return queued
 
 
-def local_episode_path(cloud_asset: dict, series: dict, settings: dict[str, str]) -> str:
+def local_episode_path(cloud_asset: dict, entry: dict, settings: dict[str, str]) -> str:
     root = Path(settings.get("local_library_root") or "/media/pikpak-anime")
-    series_dir = render_series_dir(series, settings)
-    season_dir = render_season_dir(int(series.get("season_number") or 1), settings)
+    series_dir = render_series_dir(entry, settings)
+    season_dir = render_season_dir(int(entry.get("season_number") or 1), settings)
     suffix = Path(cloud_asset.get("cloud_name") or "").suffix
     filename = cloud_asset.get("cloud_name") or render_episode_name(
-        series,
+        entry,
         int(cloud_asset.get("episode_number") or 0),
         "",
         settings,
@@ -507,25 +511,26 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
             """
             SELECT *
             FROM releases
-            WHERE series_id=? AND episode_number=?
+            WHERE entry_id=? AND episode_number=?
             ORDER BY selected DESC, id DESC
             LIMIT 1
             """,
-            (series["id"], episode_number),
+            (series["entry_id"], episode_number),
         ).fetchone()
         if not release:
             guid = f"cloud-import:pikpak:{file_id}"
             conn.execute(
                 """
                 INSERT INTO episodes
-                  (series_id, episode_number, title, status, created_at, updated_at)
-                VALUES (?, ?, ?, 'downloaded', ?, ?)
+                  (series_id, entry_id, episode_number, title, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'downloaded', ?, ?)
                 ON CONFLICT(series_id, episode_number) DO UPDATE SET
                   status='downloaded',
                   updated_at=excluded.updated_at
                 """,
                 (
                     series["id"],
+                    series["entry_id"],
                     episode_number,
                     f"第{episode_number:02d}话",
                     now(),
@@ -535,16 +540,17 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
             conn.execute(
                 """
                 INSERT INTO releases
-                  (series_id, episode_number, guid, title, subtitle_group, resolution,
+                  (series_id, entry_id, episode_number, guid, title, subtitle_group, resolution,
                    language, torrent_url, magnet, published_at, selected, created_at, updated_at)
-                VALUES (?, ?, ?, ?, '云盘导入', '', '', '', '', '', 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, '云盘导入', '', '', '', '', '', 1, ?, ?)
                 ON CONFLICT(guid) DO UPDATE SET
                   series_id=excluded.series_id,
+                  entry_id=excluded.entry_id,
                   episode_number=excluded.episode_number,
                   title=excluded.title,
                   updated_at=excluded.updated_at
                 """,
-                (series["id"], episode_number, guid, name, now(), now()),
+                (series["id"], series["entry_id"], episode_number, guid, name, now(), now()),
             )
             release = conn.execute("SELECT * FROM releases WHERE guid=?", (guid,)).fetchone()
         if not release:
@@ -558,24 +564,25 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
             conn.execute(
                 """
                 UPDATE cloud_assets
-                SET release_id=?, series_id=?, episode_number=?, cloud_path=?, cloud_name=?,
+                SET release_id=?, series_id=?, entry_id=?, episode_number=?, cloud_path=?, cloud_name=?,
                     status='available', updated_at=?
                 WHERE id=?
                 """,
-                (release["id"], series["id"], episode_number, path, name, ts, existing["id"]),
+                (release["id"], series["id"], series["entry_id"], episode_number, path, name, ts, existing["id"]),
             )
         else:
             conn.execute(
                 """
                 INSERT INTO cloud_assets
-                  (task_id, release_id, series_id, episode_number, provider, provider_file_id,
+                  (task_id, release_id, series_id, entry_id, episode_number, provider, provider_file_id,
                    cloud_path, cloud_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
                 """,
                 (
                     synthetic_task_id(file_id),
                     release["id"],
                     series["id"],
+                    series["entry_id"],
                     episode_number,
                     file_id,
                     path,
@@ -600,8 +607,9 @@ def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: di
         if not task:
             return None
         release = conn.execute("SELECT * FROM releases WHERE id=?", (task["release_id"],)).fetchone()
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (task["entry_id"],)).fetchone()
         series = conn.execute("SELECT * FROM series WHERE id=?", (task["series_id"],)).fetchone()
-        if not release or not series:
+        if not release or not series or not entry:
             return None
         ts = now()
         provider_file_id = file_id or f"rclone:{path}"
@@ -613,18 +621,18 @@ def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: di
             """
             SELECT id
             FROM cloud_assets
-            WHERE series_id=? AND episode_number=? AND provider='pikpak'
+            WHERE entry_id=? AND episode_number=? AND provider='pikpak'
             ORDER BY id ASC
             LIMIT 1
             """,
-            (task["series_id"], release["episode_number"]),
+            (task["entry_id"], release["episode_number"]),
         ).fetchone()
         existing_asset = existing or existing_by_episode
         if existing_asset:
             conn.execute(
                 """
                 UPDATE cloud_assets
-                SET task_id=?, release_id=?, series_id=?, episode_number=?, cloud_path=?, cloud_name=?,
+                SET task_id=?, release_id=?, series_id=?, entry_id=?, episode_number=?, cloud_path=?, cloud_name=?,
                     status='available', updated_at=?
                 WHERE id=?
                 """,
@@ -632,6 +640,7 @@ def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: di
                     task["id"],
                     task["release_id"],
                     task["series_id"],
+                    task["entry_id"],
                     release["episode_number"],
                     path,
                     name,
@@ -644,10 +653,11 @@ def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: di
             conn.execute(
                 """
                 INSERT INTO cloud_assets
-                  (task_id, release_id, series_id, episode_number, provider, provider_file_id,
+                  (task_id, release_id, series_id, entry_id, episode_number, provider, provider_file_id,
                    cloud_path, cloud_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
+                  entry_id=excluded.entry_id,
                   provider_file_id=excluded.provider_file_id,
                   cloud_path=excluded.cloud_path,
                   cloud_name=excluded.cloud_name,
@@ -658,6 +668,7 @@ def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: di
                     task["id"],
                     task["release_id"],
                     task["series_id"],
+                    task["entry_id"],
                     release["episode_number"],
                     provider_file_id,
                     path,
@@ -680,13 +691,13 @@ async def reconcile_rclone_submitted_tasks(settings: dict[str, str], limit: int 
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT dt.*, r.episode_number, r.title AS release_title, s.title_cn
+            SELECT dt.*, r.episode_number, r.title AS release_title, e.display_title AS title_cn
             FROM download_tasks dt
             JOIN releases r ON r.id=dt.release_id
-            JOIN series s ON s.id=dt.series_id
+            JOIN entries e ON e.id=dt.entry_id
             JOIN cloud_submissions cs ON cs.download_task_id=dt.id
             WHERE dt.status='submitted'
-              AND s.bangumi_id != ''
+              AND e.bangumi_id != ''
               AND cs.provider='pikpak'
               AND cs.status='submitted'
               AND (dt.retry_after='' OR dt.retry_after <= ?)
@@ -809,9 +820,13 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
     files = await list_cloud_files(settings, settings.get("library_root") or "/Anime")
     with connect() as conn:
         series_rows = [
-            dict(row)
+            {**dict(row), "entry_id": dict(row).get("entry_id", 0)}
             for row in conn.execute(
-                "SELECT * FROM series WHERE COALESCE(hidden, 0)=0 AND bangumi_id != ''"
+                """
+                SELECT s.*, COALESCE((SELECT r.entry_id FROM releases r WHERE r.series_id=s.id AND r.entry_id != 0 ORDER BY r.id ASC LIMIT 1), 0) AS entry_id
+                FROM series s
+                WHERE COALESCE(s.hidden, 0)=0 AND s.bangumi_id != ''
+                """
             ).fetchall()
         ]
     imported = 0
@@ -832,13 +847,13 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
         imported += 1
         with connect() as conn:
             rule = conn.execute(
-                "SELECT * FROM sync_rules WHERE series_id=?",
-                (series["id"],),
+                "SELECT * FROM sync_rules WHERE entry_id=?",
+                (series["entry_id"],),
             ).fetchone()
         if rule and rule["sync_enabled"]:
-            synced_series.add(int(series["id"]))
-    for series_id in synced_series:
-        queue_sync_for_series(series_id, settings)
+            synced_series.add(int(series["entry_id"]))
+    for entry_id in synced_series:
+        queue_sync_for_series(entry_id, settings)
     if not synced_series:
         reconcile_sync_intents(settings)
     if synced_series:
@@ -947,9 +962,9 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                     conn.execute(
                         """
                         INSERT INTO local_assets
-                          (cloud_asset_id, release_id, series_id, episode_number, local_path,
+                          (cloud_asset_id, release_id, series_id, entry_id, episode_number, local_path,
                            nfo_status, status, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, 'pending', 'synced', ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, 'pending', 'synced', ?, ?)
                         ON CONFLICT(cloud_asset_id) DO UPDATE SET
                           local_path=excluded.local_path,
                           status='synced',
@@ -959,6 +974,7 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                             task["cloud_asset_id"],
                             task["release_id"],
                             task["series_id"],
+                            task["entry_id"],
                             conn.execute("SELECT episode_number FROM cloud_assets WHERE id=?", (task["cloud_asset_id"],)).fetchone()["episode_number"],
                             normalized_target,
                             ts,
@@ -1001,9 +1017,9 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
             conn.execute(
                 """
                 INSERT INTO local_assets
-                  (cloud_asset_id, release_id, series_id, episode_number, local_path,
+                  (cloud_asset_id, release_id, series_id, entry_id, episode_number, local_path,
                    nfo_status, status, created_at, updated_at)
-                SELECT id, release_id, series_id, episode_number, ?, 'pending', 'synced', ?, ?
+                SELECT id, release_id, series_id, entry_id, episode_number, ?, 'pending', 'synced', ?, ?
                 FROM cloud_assets
                 WHERE id=?
                 ON CONFLICT(cloud_asset_id) DO UPDATE SET
@@ -1043,11 +1059,21 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
 
 
 def cancel_sync_for_series(series_id: int) -> tuple[int, str]:
+    entry_id = series_id
+    with connect() as conn:
+        row = conn.execute("SELECT id FROM entries WHERE id=?", (series_id,)).fetchone()
+        if not row:
+            mapped = conn.execute(
+                "SELECT entry_id FROM releases WHERE series_id=? AND entry_id != 0 ORDER BY id ASC LIMIT 1",
+                (series_id,),
+            ).fetchone()
+            if mapped:
+                entry_id = int(mapped["entry_id"])
     removed = 0
     with connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM local_assets WHERE series_id=? AND status='synced'",
-            (series_id,),
+            "SELECT * FROM local_assets WHERE entry_id=? AND status='synced'",
+            (entry_id,),
         ).fetchall()
         for row in rows:
             path = Path(row["local_path"])
@@ -1065,7 +1091,7 @@ def cancel_sync_for_series(series_id: int) -> tuple[int, str]:
                 (now(), row["id"]),
             )
         conn.execute(
-            "UPDATE sync_rules SET sync_enabled=0, updated_at=? WHERE series_id=?",
-            (now(), series_id),
+            "UPDATE sync_rules SET sync_enabled=0, updated_at=? WHERE entry_id=?",
+            (now(), entry_id),
         )
     return removed, f"已取消同步并清理本地文件: {removed} 个"

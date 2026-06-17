@@ -570,10 +570,10 @@ const issues = computed(() => {
     }
   }
   for (const task of dashboard.tasks.filter(t => t.status === 'failed')) {
-    rows.push({ type: '云盘失败', level: 'danger', title: task.title_cn, message: task.last_error || 'PikPak 入库失败', series_id: task.series_id })
+    rows.push({ type: '云盘失败', level: 'danger', title: task.title_cn, message: task.last_error || 'PikPak 入库失败', series_id: task.entry_id })
   }
   for (const task of dashboard.sync_tasks.filter(t => t.status === 'failed' || (t.last_error && t.waiting_retry))) {
-    rows.push({ type: '同步失败', level: 'danger', title: task.title_cn, message: task.last_error || '本地同步失败', series_id: task.series_id })
+    rows.push({ type: '同步失败', level: 'danger', title: task.title_cn, message: task.last_error || '本地同步失败', series_id: task.entry_id })
   }
   return rows
 })
@@ -653,7 +653,7 @@ const filteredSeries = computed(() => {
     if (seriesFilter.value === '待配置') return !item.bangumi_id || !item.group_count || !item.resolution_count
     if (seriesFilter.value === '已入云盘') return Number(item.cloud_asset_count || 0) > 0
     if (seriesFilter.value === '已同步') return Number(item.local_asset_count || 0) > 0
-    if (seriesFilter.value === '失败') return dashboard.tasks.some(t => t.series_id === item.id && t.status === 'failed')
+    if (seriesFilter.value === '失败') return dashboard.tasks.some(t => t.entry_id === item.id && t.status === 'failed')
     return true
   })
 })

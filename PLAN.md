@@ -971,6 +971,17 @@ access_token + refresh_token
 - 云盘库扫描导入仍主要按旧 `series` 兼容逻辑运行，后续要拆成番剧库域专属入口。
 - 新番域和番剧库域的前端二层展示（`work -> entry`）还未完成。
 
+本阶段新增完成：
+
+- `cloud_assets / local_assets / sync_tasks / sync_rules` 主链已开始以 `entry_id` 为默认关联键。
+- 控制台的云盘队列、PikPak 状态、云盘资源登记、本地同步列表已改为优先展示 `entries.display_title`。
+- 新番页失败筛选和问题列表已按 `entry_id` 关联失败任务。
+
+本阶段仍保留的兼容层：
+
+- `series` 汇总列表和云盘库扫描导入还保留一部分旧 `series_id` 兼容查询。
+- `generate_nfo_for_series(...)` 仍使用旧 `series` 模型，后续需要补 `entry` 版 NFO 生成入口。
+
 ### P2: 可观测任务和数据安全
 
 目标：先解决“点了没反应”和“看起来数据被清空”的问题。

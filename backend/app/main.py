@@ -236,9 +236,9 @@ def ready_count_cloud_poll() -> int:
             SELECT COUNT(*) AS count
             FROM download_tasks dt
             JOIN cloud_submissions cs ON cs.download_task_id=dt.id
-            JOIN series s ON s.id=dt.series_id
+            JOIN entries e ON e.id=dt.entry_id
             WHERE dt.status='submitted'
-              AND s.bangumi_id != ''
+              AND e.bangumi_id != ''
               AND cs.provider='pikpak'
               AND cs.status='submitted'
               AND (dt.retry_after='' OR dt.retry_after <= ?)
@@ -972,11 +972,11 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
         details["cloud"] = {"items": enrich_download_tasks(
             conn.execute(
                 """
-                SELECT dt.*, s.title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
+                SELECT dt.*, e.display_title AS title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
                 FROM download_tasks dt
-                JOIN series s ON s.id=dt.series_id
+                JOIN entries e ON e.id=dt.entry_id
                 JOIN releases r ON r.id=dt.release_id
-                WHERE s.bangumi_id != ''
+                WHERE e.bangumi_id != ''
                 ORDER BY dt.updated_at DESC
                 LIMIT 120
                 """
@@ -985,11 +985,11 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
         details["cloud_poll"] = {"items": enrich_retry_rows(
             conn.execute(
                 """
-                SELECT cpt.*, dt.series_id, dt.release_id, dt.pikpak_task_id, dt.pikpak_file_id,
-                       s.title_cn, r.episode_number, r.title AS release_title
+                SELECT cpt.*, dt.series_id, dt.entry_id, dt.release_id, dt.pikpak_task_id, dt.pikpak_file_id,
+                       e.display_title AS title_cn, r.episode_number, r.title AS release_title
                 FROM cloud_poll_tasks cpt
                 JOIN download_tasks dt ON dt.id=cpt.download_task_id
-                JOIN series s ON s.id=dt.series_id
+                JOIN entries e ON e.id=dt.entry_id
                 JOIN releases r ON r.id=dt.release_id
                 ORDER BY cpt.updated_at DESC
                 LIMIT 120
@@ -999,10 +999,10 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
         details["cloud_assets"] = {"items": enrich_retry_rows(
             conn.execute(
                 """
-                SELECT cat.*, dt.series_id, dt.release_id, dt.pikpak_file_id, s.title_cn, r.episode_number, r.title AS release_title
+                SELECT cat.*, dt.series_id, dt.entry_id, dt.release_id, dt.pikpak_file_id, e.display_title AS title_cn, r.episode_number, r.title AS release_title
                 FROM cloud_asset_tasks cat
                 JOIN download_tasks dt ON dt.id=cat.download_task_id
-                JOIN series s ON s.id=dt.series_id
+                JOIN entries e ON e.id=dt.entry_id
                 JOIN releases r ON r.id=dt.release_id
                 ORDER BY cat.updated_at DESC
                 LIMIT 120
@@ -1012,11 +1012,11 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
         details["sync"] = {"items": enrich_retry_rows(
             conn.execute(
                 """
-                SELECT st.*, s.title_cn, ca.cloud_name, ca.provider_file_id
+                SELECT st.*, e.display_title AS title_cn, ca.cloud_name, ca.provider_file_id
                 FROM sync_tasks st
-                JOIN series s ON s.id=st.series_id
+                JOIN entries e ON e.id=st.entry_id
                 JOIN cloud_assets ca ON ca.id=st.cloud_asset_id
-                WHERE s.bangumi_id != ''
+                WHERE e.bangumi_id != ''
                 ORDER BY st.updated_at DESC
                 LIMIT 120
                 """
@@ -1142,7 +1142,7 @@ def dashboard_data() -> dict[str, Any]:
             LEFT JOIN download_tasks dt ON dt.release_id=r.id
             LEFT JOIN cloud_assets ca ON ca.release_id=r.id
             LEFT JOIN local_assets la ON la.release_id=r.id AND la.status='synced'
-            LEFT JOIN sync_rules sr ON sr.series_id=e.id
+            LEFT JOIN sync_rules sr ON sr.entry_id=e.id
             WHERE COALESCE(e.hidden, 0)=0
               AND e.bangumi_id != ''
             GROUP BY e.id
@@ -1194,7 +1194,7 @@ def dashboard_data() -> dict[str, Any]:
             LEFT JOIN download_tasks dt ON dt.series_id=s.id
             LEFT JOIN cloud_assets ca ON ca.series_id=s.id
             LEFT JOIN local_assets la ON la.series_id=s.id AND la.status='synced'
-            LEFT JOIN sync_rules sr ON sr.series_id=s.id
+            LEFT JOIN sync_rules sr ON sr.series_id=s.id OR sr.entry_id IN (SELECT r2.entry_id FROM releases r2 WHERE r2.series_id=s.id)
             WHERE COALESCE(s.hidden, 0)=0
               AND s.bangumi_id != ''
             GROUP BY s.id
@@ -1212,11 +1212,11 @@ def dashboard_data() -> dict[str, Any]:
         ).fetchall()
         tasks = conn.execute(
             """
-            SELECT dt.*, s.title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
+            SELECT dt.*, e.display_title AS title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
             FROM download_tasks dt
-            JOIN series s ON s.id=dt.series_id
+            JOIN entries e ON e.id=dt.entry_id
             JOIN releases r ON r.id=dt.release_id
-            WHERE s.bangumi_id != ''
+            WHERE e.bangumi_id != ''
             ORDER BY dt.id DESC
             LIMIT 80
             """
@@ -1244,20 +1244,20 @@ def dashboard_data() -> dict[str, Any]:
         logs = conn.execute("SELECT * FROM logs ORDER BY id DESC LIMIT 80").fetchall()
         cloud_assets = conn.execute(
             """
-            SELECT ca.*, s.title_cn
+            SELECT ca.*, e.display_title AS title_cn
             FROM cloud_assets ca
-            JOIN series s ON s.id=ca.series_id
-            WHERE s.bangumi_id != ''
+            JOIN entries e ON e.id=ca.entry_id
+            WHERE e.bangumi_id != ''
             ORDER BY ca.updated_at DESC
             LIMIT 80
             """
         ).fetchall()
         sync_tasks = conn.execute(
             """
-            SELECT st.*, s.title_cn
+            SELECT st.*, e.display_title AS title_cn
             FROM sync_tasks st
-            JOIN series s ON s.id=st.series_id
-            WHERE s.bangumi_id != ''
+            JOIN entries e ON e.id=st.entry_id
+            WHERE e.bangumi_id != ''
               AND st.status IN ('pending', 'running', 'failed')
             ORDER BY st.updated_at DESC
             LIMIT 80
@@ -1303,12 +1303,12 @@ def dashboard_data() -> dict[str, Any]:
         ).fetchall()
         active_tasks = conn.execute(
             """
-            SELECT dt.*, s.title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
+            SELECT dt.*, e.display_title AS title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
             FROM download_tasks dt
-            JOIN series s ON s.id=dt.series_id
+            JOIN entries e ON e.id=dt.entry_id
             JOIN releases r ON r.id=dt.release_id
             WHERE dt.status IN ('pending', 'running', 'submitted', 'failed')
-              AND s.bangumi_id != ''
+              AND e.bangumi_id != ''
             ORDER BY
               CASE dt.status
                 WHEN 'running' THEN 0
