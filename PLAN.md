@@ -1197,7 +1197,7 @@ access_token + refresh_token
   - `全部`
   - `新番`
   - `番剧库`
-- 已新增新番域专属 API：
+- 已新增并切换到新番域专属 API：
   - `GET /api/seasonal/{entry_id}`
   - `PUT /api/seasonal/{entry_id}`
   - `DELETE /api/seasonal/{entry_id}`
@@ -1207,19 +1207,15 @@ access_token + refresh_token
   - `POST /api/seasonal/{entry_id}/sync`
   - `POST /api/seasonal/{entry_id}/sync/cancel`
 - 前端新番详情已改走 `/api/seasonal/*`。
-- 旧 `/api/series/*` 当前降级为兼容层，后续可以继续收缩，不再作为前端主调用路径。
+- 旧 `/api/series/*` 兼容路由已删除，运行态只保留 `seasonal / library` 两套正式入口。
 - 已删除不再参与运行路径的旧服务端 HTML 模板：
   - `backend/app/templates/index.html`
   - `backend/app/templates/series.html`
 - 已清理前端不再使用的 `getSeries/saveSeries` dead API。
 - 已开始收口 `seasonal / library / series` 三套重复动作实现：
   - 抽出统一 `entry` 动作 helper
-  - `series` 路由当前仅保留兼容别名语义
-  - 后续继续裁掉兼容层时，不需要再同步改三份实现
-- `/api/series/*` 已补 `deprecated` 标记和兼容注释：
-  - 当前仍保留给旧调用方
-  - 但已明确不是主路径
-  - 后续裁剪时有清晰边界
+  - 入口层不再保留 `series` 路由别名
+  - 后续继续清理内部 `series_id` 兼容查询时，不需要再同步维护额外 HTTP 路由
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 

@@ -660,7 +660,16 @@ def resolved_backfill_mode(entry: dict, settings: dict[str, str]) -> str:
     return value
 
 
+def resolve_entry_series_id(conn, entry_id: int) -> int:
+    row = conn.execute(
+        "SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1",
+        (entry_id,),
+    ).fetchone()
+    return int(row["series_id"] or 0) if row else 0
+
+
 def enqueue_selection_task(conn, series_id: int, entry_id: int, ts: str, reason: str = "") -> None:
+    resolved_series_id = int(series_id or 0) or resolve_entry_series_id(conn, entry_id)
     conn.execute(
         """
         INSERT INTO selection_tasks
@@ -674,7 +683,7 @@ def enqueue_selection_task(conn, series_id: int, entry_id: int, ts: str, reason:
           last_error='',
           updated_at=excluded.updated_at
         """,
-        (series_id, entry_id, reason[:500], ts, ts),
+        (resolved_series_id, entry_id, reason[:500], ts, ts),
     )
     request_queue_trigger("selection")
 
@@ -686,6 +695,7 @@ def enqueue_backfill_task(conn, series_id: int, entry_id: int, settings: dict[st
     backfill_mode = resolved_backfill_mode(entry, settings)
     if backfill_mode == "none":
         return
+    resolved_series_id = int(series_id or 0) or resolve_entry_series_id(conn, entry_id)
     conn.execute(
         """
         INSERT INTO backfill_tasks
@@ -699,7 +709,7 @@ def enqueue_backfill_task(conn, series_id: int, entry_id: int, settings: dict[st
           last_error='',
           updated_at=excluded.updated_at
         """,
-        (series_id, entry_id, backfill_mode, ts, ts),
+        (resolved_series_id, entry_id, backfill_mode, ts, ts),
     )
     request_queue_trigger("backfill")
 

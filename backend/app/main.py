@@ -510,20 +510,16 @@ def save_entry_payload(entry_id: int, payload: SeriesPayload, *, expected_domain
                     payload.bangumi_id.strip(),
                 ),
             )
-            series_row = conn.execute(
-                "SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1",
-                (entry_id,),
-            ).fetchone()
             enqueue_selection_task(
                 conn,
-                int(series_row["series_id"] or 0) if series_row else 0,
+                0,
                 entry_id,
                 ts,
                 "番剧规则变更，重新计算自动选集",
             )
             enqueue_backfill_task(
                 conn,
-                int(series_row["series_id"] or 0) if series_row else 0,
+                0,
                 entry_id,
                 get_settings(),
                 ts,
@@ -2273,25 +2269,15 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
     ):
         with connect() as conn:
             ts = now()
-            entry_rows = conn.execute("SELECT id, (SELECT series_id FROM releases r WHERE r.entry_id=e.id ORDER BY id ASC LIMIT 1) AS series_id FROM entries e WHERE COALESCE(hidden, 0)=0 AND bangumi_id != ''").fetchall()
+            entry_rows = conn.execute(
+                "SELECT id FROM entries e WHERE COALESCE(hidden, 0)=0 AND bangumi_id != ''"
+            ).fetchall()
             for row in entry_rows:
-                enqueue_selection_task(conn, int(row["series_id"] or 0), int(row["id"]), ts, "全局规则变更，重新计算自动选集")
-                enqueue_backfill_task(conn, int(row["series_id"] or 0), int(row["id"]), current, ts)
+                enqueue_selection_task(conn, 0, int(row["id"]), ts, "全局规则变更，重新计算自动选集")
+                enqueue_backfill_task(conn, 0, int(row["id"]), current, ts)
     reschedule()
     log("info", "全局设置已保存")
     return settings_response()
-
-
-@app.get("/api/series/{series_id}", deprecated=True)
-async def api_series(series_id: int) -> dict[str, Any]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return build_entry_response(series_id)
-
-
-@app.put("/api/series/{series_id}", deprecated=True)
-async def api_update_series(series_id: int, payload: SeriesPayload) -> dict[str, Any]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return save_entry_payload(series_id, payload)
 
 
 @app.get("/api/seasonal/{entry_id}")
@@ -2312,16 +2298,6 @@ async def api_library_entry(entry_id: int) -> dict[str, Any]:
 @app.put("/api/library/{entry_id}")
 async def api_update_library_entry(entry_id: int, payload: SeriesPayload) -> dict[str, Any]:
     return save_entry_payload(entry_id, payload, expected_domain="library")
-
-
-@app.delete("/api/series/{series_id}", deprecated=True)
-async def api_delete_series(series_id: int) -> dict[str, str]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return hide_entry(
-        series_id,
-        success_message="已隐藏误识别番剧，关联记录已保留",
-        log_prefix="已隐藏误识别番剧",
-    )
 
 
 @app.delete("/api/seasonal/{entry_id}")
@@ -2439,13 +2415,9 @@ async def api_backfill_library_entry(entry_id: int) -> dict[str, str]:
             return {"status": "not_found", "message": "条目不存在"}
         if entry["domain_kind"] != "library":
             return {"status": "invalid_domain", "message": "该条目不属于番剧库"}
-        series_row = conn.execute(
-            "SELECT series_id FROM releases WHERE entry_id=? ORDER BY id ASC LIMIT 1",
-            (entry_id,),
-        ).fetchone()
         enqueue_backfill_task(
             conn,
-            int(series_row["series_id"] or 0) if series_row else 0,
+            0,
             entry_id,
             settings,
             now(),
@@ -2561,41 +2533,10 @@ async def api_clear_data() -> dict[str, str]:
     return {"status": "completed", "message": "已清除所有运行数据"}
 
 
-@app.post("/api/series/{series_id}/download", deprecated=True)
-async def api_download_series(series_id: int) -> dict[str, str]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return queue_entry_download(series_id)
-
-
 @app.post("/api/releases/{release_id}/download")
 async def api_download_release(release_id: int) -> dict[str, str]:
     queue_release(release_id, get_settings())
     return {"status": "queued"}
-
-
-@app.post("/api/series/{series_id}/metadata", deprecated=True)
-async def api_refresh_metadata(series_id: int) -> dict[str, str]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return start_entry_metadata_refresh(series_id)
-
-
-@app.post("/api/series/{series_id}/nfo", deprecated=True)
-async def api_generate_nfo(series_id: int) -> dict[str, str]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return generate_entry_nfo(series_id)
-
-
-@app.post("/api/series/{series_id}/sync", deprecated=True)
-async def api_sync_series(series_id: int) -> dict[str, str]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return queue_entry_sync(series_id)
-
-
-@app.post("/api/series/{series_id}/sync/cancel", deprecated=True)
-async def api_cancel_sync_series(series_id: int) -> dict[str, str]:
-    # Legacy compatibility alias for old clients; primary frontend now uses /api/seasonal/*.
-    return cancel_entry_sync(series_id)
-
 
 @app.post("/api/seasonal/{entry_id}/download")
 async def api_download_seasonal_entry(entry_id: int) -> dict[str, str]:
