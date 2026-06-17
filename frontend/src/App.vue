@@ -20,7 +20,7 @@
         <div>
           <p class="eyebrow">Mikan · PikPak · Local</p>
           <h1>{{ pageTitle }}</h1>
-          <p class="hero-sub">队列自动轮询，手动扫描会按顺序触发完整追番处理。<span class="build-version">v{{ appVersion }} · {{ appBuild }}</span></p>
+          <p class="hero-sub">RSS 扫描负责写入源头任务，后续处理由各队列自动推进。<span class="build-version">v{{ appVersion }} · {{ appBuild }}</span></p>
         </div>
         <div class="hero-actions">
           <el-switch
@@ -391,7 +391,7 @@
                   type="info"
                   show-icon
                   :closable="false"
-                  title="保存设置会自动重排选集、补全、同步等后续任务；要立即执行完整处理，请回到控制台点击“扫描全部”。"
+                  title="保存设置会自动重排选集、补全、同步等后续任务；要立即触发新一轮源头扫描，请回到控制台点击“扫描全部”。"
                   class="settings-alert"
                 />
                 <el-form-item label="Mikan RSS"><el-input v-model="settings.rss_url" /></el-form-item>

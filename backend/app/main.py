@@ -876,14 +876,14 @@ async def run_scan_source(settings: dict[str, str], operation_id: int | None = N
     generation = get_runtime_generation()
     reclaimed_mikan = reclaim_mikan_match_tasks(now())
     if operation_id:
-        update_operation(operation_id, "1/2 正在扫描 RSS")
-    log("info", "扫描全部: 1/2 开始扫描 RSS")
+        update_operation(operation_id, "正在扫描 RSS 源并写入候选")
+    log("info", "扫描全部: 开始扫描 RSS 源")
     scan_message = await scan_and_queue(settings)
     repaired_mikan = enqueue_missing_mikan_match_tasks(now())
     if not runtime_generation_alive(generation):
         return "运行数据已重置，本次扫描已中止"
     if operation_id:
-        update_operation(operation_id, "2/2 RSS 已写入，后续由任务链自动推进")
+        update_operation(operation_id, "RSS 已写入，后续由任务链自动推进")
     trigger_queue("cleanup", delay=0)
     message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续由任务链自动推进"
     log("info", f"扫描全部: RSS 完成，{message}")
