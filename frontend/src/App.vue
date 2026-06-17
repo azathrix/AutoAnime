@@ -488,7 +488,7 @@
                 </div>
                 <el-form-item label="追更自动同步"><el-switch v-model="settings.auto_sync_following" /></el-form-item>
                 <el-form-item label="NFO 输出目录"><el-input v-model="settings.nfo_output_root" placeholder="留空；同步后默认写入本地媒体库" /></el-form-item>
-                <el-form-item label="番剧目录模板"><el-input v-model="settings.series_dir_template" /></el-form-item>
+                <el-form-item label="作品目录模板"><el-input v-model="settings.series_dir_template" /></el-form-item>
                 <el-form-item label="季目录模板"><el-input v-model="settings.season_dir_template" /></el-form-item>
                 <el-form-item label="单集名模板"><el-input v-model="settings.episode_name_template" /></el-form-item>
               </el-tab-pane>
@@ -497,7 +497,9 @@
                   <div><span>数据库</span><strong>{{ diagnostics.db_path || '-' }}</strong></div>
                   <div><span>数据目录可写</span><strong>{{ diagnostics.data_dir_writable ? '是' : '否' }}</strong></div>
                   <div><span>数据库大小</span><strong>{{ diagnostics.db_size || 0 }} bytes</strong></div>
-                  <div><span>番剧 / 发布 / 云盘</span><strong>{{ diagnostics.tables?.series || 0 }} / {{ diagnostics.tables?.releases || 0 }} / {{ diagnostics.tables?.cloud_assets || 0 }}</strong></div>
+                  <div><span>作品 / 条目 / 发布</span><strong>{{ diagnostics.tables?.works || 0 }} / {{ diagnostics.tables?.entries || 0 }} / {{ diagnostics.tables?.releases || 0 }}</strong></div>
+                  <div><span>云盘 / 本地 / 同步规则</span><strong>{{ diagnostics.tables?.cloud_assets || 0 }} / {{ diagnostics.tables?.local_assets || 0 }} / {{ diagnostics.tables?.sync_rules || 0 }}</strong></div>
+                  <div><span>旧 series 表</span><strong>{{ diagnostics.tables?.legacy_series || 0 }}</strong></div>
                 </div>
                 <el-button :icon="Refresh" @click="reloadDiagnostics">刷新诊断</el-button>
               </el-tab-pane>

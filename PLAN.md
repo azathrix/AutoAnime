@@ -1267,6 +1267,10 @@ access_token + refresh_token
   - 本轮继续收口后，详情接口已不再返回兼容 `series` 字段
   - 前端交互函数已改为 `openEntry / saveCurrentEntry / toggleEntrySync / runEntryAction / deleteCurrentEntry`
   - 这一块已从“兼容过渡态”进入“entry-first 正式态”
+- 设置/诊断读模型已开始去 `series` 主语义：
+  - 设置页“番剧目录模板”已改成“作品目录模板”，与 `works -> entries` 模型一致
+  - 诊断页主统计已改成 `作品 / 条目 / 发布` 和 `云盘 / 本地 / 同步规则`
+  - `series` 只再作为 `legacy_series` 暂存展示，用来观察旧表残留规模
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 

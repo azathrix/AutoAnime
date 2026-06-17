@@ -1417,6 +1417,8 @@ def diagnostics() -> dict[str, Any]:
         result["tables"] = {table: table_count(conn, table) for table in tables}
         total_series = max(0, table_count(conn, "series"))
         result["hidden_series"] = max(0, total_series - table_count_visible_series(conn))
+        result["hidden_legacy_series"] = result["hidden_series"]
+        result["tables"]["legacy_series"] = result["tables"].get("series", 0)
         for key in ["rss_url", "library_root", "local_library_root", "auto_scan", "auto_sync_following"]:
             row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             result["settings_sample"][key] = row["value"] if row else None

@@ -1547,11 +1547,11 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         },
         {
             "key": "merge",
-            "name": "合并",
+            "name": "条目归并",
             "pending": merge_pending,
             "running": 0,
             "failed": 0,
-            "description": "相同 Bangumi ID 的重复条目",
+            "description": "处理同一 Bangumi 作品下的重复历史记录，逐步收敛到 works / entries 读模型",
         },
         {
             "key": "cloud_presence",
