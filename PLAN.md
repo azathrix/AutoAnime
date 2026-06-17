@@ -1304,6 +1304,9 @@ access_token + refresh_token
 - 同步与云盘资源登记的主链依赖已继续去 `series` 化：
   - `materialize_sync_tasks_for_entry()`、`upsert_cloud_asset*()` 已去掉仅用于存在性判断的 `series` 查询
   - 当前主链优先依赖 `entries / releases / cloud_assets / sync_tasks`
+- 下载提交与 PikPak 轮询链已继续去 `series` 过滤：
+  - `queue_release()`、`process_tasks()`、`poll_submitted_tasks()` 已改为优先使用 `entries.bangumi_id`
+  - `series` 相关逻辑目前主要收缩在历史兼容、Mikan 修补和少数旧关联路径
 
 ### P4: 修复自动入云盘语义
 

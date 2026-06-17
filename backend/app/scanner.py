@@ -1324,8 +1324,7 @@ def queue_release(release_id: int, settings: dict[str, str]) -> None:
         if not release:
             return
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (release["entry_id"],)).fetchone()
-        series = conn.execute("SELECT * FROM series WHERE id=?", (release["series_id"],)).fetchone()
-        if not series or not entry:
+        if not entry:
             return
         if not entry["bangumi_id"]:
             log("warn", f"云盘入库跳过: {entry['display_title']} - 缺少 Bangumi ID")
@@ -1800,10 +1799,10 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
             SELECT dt.*, r.magnet, r.torrent_url, r.title, r.episode_number
             FROM download_tasks dt
             JOIN releases r ON r.id = dt.release_id
-            JOIN series s ON s.id = dt.series_id
+            JOIN entries e ON e.id = dt.entry_id
             JOIN cloud_submissions cs ON cs.download_task_id=dt.id
             WHERE dt.status IN ('pending', 'failed')
-              AND s.bangumi_id != ''
+              AND e.bangumi_id != ''
               AND cs.provider='pikpak'
               AND cs.status IN ('pending', 'running', 'failed')
               AND (dt.retry_after='' OR dt.retry_after <= ?)
@@ -2002,13 +2001,13 @@ async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force:
             FROM cloud_poll_tasks cpt
             JOIN download_tasks dt ON dt.id=cpt.download_task_id
             JOIN releases r ON r.id=dt.release_id
-            JOIN series s ON s.id=dt.series_id
+            JOIN entries e ON e.id=dt.entry_id
             JOIN cloud_submissions cs ON cs.download_task_id=dt.id
             WHERE cpt.status IN ('pending', 'failed')
               AND (cpt.retry_after='' OR cpt.retry_after <= ?)
               AND dt.status IN ('submitted', 'running')
               AND (dt.pikpak_task_id != '' OR dt.pikpak_file_id != '')
-              AND s.bangumi_id != ''
+              AND e.bangumi_id != ''
               AND cs.provider='pikpak'
               AND cs.status IN ('submitted', 'running')
             ORDER BY cpt.id ASC
