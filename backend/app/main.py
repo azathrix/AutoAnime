@@ -1623,6 +1623,27 @@ async def api_delete_series(series_id: int) -> dict[str, str]:
     return {"status": "completed", "message": "已隐藏误识别番剧，关联记录已保留"}
 
 
+@app.delete("/api/library/{entry_id}")
+async def api_delete_library_entry(entry_id: int) -> dict[str, str]:
+    with connect() as conn:
+        entry = conn.execute(
+            "SELECT display_title, domain_kind FROM entries WHERE id=?",
+            (entry_id,),
+        ).fetchone()
+        if not entry:
+            return {"status": "not_found", "message": "番剧不存在"}
+        if entry["domain_kind"] != "library":
+            return {"status": "invalid_domain", "message": "该条目不属于番剧库"}
+        title = entry["display_title"]
+        ts = now()
+        conn.execute(
+            "UPDATE entries SET hidden=1, updated_at=? WHERE id=?",
+            (ts, entry_id),
+        )
+    log("warn", f"已隐藏番剧库条目: {title}")
+    return {"status": "completed", "message": "已隐藏番剧库条目，关联记录已保留"}
+
+
 @app.post("/api/scan")
 async def api_scan() -> dict[str, str]:
     with connect() as conn:
@@ -1821,6 +1842,35 @@ async def api_sync_series(series_id: int) -> dict[str, str]:
 @app.post("/api/series/{series_id}/sync/cancel")
 async def api_cancel_sync_series(series_id: int) -> dict[str, str]:
     count, message = cancel_sync_for_series(series_id)
+    return {"status": "completed", "count": str(count), "message": message}
+
+
+@app.post("/api/library/{entry_id}/metadata")
+async def api_refresh_library_metadata(entry_id: int) -> dict[str, str]:
+    settings = get_settings()
+    asyncio.create_task(refresh_entry_metadata(entry_id, settings.get("rss_proxy", "")))
+    return {"status": "started"}
+
+
+@app.post("/api/library/{entry_id}/nfo")
+async def api_generate_library_nfo(entry_id: int) -> dict[str, str]:
+    generate_nfo_for_entry(entry_id, get_settings())
+    return {"status": "generated"}
+
+
+@app.post("/api/library/{entry_id}/sync")
+async def api_sync_library_entry(entry_id: int) -> dict[str, str]:
+    settings = get_settings()
+    count, message = queue_sync_for_series(entry_id, settings)
+    if count > 0:
+        trigger_queue("sync", delay=0)
+        return {"status": "queued", "count": str(count), "message": message}
+    return {"status": "completed", "count": "0", "message": message}
+
+
+@app.post("/api/library/{entry_id}/sync/cancel")
+async def api_cancel_sync_library_entry(entry_id: int) -> dict[str, str]:
+    count, message = cancel_sync_for_series(entry_id)
     return {"status": "completed", "count": str(count), "message": message}
 
 

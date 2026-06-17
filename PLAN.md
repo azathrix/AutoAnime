@@ -1035,10 +1035,17 @@ access_token + refresh_token
 - 已新增番剧库域专属详情/保存 API：
   - `GET /api/library/{entry_id}`
   - `PUT /api/library/{entry_id}`
+- 已新增番剧库域专属动作 API：
+  - `DELETE /api/library/{entry_id}`
+  - `POST /api/library/{entry_id}/metadata`
+  - `POST /api/library/{entry_id}/nfo`
+  - `POST /api/library/{entry_id}/sync`
+  - `POST /api/library/{entry_id}/sync/cancel`
 - 前端详情抽屉已按域分流：
   - 新番域继续使用 `/api/series/{id}`
   - 番剧库域改走 `/api/library/{id}`
   - 番剧库保存不再通过新番兼容接口绕行
+  - 番剧库的元数据、NFO、同步、隐藏也已改走 `/api/library/*`
 
 后续继续：
 
