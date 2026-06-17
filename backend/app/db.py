@@ -351,6 +351,20 @@ def init_db() -> None:
                 UNIQUE(cloud_asset_id, sync_direction)
             );
 
+            CREATE TABLE IF NOT EXISTS nfo_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                local_asset_id INTEGER NOT NULL UNIQUE,
+                release_id INTEGER NOT NULL,
+                series_id INTEGER NOT NULL,
+                entry_id INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                retry_after TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS series_state_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 series_id INTEGER NOT NULL UNIQUE,
@@ -822,6 +836,23 @@ def migrate(conn: sqlite3.Connection) -> None:
         }
         if "entry_id" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN entry_id INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nfo_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_asset_id INTEGER NOT NULL UNIQUE,
+            release_id INTEGER NOT NULL,
+            series_id INTEGER NOT NULL,
+            entry_id INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            retry_after TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     merge_duplicate_series(conn)
     ensure_scheduled_jobs(conn)
 
@@ -840,6 +871,7 @@ def ensure_scheduled_jobs(conn: sqlite3.Connection) -> None:
         ("cloud_asset_dispatch", "queue_dispatch", 0, 10, 1),
         ("sync_plan_dispatch", "queue_dispatch", 0, 10, 1),
         ("sync_dispatch", "queue_dispatch", 0, 10, 1),
+        ("nfo_dispatch", "queue_dispatch", 0, 10, 1),
     ]
     for job_key, job_type, interval_minutes, debounce_seconds, max_concurrency in jobs:
         conn.execute(

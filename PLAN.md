@@ -927,6 +927,19 @@ access_token + refresh_token
 
 状态：未开始。现有 `mikan_match_tasks`、`metadata_tasks`、`cloud_poll_tasks` 已形成基础，但还不够细。
 
+本阶段新增完成：
+
+- 已正式补出 `nfo_tasks`：
+  - 本地同步完成后不再直接在同步执行器里顺手生成 NFO
+  - 改为写入 `nfo_tasks`
+  - 由独立 `nfo` 队列处理
+- 控制台已补 `NFO` 队列摘要与详情。
+- 这一步是任务细拆的第一块落地，后续可以按同样模式继续拆：
+  - `cloud_presence_tasks`
+  - `download_enqueue_tasks`
+  - `local_presence_tasks`
+  - `cleanup_tasks`
+
 ### P1.5: 新番域 / 番剧库域分离
 
 目标：把“追更”和“补番/归档”从上层语义上拆开，避免后续功能继续挤在一张表和一个列表里。

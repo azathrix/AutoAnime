@@ -10,7 +10,7 @@ import httpx
 
 from .db import connect, log, now
 from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
-from .metadata import generate_nfo_for_entry, generate_nfo_for_series
+from .metadata import generate_nfo_for_entry
 from .parser import normalize_title_key, parse_episode
 from .pikpak_service import get_cloud_download_url, list_cloud_files
 from . import rclone_service
@@ -18,6 +18,7 @@ from . import rclone_service
 cloud_asset_tasks_lock = asyncio.Lock()
 sync_tasks_lock = asyncio.Lock()
 state_tasks_lock = asyncio.Lock()
+nfo_tasks_lock = asyncio.Lock()
 
 
 def task_retry_after_minutes(minutes: int) -> str:
@@ -36,6 +37,25 @@ def task_retry_after(settings: dict[str, str], attempts: int) -> str:
     default_minutes = max(5, 5 * max(1, attempts))
     minutes = min(180, default_minutes)
     return task_retry_after_minutes(minutes)
+
+
+def enqueue_nfo_task(conn, local_asset_id: int, release_id: int, series_id: int, entry_id: int, ts: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO nfo_tasks
+          (local_asset_id, release_id, series_id, entry_id, status, retry_after, last_error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', '', '', ?, ?)
+        ON CONFLICT(local_asset_id) DO UPDATE SET
+          release_id=excluded.release_id,
+          series_id=excluded.series_id,
+          entry_id=excluded.entry_id,
+          status=CASE WHEN nfo_tasks.status='completed' THEN nfo_tasks.status ELSE 'pending' END,
+          retry_after='',
+          last_error='',
+          updated_at=excluded.updated_at
+        """,
+        (local_asset_id, release_id, series_id, entry_id, ts, ts),
+    )
 
 
 def enqueue_cloud_asset_task(conn, download_task_id: int, ts: str) -> None:
@@ -1086,6 +1106,12 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                         """,
                         (normalized_target, ts, task["id"]),
                     )
+                    local_asset = conn.execute(
+                        "SELECT id FROM local_assets WHERE cloud_asset_id=?",
+                        (task["cloud_asset_id"],),
+                    ).fetchone()
+                    if local_asset:
+                        enqueue_nfo_task(conn, int(local_asset["id"]), int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), ts)
                 return True
 
             await download_cloud_file_to_local(
@@ -1134,14 +1160,12 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
                 """,
                 (normalized_target, ts, task["id"]),
             )
-        nfo_settings = dict(settings)
-        nfo_settings["nfo_output_root"] = settings.get("local_library_root") or "/media/pikpak-anime"
-        generate_nfo_for_entry(task["entry_id"], nfo_settings)
-        with connect() as conn:
-            conn.execute(
-                "UPDATE local_assets SET nfo_status='generated', updated_at=? WHERE cloud_asset_id=?",
-                (now(), task["cloud_asset_id"]),
-            )
+            local_asset = conn.execute(
+                "SELECT id FROM local_assets WHERE cloud_asset_id=?",
+                (task["cloud_asset_id"],),
+            ).fetchone()
+            if local_asset:
+                enqueue_nfo_task(conn, int(local_asset["id"]), int(task["release_id"]), int(task["series_id"]), int(task["entry_id"]), ts)
         log("info", f"已同步到本地: {task['cloud_name']}")
         return True
 
@@ -1152,6 +1176,81 @@ async def _process_sync_tasks(settings: dict[str, str], limit: int = 5) -> None:
             return await handle(task)
 
     await asyncio.gather(*(limited(task) for task in rows))
+
+
+async def process_nfo_tasks(settings: dict[str, str], limit: int = 10) -> tuple[int, int]:
+    async with nfo_tasks_lock:
+        return await _process_nfo_tasks(settings, limit)
+
+
+async def _process_nfo_tasks(settings: dict[str, str], limit: int = 10) -> tuple[int, int]:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE nfo_tasks
+            SET status='pending', last_error='上次 NFO 处理中断，已自动放回待处理', updated_at=?
+            WHERE status='running' AND updated_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
+        rows = conn.execute(
+            """
+            SELECT nt.*, la.local_path
+            FROM nfo_tasks nt
+            JOIN local_assets la ON la.id=nt.local_asset_id
+            WHERE nt.status IN ('pending', 'failed')
+              AND (nt.retry_after='' OR nt.retry_after <= ?)
+              AND la.status='synced'
+            ORDER BY nt.id ASC
+            LIMIT ?
+            """,
+            (now(), limit),
+        ).fetchall()
+
+    completed = 0
+    failed = 0
+    for task in rows:
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE nfo_tasks
+                SET status='running', attempts=attempts+1, updated_at=?
+                WHERE id=?
+                """,
+                (now(), task["id"]),
+            )
+        try:
+            nfo_settings = dict(settings)
+            nfo_settings["nfo_output_root"] = settings.get("local_library_root") or "/media/pikpak-anime"
+            generate_nfo_for_entry(int(task["entry_id"]), nfo_settings)
+            with connect() as conn:
+                ts = now()
+                conn.execute(
+                    "UPDATE local_assets SET nfo_status='generated', updated_at=? WHERE id=?",
+                    (ts, task["local_asset_id"]),
+                )
+                conn.execute(
+                    """
+                    UPDATE nfo_tasks
+                    SET status='completed', retry_after='', last_error='', updated_at=?
+                    WHERE id=?
+                    """,
+                    (ts, task["id"]),
+                )
+            completed += 1
+        except Exception as exc:
+            failed += 1
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE nfo_tasks
+                    SET status='failed', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_retry_after(settings, int(task["attempts"] or 0) + 1), str(exc)[:2000], now(), task["id"]),
+                )
+            log("error", f"NFO 生成失败: {task['local_path']} - {exc}")
+    return completed, failed
 
 
 def cancel_sync_for_series(series_id: int) -> tuple[int, str]:
