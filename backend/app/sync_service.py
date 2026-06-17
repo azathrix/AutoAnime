@@ -381,7 +381,7 @@ def requeue_sync_tasks_for_series(series_id: int, settings: dict[str, str]) -> i
         ).fetchall()
         if not assets:
             return 0
-    queued, _ = queue_sync_for_series(entry_id, settings)
+    queued, _ = materialize_sync_tasks_for_entry(entry_id, settings)
     return queued
 
 
@@ -410,17 +410,7 @@ def normalize_local_target_path(target_path: str, source_name: str = "") -> str:
     return str(normalized)
 
 
-def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int, str]:
-    entry_id = series_id
-    with connect() as conn:
-        entry_row = conn.execute("SELECT id FROM entries WHERE id=?", (series_id,)).fetchone()
-        if not entry_row:
-            mapped = conn.execute(
-                "SELECT entry_id FROM releases WHERE series_id=? AND entry_id != 0 ORDER BY id ASC LIMIT 1",
-                (series_id,),
-            ).fetchone()
-            if mapped:
-                entry_id = int(mapped["entry_id"])
+def materialize_sync_tasks_for_entry(entry_id: int, settings: dict[str, str]) -> tuple[int, str]:
     ensure_sync_rule(entry_id, settings, enabled=True)
     with connect() as conn:
         assets = conn.execute(
@@ -490,35 +480,23 @@ def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int
             ).fetchone()
             if task_row and task_row["status"] != "synced":
                 queued += 1
-    if queued > 0:
-        request_queue_trigger("sync")
-    return queued, f"已加入本地同步队列: {queued} 条"
+    return queued, f"已生成本地同步任务: {queued} 条"
 
 
-def reconcile_sync_intents(settings: dict[str, str]) -> tuple[int, int]:
-    auto_sync = settings.get("auto_sync_following", "true").lower() == "true"
+def queue_sync_for_series(series_id: int, settings: dict[str, str]) -> tuple[int, str]:
+    entry_id = series_id
     with connect() as conn:
-        entry_ids = [
-            int(row["entry_id"])
-            for row in conn.execute(
-                """
-                SELECT DISTINCT ca.entry_id
-                FROM cloud_assets ca
-                JOIN entries e ON e.id=ca.entry_id
-                LEFT JOIN sync_rules sr ON sr.entry_id=ca.entry_id
-                WHERE ca.status='available'
-                  AND COALESCE(e.hidden, 0)=0
-                  AND e.bangumi_id != ''
-                  AND (COALESCE(sr.sync_enabled, 0)=1 OR ?=1)
-                """,
-                (1 if auto_sync else 0,),
-            ).fetchall()
-        ]
-    queued_total = 0
-    for entry_id in entry_ids:
-        queued, _ = queue_sync_for_series(entry_id, settings)
-        queued_total += queued
-    return len(entry_ids), queued_total
+        entry_row = conn.execute("SELECT id FROM entries WHERE id=?", (series_id,)).fetchone()
+        if not entry_row:
+            mapped = conn.execute(
+                "SELECT entry_id FROM releases WHERE series_id=? AND entry_id != 0 ORDER BY id ASC LIMIT 1",
+                (series_id,),
+            ).fetchone()
+            if mapped:
+                entry_id = int(mapped["entry_id"])
+    ensure_sync_rule(entry_id, settings, enabled=True)
+    enqueue_sync_plan_tasks([entry_id], now())
+    return 1, "已加入同步计划；云盘资源入库后会自动生成本地同步任务"
 
 
 async def process_sync_plan_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
@@ -558,7 +536,7 @@ async def _process_sync_plan_tasks(settings: dict[str, str], limit: int = 20) ->
                 (now(), row["id"]),
             )
         try:
-            queued, _ = queue_sync_for_series(int(row["entry_id"]), settings)
+            queued, _ = materialize_sync_tasks_for_entry(int(row["entry_id"]), settings)
             with connect() as conn:
                 conn.execute(
                     """
@@ -569,6 +547,8 @@ async def _process_sync_plan_tasks(settings: dict[str, str], limit: int = 20) ->
                     (f"同步计划已调和，新增同步任务 {queued} 个", now(), row["id"]),
                 )
             completed += 1
+            if queued > 0:
+                request_queue_trigger("sync")
         except Exception as exc:
             failed += 1
             with connect() as conn:

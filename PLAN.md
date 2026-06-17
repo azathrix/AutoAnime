@@ -1281,6 +1281,10 @@ access_token + refresh_token
   - 现在统一改为触发对应正式队列，由任务链自动继续推进
 - 控制台首页顶部“待处理”指标已改为直接读取 `console_overview.pending_task_count`
   - 不再继续依赖旧的兼容聚合块单独再算一份问题数
+- `sync_service` 内部同步职责已继续拆分：
+  - `queue_sync_for_series()` 现在只负责挂 `sync_plan_tasks`
+  - 真正生成 `sync_tasks` 改由 `sync_plan` worker 内部的物化步骤负责
+  - 同步计划与本地同步执行不再混在一个 helper 里
 
 ### P4: 修复自动入云盘语义
 
