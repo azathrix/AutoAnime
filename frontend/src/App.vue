@@ -488,7 +488,7 @@
                 </div>
                 <el-form-item label="追更自动同步"><el-switch v-model="settings.auto_sync_following" /></el-form-item>
                 <el-form-item label="NFO 输出目录"><el-input v-model="settings.nfo_output_root" placeholder="留空；同步后默认写入本地媒体库" /></el-form-item>
-                <el-form-item label="作品目录模板"><el-input v-model="settings.series_dir_template" /></el-form-item>
+                <el-form-item label="作品目录模板"><el-input v-model="settings.work_dir_template" /></el-form-item>
                 <el-form-item label="季目录模板"><el-input v-model="settings.season_dir_template" /></el-form-item>
                 <el-form-item label="单集名模板"><el-input v-model="settings.episode_name_template" /></el-form-item>
               </el-tab-pane>

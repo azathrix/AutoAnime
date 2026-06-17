@@ -69,12 +69,12 @@ class SettingsPayload(BaseModel):
     local_library_root: str = "/media/pikpak-anime"
     auto_sync_following: bool = True
     nfo_output_root: str = ""
-    series_dir_template: str = ""
+    work_dir_template: str = ""
     season_dir_template: str = ""
     episode_name_template: str = ""
 
 
-class SeriesPayload(BaseModel):
+class EntryPayload(BaseModel):
     title_cn: str = ""
     bangumi_id: str = ""
     tmdb_id: str = ""
@@ -463,6 +463,7 @@ def settings_response() -> dict[str, Any]:
     result["resolution_priority"] = split_setting(settings.get("resolution_priority", ""))
     result["language_priority"] = split_setting(settings.get("language_priority", ""))
     result["secondary_language_priority"] = split_setting(settings.get("secondary_language_priority", ""))
+    result["work_dir_template"] = settings.get("series_dir_template", "")
     return result
 
 
@@ -522,7 +523,7 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
     }
 
 
-def save_entry_payload(entry_id: int, payload: SeriesPayload, *, expected_domain: str | None = None) -> dict[str, Any]:
+def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain: str | None = None) -> dict[str, Any]:
     with connect() as conn:
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
         if not entry:
@@ -2345,7 +2346,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "local_library_root": payload.local_library_root.strip() or "/media/pikpak-anime",
             "auto_sync_following": str(payload.auto_sync_following).lower(),
             "nfo_output_root": payload.nfo_output_root.strip(),
-            "series_dir_template": payload.series_dir_template.strip(),
+            "series_dir_template": payload.work_dir_template.strip(),
             "season_dir_template": payload.season_dir_template.strip(),
             "episode_name_template": payload.episode_name_template.strip(),
         }
@@ -2385,7 +2386,7 @@ async def api_seasonal_entry(entry_id: int) -> dict[str, Any]:
 
 
 @app.put("/api/seasonal/{entry_id}")
-async def api_update_seasonal_entry(entry_id: int, payload: SeriesPayload) -> dict[str, Any]:
+async def api_update_seasonal_entry(entry_id: int, payload: EntryPayload) -> dict[str, Any]:
     return save_entry_payload(entry_id, payload, expected_domain="seasonal")
 
 
@@ -2395,7 +2396,7 @@ async def api_library_entry(entry_id: int) -> dict[str, Any]:
 
 
 @app.put("/api/library/{entry_id}")
-async def api_update_library_entry(entry_id: int, payload: SeriesPayload) -> dict[str, Any]:
+async def api_update_library_entry(entry_id: int, payload: EntryPayload) -> dict[str, Any]:
     return save_entry_payload(entry_id, payload, expected_domain="library")
 
 

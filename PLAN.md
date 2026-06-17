@@ -1271,6 +1271,13 @@ access_token + refresh_token
   - 设置页“番剧目录模板”已改成“作品目录模板”，与 `works -> entries` 模型一致
   - 诊断页主统计已改成 `作品 / 条目 / 发布` 和 `云盘 / 本地 / 同步规则`
   - `series` 只再作为 `legacy_series` 暂存展示，用来观察旧表残留规模
+- 接口与设置 payload 命名已继续收口：
+  - `SeriesPayload` 已改为 `EntryPayload`
+  - 设置接口对外已补 `work_dir_template`，前端不再直接使用 `series_dir_template`
+  - 内部仍保留 `series_dir_template` 作为底层设置键，仅做兼容映射，不再作为主界面语义
+- 这一阶段结束后，用户可见主路径中的 `series` 术语已基本退到兼容层：
+  - 详情抽屉、首页、番剧库、设置页、诊断页、控制台主视图都以 `works / entries` 为主语义
+  - `series` 现在主要剩在底层兼容表、旧数据归并逻辑和少量内部 helper 中
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 
