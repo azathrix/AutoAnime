@@ -8,7 +8,8 @@ from typing import Any
 import httpx
 
 from .config import DATA_DIR
-from .db import connect, log, merge_duplicate_series, now
+from .database import connect
+from .db import log, merge_duplicate_series, now
 from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
 from .parser import clean_name
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 QueueTrigger = Callable[[str, float | None], None]
@@ -16,4 +17,9 @@ def request_queue_trigger(name: str, delay: float | None = None) -> None:
     callback = _trigger
     if not callback or not name:
         return
-    callback(name, delay)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        callback(name, delay)
+        return
+    loop.call_soon(callback, name, delay)

@@ -9,7 +9,8 @@ from urllib.parse import urljoin
 import httpx
 import feedparser
 
-from .db import connect, hide_orphan_series, log, merge_duplicate_series, now
+from .database import connect
+from .db import hide_orphan_series, log, merge_duplicate_series, now
 from .queue_bridge import request_queue_trigger
 from .library import bool_setting, parse_entry_labels, render_episode_name, target_dir
 from .metadata import fetch_bangumi_metadata
@@ -2185,19 +2186,26 @@ async def poll_submitted_tasks(settings: dict[str, str], limit: int = 20, force:
     return completed, failed
 
 
-async def scan_and_queue(settings: dict[str, str]) -> str:
+async def scan_and_queue(settings: dict[str, str], progress_callback=None) -> str:
     if not settings.get("rss_url"):
         log("warn", "未配置 Mikan RSS")
         return "未配置 Mikan RSS"
     try:
+        if progress_callback:
+            progress_callback("正在请求 RSS 源")
         items = await fetch_entries(settings)
     except Exception as exc:
         log("error", f"RSS 扫描失败: {exc}")
         return f"RSS 扫描失败: {exc}"
 
     candidate_count = 0
+    total = len(items)
+    if progress_callback:
+        progress_callback(f"RSS 获取完成，共 {total} 条，开始写入候选")
     for item in items:
         upsert_rss_candidate(item)
         candidate_count += 1
+        if progress_callback:
+            progress_callback(f"正在写入 RSS 候选 {candidate_count}/{total}")
     log("info", f"RSS 扫描完成: {len(items)} 条发布，写入候选 {candidate_count} 条")
     return f"RSS {len(items)} 条，写入候选 {candidate_count} 条"

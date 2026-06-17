@@ -6,6 +6,7 @@ from collections import deque
 from typing import Any
 
 from .config import DATA_DIR, DB_PATH, DEFAULT_SETTINGS
+from .database import connect, initialize_database
 
 
 LOG_PATH = DATA_DIR / "autoanime.log"
@@ -15,14 +16,296 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def ensure_unique_index(conn: sqlite3.Connection, table: str, columns: list[str], index_name: str) -> None:
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    if not table_exists:
+        return
+    existing_columns = {
+        row["name"]
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if "id" not in existing_columns or any(column not in existing_columns for column in columns):
+        return
+    column_sql = ", ".join(columns)
+    null_guard = " AND ".join(f"{column} IS NOT NULL" for column in columns)
+    conn.execute(
+        f"""
+        DELETE FROM {table}
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM {table}
+            WHERE {null_guard}
+            GROUP BY {column_sql}
+        )
+        """
+    )
+    conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table} ({column_sql})")
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    if not table_exists:
+        return
+    columns = {
+        row["name"]
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS pipelines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            domain_kind TEXT NOT NULL DEFAULT 'seasonal',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS pipeline_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pipeline_id INTEGER NOT NULL,
+            step_key TEXT NOT NULL,
+            processor_key TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            max_concurrency INTEGER NOT NULL DEFAULT 1,
+            debounce_seconds INTEGER NOT NULL DEFAULT 10,
+            retry_policy_json TEXT NOT NULL DEFAULT '',
+            config_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(pipeline_id, step_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS pipeline_transitions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pipeline_id INTEGER NOT NULL,
+            from_step_key TEXT NOT NULL,
+            result_status TEXT NOT NULL,
+            to_step_key TEXT NOT NULL DEFAULT '',
+            condition_json TEXT NOT NULL DEFAULT '',
+            payload_map_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(pipeline_id, from_step_key, result_status, to_step_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS pipeline_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pipeline_id INTEGER NOT NULL,
+            trigger_source TEXT NOT NULL DEFAULT 'manual',
+            status TEXT NOT NULL DEFAULT 'running',
+            progress INTEGER NOT NULL DEFAULT 0,
+            message TEXT NOT NULL DEFAULT '',
+            stats_json TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS processor_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pipeline_id INTEGER NOT NULL DEFAULT 0,
+            run_id INTEGER NOT NULL DEFAULT 0,
+            step_id INTEGER NOT NULL DEFAULT 0,
+            parent_task_id INTEGER NOT NULL DEFAULT 0,
+            processor_key TEXT NOT NULL,
+            domain_kind TEXT NOT NULL DEFAULT '',
+            subject_type TEXT NOT NULL DEFAULT '',
+            subject_id INTEGER NOT NULL DEFAULT 0,
+            dedupe_key TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '',
+            result_json TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            retry_after TEXT NOT NULL DEFAULT '',
+            progress INTEGER NOT NULL DEFAULT 0,
+            progress_text TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            locked_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS processor_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL DEFAULT 0,
+            pipeline_id INTEGER NOT NULL DEFAULT 0,
+            run_id INTEGER NOT NULL DEFAULT 0,
+            processor_key TEXT NOT NULL DEFAULT '',
+            level TEXT NOT NULL DEFAULT 'info',
+            event_key TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            data_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pipeline_steps_pipeline_order
+            ON pipeline_steps(pipeline_id, sort_order);
+        CREATE INDEX IF NOT EXISTS idx_pipeline_transitions_lookup
+            ON pipeline_transitions(pipeline_id, from_step_key, result_status);
+        CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status
+            ON pipeline_runs(pipeline_id, status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_processor_tasks_status
+            ON processor_tasks(status, retry_after, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_processor_tasks_pipeline_status
+            ON processor_tasks(pipeline_id, status);
+        CREATE INDEX IF NOT EXISTS idx_processor_tasks_run
+            ON processor_tasks(run_id);
+        CREATE INDEX IF NOT EXISTS idx_processor_tasks_processor
+            ON processor_tasks(processor_key, status, retry_after);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_processor_tasks_dedupe
+            ON processor_tasks(dedupe_key)
+            WHERE dedupe_key != '';
+        CREATE INDEX IF NOT EXISTS idx_processor_events_task
+            ON processor_events(task_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_processor_events_run
+            ON processor_events(run_id, created_at);
+        """
+    )
+    for column, ddl in {
+        "parent_task_id": "INTEGER NOT NULL DEFAULT 0",
+        "dedupe_key": "TEXT NOT NULL DEFAULT ''",
+        "result_json": "TEXT NOT NULL DEFAULT ''",
+        "locked_at": "TEXT NOT NULL DEFAULT ''",
+    }.items():
+        ensure_column(conn, "processor_tasks", column, ddl)
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_processor_tasks_dedupe
+        ON processor_tasks(dedupe_key)
+        WHERE dedupe_key != ''
+        """
+    )
+    ts = now()
+    pipelines = [
+        ("seasonal_mikan_tracking", "Mikan 新番追更", "seasonal"),
+        ("library_backfill", "番剧库补番", "library"),
+        ("cloud_import", "云盘导入", "cloud_import"),
+    ]
+    for key, name, domain_kind in pipelines:
+        conn.execute(
+            """
+            INSERT INTO pipelines (key, name, domain_kind, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              name=excluded.name,
+              domain_kind=excluded.domain_kind,
+              updated_at=excluded.updated_at
+            """,
+            (key, name, domain_kind, ts, ts),
+        )
+    step_map = {
+        "seasonal_mikan_tracking": [
+            ("rss_fetch", "rss_fetch"),
+            ("rss_candidate_persist", "rss_candidate_persist"),
+            ("mikan_match", "mikan_match"),
+            ("bangumi_metadata", "metadata"),
+            ("seasonal_merge", "seasonal_merge"),
+            ("season_backfill", "backfill"),
+            ("release_selection", "selection"),
+            ("cloud_presence", "cloud_presence"),
+            ("cloud_submit", "download"),
+            ("cloud_poll", "cloud_poll"),
+            ("cloud_asset_register", "cloud_asset"),
+            ("sync_plan", "sync_plan"),
+            ("local_sync", "sync"),
+            ("nfo_generate", "nfo"),
+            ("local_presence", "local_presence"),
+        ],
+        "library_backfill": [
+            ("source_search", "source_search"),
+            ("candidate_persist", "rss_candidate_persist"),
+            ("bangumi_metadata", "metadata"),
+            ("library_merge", "library_merge"),
+            ("release_selection", "selection"),
+            ("cloud_presence", "cloud_presence"),
+            ("cloud_submit", "download"),
+            ("cloud_poll", "cloud_poll"),
+            ("cloud_asset_register", "cloud_asset"),
+            ("sync_plan", "sync_plan"),
+            ("local_sync", "sync"),
+            ("nfo_generate", "nfo"),
+        ],
+        "cloud_import": [
+            ("cloud_scan", "cloud_scan"),
+            ("cloud_identity_match", "cloud_identity_match"),
+            ("bangumi_metadata", "metadata"),
+            ("library_merge", "library_merge"),
+            ("cloud_asset_register", "cloud_asset"),
+            ("sync_plan", "sync_plan"),
+        ],
+    }
+    for pipeline_key, steps in step_map.items():
+        pipeline = conn.execute("SELECT id FROM pipelines WHERE key=?", (pipeline_key,)).fetchone()
+        if not pipeline:
+            continue
+        pipeline_id = int(pipeline["id"])
+        conn.execute("DELETE FROM pipeline_transitions WHERE pipeline_id=?", (pipeline_id,))
+        for order, (step_key, processor_key) in enumerate(steps, start=1):
+            conn.execute(
+                """
+                INSERT INTO pipeline_steps
+                  (pipeline_id, step_key, processor_key, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(pipeline_id, step_key) DO UPDATE SET
+                  processor_key=excluded.processor_key,
+                  sort_order=excluded.sort_order,
+                  updated_at=excluded.updated_at
+                """,
+                (pipeline_id, step_key, processor_key, order, ts, ts),
+            )
+            if order < len(steps):
+                next_step = steps[order][0]
+                conn.execute(
+                    """
+                    INSERT INTO pipeline_transitions
+                      (pipeline_id, from_step_key, result_status, to_step_key, created_at, updated_at)
+                    VALUES (?, ?, 'success', ?, ?, ?)
+                    ON CONFLICT(pipeline_id, from_step_key, result_status, to_step_key) DO UPDATE SET
+                      updated_at=excluded.updated_at
+                    """,
+                    (pipeline_id, step_key, next_step, ts, ts),
+                )
+    task_tables = [
+        "mikan_match_tasks",
+        "metadata_tasks",
+        "selection_tasks",
+        "backfill_tasks",
+        "cloud_presence_tasks",
+        "download_enqueue_tasks",
+        "download_tasks",
+        "cloud_poll_tasks",
+        "cloud_asset_tasks",
+        "sync_plan_tasks",
+        "sync_tasks",
+        "nfo_tasks",
+        "local_presence_tasks",
+        "cleanup_tasks",
+    ]
+    for table in task_tables:
+        ensure_column(conn, table, "pipeline_id", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, table, "run_id", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, table, "processor_key", "TEXT NOT NULL DEFAULT ''")
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_pipeline_status ON {table}(pipeline_id, status)")
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_status_retry ON {table}(status, retry_after, updated_at)")
 
 
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    initialize_database()
     with connect() as conn:
         conn.executescript(
             """
@@ -478,6 +761,7 @@ def init_db() -> None:
             WHERE provider_file_id != '';
             """
         )
+        ensure_pipeline_runtime(conn)
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
@@ -970,6 +1254,21 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    ensure_unique_index(conn, "metadata_tasks", ["candidate_id"], "idx_metadata_tasks_candidate_unique")
+    ensure_unique_index(conn, "mikan_match_tasks", ["candidate_id"], "idx_mikan_match_tasks_candidate_unique")
+    ensure_unique_index(conn, "selection_tasks", ["release_id"], "idx_selection_tasks_release_unique")
+    ensure_unique_index(conn, "backfill_tasks", ["entry_id"], "idx_backfill_tasks_entry_unique")
+    ensure_unique_index(conn, "cloud_presence_tasks", ["release_id"], "idx_cloud_presence_tasks_release_unique")
+    ensure_unique_index(conn, "download_enqueue_tasks", ["release_id"], "idx_download_enqueue_tasks_release_unique")
+    ensure_unique_index(conn, "download_tasks", ["release_id"], "idx_download_tasks_release_unique")
+    ensure_unique_index(conn, "cloud_poll_tasks", ["download_task_id"], "idx_cloud_poll_tasks_download_unique")
+    ensure_unique_index(conn, "cloud_asset_tasks", ["download_task_id"], "idx_cloud_asset_tasks_download_unique")
+    ensure_unique_index(conn, "sync_plan_tasks", ["entry_id"], "idx_sync_plan_tasks_entry_unique")
+    ensure_unique_index(conn, "sync_tasks", ["cloud_asset_id", "sync_direction"], "idx_sync_tasks_asset_direction_unique")
+    ensure_unique_index(conn, "nfo_tasks", ["local_asset_id"], "idx_nfo_tasks_local_asset_unique")
+    ensure_unique_index(conn, "local_presence_tasks", ["local_asset_id"], "idx_local_presence_tasks_local_asset_unique")
+    ensure_unique_index(conn, "cleanup_tasks", ["task_scope"], "idx_cleanup_tasks_scope_unique")
+    ensure_pipeline_runtime(conn)
     merge_duplicate_series(conn)
     ensure_scheduled_jobs(conn)
 
@@ -1163,11 +1462,14 @@ def log(level: str, message: str) -> None:
             output.write(line)
     except OSError:
         pass
-    with connect() as conn:
-        conn.execute(
-            "INSERT INTO logs (level, message, created_at) VALUES (?, ?, ?)",
-            (level, message[:2000], now()),
-        )
+    try:
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO logs (level, message, created_at) VALUES (?, ?, ?)",
+                (level, message[:2000], now()),
+            )
+    except sqlite3.OperationalError:
+        pass
 
 
 def read_server_logs(limit: int = 200) -> list[str]:
@@ -1459,9 +1761,22 @@ def clear_runtime_data() -> None:
             "series",
             "operations",
             "logs",
+            "scheduled_job_runs",
         ]:
             conn.execute(f"DELETE FROM {table}")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','cloud_submissions','download_tasks','backfill_tasks','selection_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series','operations','logs')")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','cloud_submissions','download_tasks','backfill_tasks','selection_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series','operations','logs','scheduled_job_runs')")
+        conn.execute(
+            """
+            UPDATE scheduled_jobs
+            SET last_run_at='',
+                next_run_at='',
+                last_status='idle',
+                last_error='',
+                updated_at=?
+            """
+            ,
+            (next_generation,),
+        )
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('runtime_generation', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

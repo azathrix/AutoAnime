@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,13 +11,17 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import APP_DIR
-from .db import LOG_PATH, cleanup_operations, clear_runtime_data, connect, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, run_cleanup_tasks, save_settings, start_operation, start_scheduled_job_run, update_operation
+from .database import connect
+from .db import LOG_PATH, cleanup_operations, clear_runtime_data, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, run_cleanup_tasks, save_settings, start_operation, start_scheduled_job_run, update_operation
 from .queue_bridge import register_queue_trigger
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
+from .pipeline_orchestrator import run_ready_tasks, start_pipeline
+from .pipeline_runtime import finish_pipeline_run, pipeline_overview, start_pipeline_run, update_pipeline_run
+from .processors import register_builtin_processors
 from .scanner import enqueue_backfill_task, enqueue_missing_mikan_match_tasks, enqueue_selection_task, language_tokens, mark_selected_releases, poll_submitted_tasks, priority_match, priority_pick, process_backfill_tasks, process_cloud_presence_tasks, process_download_enqueue_tasks, process_metadata_tasks, process_mikan_match_tasks, process_selection_tasks, process_tasks, queue_release, reclaim_mikan_match_tasks, repair_series_mikan_ids, resolve_entry_choice, scan_and_queue
 from .sync_service import backfill_cloud_assets_from_completed_tasks, cancel_sync_for_entry, enqueue_sync_plan_tasks, process_cloud_asset_tasks, process_local_presence_tasks, process_nfo_tasks, process_sync_plan_tasks, process_sync_tasks, queue_sync_for_entry, reconcile_rclone_submitted_tasks, scan_cloud_library
 
@@ -29,6 +33,7 @@ queue_handlers: dict[str, QueueHandler] = {}
 queue_debounce_tasks: dict[str, asyncio.Task] = {}
 queue_running: set[str] = set()
 queue_rerun_requested: set[str] = set()
+active_operation_tasks: set[asyncio.Task] = set()
 QUEUE_KEY_ALIASES = {
     "cloud": "download",
     "cloud_assets": "cloud_asset",
@@ -91,6 +96,15 @@ class LibraryImportPayload(BaseModel):
     query: str = ""
     magnet: str = ""
     source_ref: str = ""
+
+
+class PipelineStartPayload(BaseModel):
+    trigger_source: str = "manual"
+    first_step_key: str = ""
+    subject_type: str = ""
+    subject_id: int = 0
+    payload: dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:
@@ -882,8 +896,21 @@ def ready_count_cleanup() -> int:
     )
 
 
+def ready_count_processor_tasks() -> int:
+    return count_ready(
+        """
+        SELECT COUNT(*) AS count
+        FROM processor_tasks
+        WHERE status='pending'
+          AND (retry_after='' OR retry_after <= ?)
+        """,
+        (now(),),
+    )
+
+
 def recoverable_queue_names() -> list[str]:
     checks = [
+        ("processor", ready_count_processor_tasks),
         ("mikan_match", ready_count_mikan_match),
         ("metadata", ready_count_metadata),
         ("selection", ready_count_selection),
@@ -1149,22 +1176,57 @@ async def handle_cleanup_queue() -> None:
             break
 
 
+async def handle_processor_queue() -> None:
+    for _ in range(12):
+        before = ready_count_processor_tasks()
+        processed = await run_ready_tasks(limit=50)
+        after = ready_count_processor_tasks()
+        if processed:
+            log("info", f"Processor 队列已处理: {processed} 个")
+        if before == 0 or processed == 0 or after >= before:
+            break
+        if after <= 0:
+            break
+    if ready_count_processor_tasks() > 0:
+        trigger_queue("processor")
+
+
 async def run_scan_source(settings: dict[str, str], operation_id: int | None = None) -> str:
     generation = get_runtime_generation()
+    run_id = start_pipeline_run("seasonal_mikan_tracking", "manual", "正在回收上次中断的 Mikan 匹配任务")
+    if operation_id:
+        update_operation(operation_id, "正在回收上次中断的 Mikan 匹配任务")
     reclaimed_mikan = reclaim_mikan_match_tasks(now())
+    update_pipeline_run(run_id, progress=5, message="正在扫描 RSS 源并写入候选")
     if operation_id:
         update_operation(operation_id, "正在扫描 RSS 源并写入候选")
     log("info", "扫描全部: 开始扫描 RSS 源")
-    scan_message = await scan_and_queue(settings)
-    repaired_mikan = enqueue_missing_mikan_match_tasks(now())
-    if not runtime_generation_alive(generation):
-        return "运行数据已重置，本次扫描已中止"
-    if operation_id:
-        update_operation(operation_id, "RSS 已写入，后续由任务链自动推进")
-    trigger_queue("cleanup", delay=0)
-    message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续由任务链自动推进"
-    log("info", f"扫描全部: RSS 完成，{message}")
-    return message
+    def update_scan_progress(message: str) -> None:
+        update_pipeline_run(run_id, message=message)
+        if operation_id:
+            update_operation(operation_id, message)
+        log("info", f"扫描全部: {message}")
+
+    try:
+        scan_message = await scan_and_queue(settings, update_scan_progress)
+        update_pipeline_run(run_id, progress=80, message="RSS 写入完成，正在补排 Mikan 匹配任务")
+        if operation_id:
+            update_operation(operation_id, "RSS 写入完成，正在补排 Mikan 匹配任务")
+        repaired_mikan = enqueue_missing_mikan_match_tasks(now())
+        if not runtime_generation_alive(generation):
+            message = "运行数据已重置，本次扫描已中止"
+            finish_pipeline_run(run_id, "failed", message, {"reclaimed_mikan": reclaimed_mikan, "repaired_mikan": repaired_mikan})
+            return message
+        if operation_id:
+            update_operation(operation_id, "RSS 已写入，后续由任务链自动推进")
+        trigger_queue("cleanup", delay=0)
+        message = f"{scan_message}；回收 Mikan 运行中任务 {reclaimed_mikan} 个；补排 Mikan 匹配 {repaired_mikan} 个；后续由任务链自动推进"
+        finish_pipeline_run(run_id, "completed", message, {"reclaimed_mikan": reclaimed_mikan, "repaired_mikan": repaired_mikan})
+        log("info", f"扫描全部: RSS 完成，{message}")
+        return message
+    except Exception as exc:
+        finish_pipeline_run(run_id, "failed", str(exc), {"reclaimed_mikan": reclaimed_mikan})
+        raise
 
 
 def ensure_queue_handlers() -> None:
@@ -1172,6 +1234,7 @@ def ensure_queue_handlers() -> None:
     queue_handlers.update(
         {
             "mikan_match": handle_mikan_match_queue,
+            "processor": handle_processor_queue,
             "metadata": handle_metadata_queue,
             "selection": handle_selection_queue,
             "backfill": handle_backfill_queue,
@@ -1262,6 +1325,23 @@ def trigger_queues(names: list[str], delay: float | None = None) -> None:
             continue
         seen.add(name)
         trigger_queue(name, delay=delay)
+
+
+async def cancel_runtime_activity() -> None:
+    for task in list(queue_debounce_tasks.values()):
+        if task and not task.done():
+            task.cancel()
+    queue_debounce_tasks.clear()
+    queue_running.clear()
+    queue_rerun_requested.clear()
+
+    for task in list(active_operation_tasks):
+        if task and not task.done():
+            task.cancel()
+
+    if active_operation_tasks:
+        await asyncio.gather(*list(active_operation_tasks), return_exceptions=True)
+    active_operation_tasks.clear()
 
 
 async def dispatch_ready_queues() -> None:
@@ -2025,7 +2105,6 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "scheduler", "name": "定时任务", "kind": "group"},
         {"key": "scheduler:rss_scan", "name": "RSS 定时扫描", "kind": "scheduled", "job_key": "rss_scan"},
         {"key": "scheduler:queue_dispatch", "name": "恢复调度", "kind": "scheduled", "job_key": "queue_dispatch"},
-        {"key": "operations", "name": "运行操作", "kind": "operations"},
         {"key": "logs", "name": "服务日志", "kind": "logs"},
         {"key": "maintenance", "name": "维护", "kind": "maintenance"},
     ]
@@ -2034,6 +2113,7 @@ def console_sections() -> list[dict[str, Any]]:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    register_builtin_processors()
     cleanup_operations()
     reschedule()
     scheduler.start()
@@ -2051,6 +2131,9 @@ def run_operation(name: str, coro_factory, start_message: str = "") -> int:
     async def runner() -> None:
         try:
             message = await coro_factory()
+        except asyncio.CancelledError:
+            finish_operation(operation_id, "failed", "操作已取消")
+            return
         except Exception as exc:
             finish_operation(operation_id, "failed", str(exc))
             log("error", f"{name} 失败: {exc}")
@@ -2058,7 +2141,9 @@ def run_operation(name: str, coro_factory, start_message: str = "") -> int:
         finish_operation(operation_id, "completed", str(message or "完成"))
         log("info", f"{name} 完成: {message or '完成'}")
 
-    asyncio.create_task(runner())
+    task = asyncio.create_task(runner())
+    active_operation_tasks.add(task)
+    task.add_done_callback(lambda finished: active_operation_tasks.discard(finished))
     return operation_id
 
 
@@ -2069,6 +2154,9 @@ def run_progress_operation(name: str, coro_factory, start_message: str = "") -> 
     async def runner() -> None:
         try:
             message = await coro_factory(operation_id)
+        except asyncio.CancelledError:
+            finish_operation(operation_id, "failed", "操作已取消")
+            return
         except Exception as exc:
             finish_operation(operation_id, "failed", str(exc))
             log("error", f"{name} 失败: {exc}")
@@ -2076,13 +2164,16 @@ def run_progress_operation(name: str, coro_factory, start_message: str = "") -> 
         finish_operation(operation_id, "completed", str(message or "完成"))
         log("info", f"{name} 完成: {message or '完成'}")
 
-    asyncio.create_task(runner())
+    task = asyncio.create_task(runner())
+    active_operation_tasks.add(task)
+    task.add_done_callback(lambda finished: active_operation_tasks.discard(finished))
     return operation_id
 
 
 def dashboard_data() -> dict[str, Any]:
     settings = get_settings()
     recent_cutoff = datetime.now(timezone.utc).timestamp() - 7 * 24 * 60 * 60
+    calendar_cutoff = datetime.now(timezone.utc).timestamp() - 28 * 24 * 60 * 60
     with connect() as conn:
         seasonal_items = conn.execute(
             """
@@ -2263,6 +2354,62 @@ def dashboard_data() -> dict[str, Any]:
             """,
             (int(recent_cutoff),),
         ).fetchall()
+        seasonal_update_calendar = conn.execute(
+            """
+            SELECT
+              e.id AS entry_id,
+              e.display_title,
+              e.title_root,
+              e.entry_kind,
+              e.season_label,
+              e.arc_label,
+              e.part_label,
+              e.special_label,
+              w.title_root AS work_title,
+              r.episode_number,
+              MAX(COALESCE(la.updated_at, ca.updated_at, r.updated_at, r.created_at)) AS updated_at,
+              MAX(CASE WHEN la.status='synced' THEN 1 ELSE 0 END) AS synced
+            FROM releases r
+            JOIN entries e ON e.id=r.entry_id
+            JOIN seasonal_entries se ON se.entry_id=e.id
+            JOIN works w ON w.id=e.work_id
+            LEFT JOIN cloud_assets ca ON ca.release_id=r.id
+            LEFT JOIN local_assets la ON la.release_id=r.id
+            WHERE COALESCE(e.hidden, 0)=0
+              AND strftime('%s', COALESCE(la.updated_at, ca.updated_at, r.updated_at, r.created_at)) >= ?
+            GROUP BY e.id, r.episode_number
+            ORDER BY updated_at DESC
+            LIMIT 160
+            """,
+            (int(calendar_cutoff),),
+        ).fetchall()
+        recent_synced_entries = conn.execute(
+            """
+            SELECT
+              e.id AS entry_id,
+              e.display_title,
+              e.title_root,
+              e.entry_kind,
+              e.season_label,
+              e.arc_label,
+              e.part_label,
+              e.special_label,
+              w.title_root AS work_title,
+              MAX(la.updated_at) AS synced_at,
+              COUNT(DISTINCT la.id) AS synced_count
+            FROM local_assets la
+            JOIN entries e ON e.id=la.entry_id
+            JOIN seasonal_entries se ON se.entry_id=e.id
+            JOIN works w ON w.id=e.work_id
+            WHERE la.status='synced'
+              AND COALESCE(e.hidden, 0)=0
+              AND strftime('%s', la.updated_at) >= ?
+            GROUP BY e.id
+            ORDER BY synced_at DESC
+            LIMIT 12
+            """,
+            (int(recent_cutoff),),
+        ).fetchall()
     queue_items = queue_summary(settings)
     scheduled_jobs = scheduled_jobs_summary()
     server_logs = read_server_logs(160)
@@ -2277,6 +2424,8 @@ def dashboard_data() -> dict[str, Any]:
     ]
     library_rows = [enrich_catalog_entry(row) for row in rows_to_dicts(library_items)]
     seasonal_calendar_rows = [enrich_catalog_entry(row) for row in rows_to_dicts(seasonal_sync_calendar)]
+    seasonal_update_rows = [enrich_catalog_entry(row) for row in rows_to_dicts(seasonal_update_calendar)]
+    recent_synced_rows = [enrich_catalog_entry(row) for row in rows_to_dicts(recent_synced_entries)]
     return {
         "seasonal_items": seasonal_rows,
         "library_items": library_rows,
@@ -2289,12 +2438,15 @@ def dashboard_data() -> dict[str, Any]:
             "failed_entry_count": int((library_failed_row["failed_entry_count"] if library_failed_row else 0) or 0),
         },
         "seasonal_sync_calendar": seasonal_calendar_rows,
+        "seasonal_update_calendar": seasonal_update_rows,
+        "recent_synced_seasonal_entries": recent_synced_rows,
         "sync_rules": rows_to_dicts(sync_rules),
         "operations": operations_list,
         "scheduled_jobs": scheduled_jobs,
         "scheduled_runs": rows_to_dicts(scheduled_runs),
         "queue_summary": queue_items,
         "queue_details": queue_details,
+        "pipelines": pipeline_overview(),
         "console_sections": console_sections(),
         "server_logs": server_logs,
         "console_overview": console_overview(queue_items, scheduled_jobs, operations_list, server_logs),
@@ -2304,6 +2456,33 @@ def dashboard_data() -> dict[str, Any]:
 @app.get("/api/dashboard")
 async def api_dashboard() -> dict[str, Any]:
     return dashboard_data()
+
+
+@app.get("/api/pipelines")
+async def api_pipelines() -> list[dict[str, Any]]:
+    return pipeline_overview()
+
+
+@app.post("/api/pipelines/{pipeline_key}/start")
+async def api_start_pipeline(pipeline_key: str, payload: PipelineStartPayload) -> dict[str, str]:
+    run_id = start_pipeline(
+        pipeline_key,
+        trigger_source=payload.trigger_source,
+        first_step_key=payload.first_step_key,
+        subject_type=payload.subject_type,
+        subject_id=payload.subject_id,
+        payload=payload.payload,
+        message=payload.message,
+    )
+    if run_id <= 0:
+        return {"status": "invalid", "message": "流水线或起始步骤不存在"}
+    return {"status": "started", "run_id": str(run_id), "message": "流水线已启动"}
+
+
+@app.post("/api/processors/tasks/run")
+async def api_run_processor_tasks(limit: int = Query(20, ge=1, le=200), processor_key: str = "") -> dict[str, str]:
+    processed = await run_ready_tasks(limit=limit, processor_key=processor_key.strip())
+    return {"status": "completed", "count": str(processed), "message": f"已处理 processor task: {processed} 个"}
 
 
 @app.get("/api/settings")
@@ -2640,6 +2819,7 @@ async def api_clear_logs() -> dict[str, str]:
 
 @app.post("/api/system/clear-data")
 async def api_clear_data() -> dict[str, str]:
+    await cancel_runtime_activity()
     clear_runtime_data()
     log("warn", "已清除所有运行数据")
     return {"status": "completed", "message": "已清除所有运行数据"}

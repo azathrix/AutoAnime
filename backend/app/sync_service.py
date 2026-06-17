@@ -8,7 +8,8 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from .db import connect, log, now
+from .database import connect
+from .db import log, now
 from .queue_bridge import request_queue_trigger
 from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
 from .metadata import generate_nfo_for_entry
