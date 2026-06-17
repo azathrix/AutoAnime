@@ -508,8 +508,8 @@
       </section>
     </main>
 
-    <el-drawer v-model="seriesDrawer" size="720px" :title="selectedSeries?.series?.title_cn || (selectedSeriesDomain === 'library' ? '番剧库条目' : '番剧设置')">
-      <template v-if="selectedSeries?.series">
+    <el-drawer v-model="seriesDrawer" size="720px" :title="selectedSeries?.entry?.title_cn || selectedSeries?.series?.title_cn || (selectedSeriesDomain === 'library' ? '番剧库条目' : '番剧设置')">
+      <template v-if="selectedSeries?.entry || selectedSeries?.series">
         <el-alert
           type="info"
           show-icon
@@ -517,37 +517,37 @@
           :title="selectedSeriesDomain === 'library' ? '这里处理番剧库条目本身；后续会补独立的补番/导入能力。' : '这里只处理规则和冲突；云盘入库与本地同步由后台任务自动推进。'"
           class="settings-alert"
         />
-        <el-form :model="selectedSeries.series" label-position="top">
+        <el-form :model="selectedSeries.entry || selectedSeries.series" label-position="top">
           <div class="form-row">
-            <el-form-item label="中文标题"><el-input v-model="selectedSeries.series.title_cn" /></el-form-item>
-            <el-form-item label="年份"><el-input-number v-model="selectedSeries.series.year" /></el-form-item>
+            <el-form-item label="中文标题"><el-input v-model="(selectedSeries.entry || selectedSeries.series).title_cn" /></el-form-item>
+            <el-form-item label="年份"><el-input-number v-model="(selectedSeries.entry || selectedSeries.series).year" /></el-form-item>
           </div>
           <div class="form-row">
-            <el-form-item label="Bangumi ID"><el-input v-model="selectedSeries.series.bangumi_id" /></el-form-item>
+            <el-form-item label="Bangumi ID"><el-input v-model="(selectedSeries.entry || selectedSeries.series).bangumi_id" /></el-form-item>
           </div>
           <template v-if="selectedSeriesDomain === 'seasonal'">
             <div class="form-row">
               <el-form-item label="字幕组">
-                <el-select v-model="selectedSeries.series.selected_group" clearable>
+                <el-select v-model="(selectedSeries.entry || selectedSeries.series).selected_group" clearable>
                   <el-option v-for="g in selectedSeries.groups" :key="g" :label="g" :value="g" />
                 </el-select>
               </el-form-item>
               <el-form-item label="分辨率">
-                <el-select v-model="selectedSeries.series.selected_resolution" clearable>
+                <el-select v-model="(selectedSeries.entry || selectedSeries.series).selected_resolution" clearable>
                   <el-option v-for="r in selectedSeries.resolutions" :key="r" :label="r" :value="r" />
                 </el-select>
               </el-form-item>
             </div>
             <div class="form-row">
               <el-form-item label="自动入云盘">
-                <el-select v-model="selectedSeries.series.auto_download">
+                <el-select v-model="(selectedSeries.entry || selectedSeries.series).auto_download">
                   <el-option label="跟随全局" value="inherit" />
                   <el-option label="开启" value="on" />
                   <el-option label="关闭" value="off" />
                 </el-select>
               </el-form-item>
               <el-form-item label="补全">
-                <el-select v-model="selectedSeries.series.backfill_mode">
+                <el-select v-model="(selectedSeries.entry || selectedSeries.series).backfill_mode">
                   <el-option label="跟随全局" value="inherit" />
                   <el-option label="不补全" value="none" />
                   <el-option label="补全本季" value="season" />
@@ -763,11 +763,11 @@ const logsBadgeType = computed(() => {
   return 'success'
 })
 const selectedSeriesStats = computed(() => {
-  const id = selectedSeries.value?.series?.id
+  const id = selectedSeries.value?.entry?.id || selectedSeries.value?.series?.id
   return activeDetailRows.value.find(item => item.id === id) || {}
 })
 const selectedSyncRule = computed(() => {
-  const id = selectedSeries.value?.series?.id
+  const id = selectedSeries.value?.entry?.id || selectedSeries.value?.series?.id
   return dashboard.sync_rules.find(item => item.entry_id === id) || {}
 })
 const syncWanted = computed(() => Boolean(selectedSyncRule.value.sync_enabled))
@@ -991,6 +991,9 @@ function apiErrorMessage(error) {
 async function openSeries(id, domain = 'seasonal') {
   selectedSeriesDomain.value = domain
   selectedSeries.value = domain === 'library' ? await getLibraryEntry(id) : await getSeasonalEntry(id)
+  if (selectedSeries.value?.entry && !selectedSeries.value?.series) {
+    selectedSeries.value.series = selectedSeries.value.entry
+  }
   seriesDrawer.value = true
 }
 
@@ -1002,10 +1005,11 @@ async function openQueueEntry(row) {
 }
 
 async function saveCurrentSeries() {
+  const payload = selectedSeries.value.entry || selectedSeries.value.series
   if (selectedSeriesDomain.value === 'library') {
-    await saveLibraryEntry(selectedSeries.value.series.id, selectedSeries.value.series)
+    await saveLibraryEntry(payload.id, payload)
   } else {
-    await saveSeasonalEntry(selectedSeries.value.series.id, selectedSeries.value.series)
+    await saveSeasonalEntry(payload.id, payload)
   }
   ElMessage.success(selectedSeriesDomain.value === 'library' ? '番剧库条目已保存' : '番剧设置已保存')
   await reload()
@@ -1014,7 +1018,8 @@ async function saveCurrentSeries() {
 async function toggleSeriesSync(enabled) {
   const base = selectedSeriesDomain.value === 'library' ? '/library' : '/seasonal'
   const action = enabled ? 'sync' : 'sync/cancel'
-  const result = await postAction(`${base}/${selectedSeries.value.series.id}/${action}`)
+  const entryId = selectedSeries.value?.entry?.id || selectedSeries.value?.series?.id
+  const result = await postAction(`${base}/${entryId}/${action}`)
   if (result.status === 'skipped') {
     ElMessage.warning(result.message || '没有可执行任务')
   } else {
@@ -1026,7 +1031,8 @@ async function toggleSeriesSync(enabled) {
 async function runSeriesAction(action) {
   const base = selectedSeriesDomain.value === 'library' ? '/library' : '/seasonal'
   try {
-    const result = await postAction(`${base}/${selectedSeries.value.series.id}/${action}`)
+    const entryId = selectedSeries.value?.entry?.id || selectedSeries.value?.series?.id
+    const result = await postAction(`${base}/${entryId}/${action}`)
     ElMessage.success(result.message || (action === 'metadata' ? '元数据任务已启动' : 'NFO 已生成'))
     await reload()
   } catch (error) {
@@ -1035,7 +1041,7 @@ async function runSeriesAction(action) {
 }
 
 async function deleteCurrentSeries() {
-  const id = selectedSeries.value?.series?.id
+  const id = selectedSeries.value?.entry?.id || selectedSeries.value?.series?.id
   if (!id) return
   const base = selectedSeriesDomain.value === 'library' ? '/library' : '/seasonal'
   const result = await deleteAction(`${base}/${id}`)

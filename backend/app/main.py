@@ -431,6 +431,7 @@ def settings_response() -> dict[str, Any]:
 
 def empty_entry_response() -> dict[str, Any]:
     return {
+        "entry": None,
         "series": None,
         "releases": [],
         "tasks": [],
@@ -472,8 +473,10 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
     groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
     resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
     languages = sorted({r["language"] for r in releases if r["language"]})
+    entry_payload = {**row_to_dict(entry), "domain_kind": entry["domain_kind"]}
     return {
-        "series": {**row_to_dict(entry), "domain_kind": entry["domain_kind"]},
+        "entry": entry_payload,
+        "series": entry_payload,
         "releases": rows_to_dicts(releases),
         "tasks": enrich_download_tasks(tasks),
         "cloud_assets": rows_to_dicts(cloud_assets),
