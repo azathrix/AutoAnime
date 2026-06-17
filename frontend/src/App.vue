@@ -70,6 +70,30 @@
         </el-card>
 
         <el-card class="span-4 console-card">
+          <template #header>本季条目</template>
+          <div class="anime-grid">
+            <article v-for="item in filteredSeries" :key="item.id" class="anime-card" @click="openSeries(item.id, 'seasonal')">
+              <div class="cover">
+                <img v-if="item.poster_url" :src="item.poster_url" />
+                <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
+              </div>
+              <div class="anime-body">
+                <h3>{{ item.display_title || item.title_cn }}</h3>
+                <p>{{ item.work_title || item.title_root || item.bangumi_id || '未关联' }}</p>
+                <div class="tagline">
+                  <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
+                  <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
+                  <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
+                  <el-tag size="small">{{ item.entry_kind || 'season' }}</el-tag>
+                </div>
+                <p v-if="seasonalStatusSummary(item)" class="queue-note">{{ seasonalStatusSummary(item) }}</p>
+                <el-progress :percentage="progressOf(item)" :show-text="false" />
+              </div>
+            </article>
+          </div>
+        </el-card>
+
+        <el-card class="span-4 console-card">
           <template #header>系统概览</template>
           <div v-if="scanOperation" class="scan-progress">
             <div>
@@ -684,6 +708,16 @@ const issues = computed(() => {
   }
   return rows
 })
+const issueMap = computed(() => {
+  const map = new Map()
+  for (const item of issues.value) {
+    const key = Number(item.series_id || 0)
+    if (!key) continue
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(item.message)
+  }
+  return map
+})
 const scanOperation = computed(() => dashboard.operations.find(op => op.name === '扫描全部' && op.status === 'running'))
 const queueMap = computed(() => Object.fromEntries((dashboard.queue_summary || []).map(item => [item.key, item])))
 const selectedSectionMeta = computed(() => (dashboard.console_sections || []).find(item => item.key === selectedConsoleSection.value) || null)
@@ -997,6 +1031,19 @@ function subtitleLanguagePick(values, primary = [], secondary = []) {
   if (candidates.length === 1) return candidates[0]
   candidates = rankSubtitleLanguages(candidates, secondary, 1)
   return candidates.length === 1 ? candidates[0] : ''
+}
+
+function seasonalStatusSummary(item) {
+  const id = Number(item?.id || 0)
+  if (!id) return ''
+  const messages = issueMap.value.get(id) || []
+  if (!messages.length) {
+    if (Number(item.local_asset_count || 0) > 0) return '本地同步已就绪'
+    if (Number(item.cloud_asset_count || 0) > 0) return '云盘资源已就绪，等待或按需同步到本地'
+    if (Number(item.release_count || 0) > 0) return '已入库，等待自动选择或入云盘'
+    return ''
+  }
+  return messages[0]
 }
 
 function progressOf(item) {

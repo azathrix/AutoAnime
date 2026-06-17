@@ -1318,6 +1318,9 @@ access_token + refresh_token
 - `重试失败任务` 的恢复链已改为覆盖正式任务表：
   - 不再只唤醒 `mikan_match / download / sync`
   - 现在会按已重置的任务表对应唤醒 `metadata / selection / backfill / cloud_poll / cloud_asset` 等正式队列
+- 控制台首页已开始直出新番条目的阻塞摘要：
+  - 不再只通过队列详情间接观察“为什么没自动继续”
+  - 当前先用前端基于正式队列详情做轻量汇总，后续可继续下沉为后端显式字段
 
 ### P4: 修复自动入云盘语义
 
