@@ -13,6 +13,7 @@ from .queue_bridge import request_queue_trigger
 
 
 TERMINAL_STATUSES = {"completed", "failed", "blocked", "cancelled"}
+STALE_RUNNING_MINUTES = 10
 
 
 def load_json(value: str) -> dict[str, Any]:
@@ -31,6 +32,10 @@ def dump_json(value: dict[str, Any] | None) -> str:
 
 def retry_after_seconds(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=max(1, seconds))).isoformat()
+
+
+def stale_running_cutoff() -> str:
+    return (datetime.now(timezone.utc) - timedelta(minutes=STALE_RUNNING_MINUTES)).isoformat()
 
 
 def pipeline_step(pipeline_id: int, step_key: str) -> dict[str, Any]:
@@ -165,6 +170,22 @@ def claim_next_task(processor_key: str = "") -> dict[str, Any]:
         processor_filter = "AND pt.processor_key=?"
         params.append(processor_key)
     with connect() as conn:
+        conn.execute(
+            """
+            UPDATE processor_tasks
+            SET status='pending',
+                locked_at='',
+                last_error=CASE
+                  WHEN last_error='' THEN '上次处理器执行中断，已自动放回待处理'
+                  ELSE last_error
+                END,
+                updated_at=?
+            WHERE status='running'
+              AND locked_at != ''
+              AND locked_at < ?
+            """,
+            (now(), stale_running_cutoff()),
+        )
         row = conn.execute(
             f"""
             SELECT pt.*, ps.step_key
