@@ -210,6 +210,9 @@ library（番剧库域）
   - 新增 `sync_plan_tasks`
   - 同步计划不再只靠 `ready_count + reconcile_sync_intents()` 的虚拟估算
   - 同步相关入口已收口到 `sync_plan_tasks -> process_sync_plan_tasks() -> sync_tasks`
+- 原本每分钟全局扫一遍队列的 `queue_dispatch` 已降级为恢复/补漏调度：
+  - 主链依赖“入队即触发”
+  - `queue_dispatch` 只负责应用重启、异常中断后的挂起队列恢复
 - 旧架构残留已开始剔除：
   - `series_state_tasks` 已不再参与当前运行链路
   - 现阶段保留旧表本身只为兼容已有数据库文件，不再作为主架构的一部分

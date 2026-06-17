@@ -609,7 +609,7 @@ def ready_count_cleanup() -> int:
     )
 
 
-def ready_queue_names() -> list[str]:
+def recoverable_queue_names() -> list[str]:
     checks = [
         ("mikan_match", ready_count_mikan_match),
         ("metadata", ready_count_metadata),
@@ -626,7 +626,19 @@ def ready_queue_names() -> list[str]:
         ("local_presence", ready_count_local_presence),
         ("cleanup", ready_count_cleanup),
     ]
-    return [name for name, fn in checks if fn() > 0]
+    names: list[str] = []
+    for name, fn in checks:
+        runtime_key = canonical_queue_key(name)
+        if runtime_key in queue_running:
+            continue
+        pending_task = queue_debounce_tasks.get(runtime_key)
+        if pending_task and not pending_task.done():
+            continue
+        if runtime_key in queue_rerun_requested:
+            continue
+        if fn() > 0:
+            names.append(name)
+    return names
 
 
 async def handle_mikan_match_queue() -> None:
@@ -982,11 +994,11 @@ def trigger_queues(names: list[str], delay: float | None = None) -> None:
 
 
 async def dispatch_ready_queues() -> None:
-    run_id = start_scheduled_job_run("queue_dispatch", "system", "定时检查可执行队列")
+    run_id = start_scheduled_job_run("queue_dispatch", "system", "恢复挂起队列")
     try:
-        names = ready_queue_names()
+        names = recoverable_queue_names()
         trigger_queues(names, delay=0)
-        finish_scheduled_job_run(run_id, "completed", f"已触发队列: {', '.join(names) if names else '无'}")
+        finish_scheduled_job_run(run_id, "completed", f"已恢复触发队列: {', '.join(names) if names else '无'}")
     except Exception as exc:
         finish_scheduled_job_run(run_id, "failed", str(exc))
         raise
@@ -1698,7 +1710,7 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:cleanup", "name": "清理", "kind": "queue", "queue_key": "cleanup"},
         {"key": "scheduler", "name": "定时任务", "kind": "group"},
         {"key": "scheduler:rss_scan", "name": "RSS 定时扫描", "kind": "scheduled", "job_key": "rss_scan"},
-        {"key": "scheduler:queue_dispatch", "name": "队列分发", "kind": "scheduled", "job_key": "queue_dispatch"},
+        {"key": "scheduler:queue_dispatch", "name": "恢复调度", "kind": "scheduled", "job_key": "queue_dispatch"},
         {"key": "operations", "name": "运行操作", "kind": "operations"},
         {"key": "logs", "name": "服务日志", "kind": "logs"},
         {"key": "maintenance", "name": "维护", "kind": "maintenance"},
