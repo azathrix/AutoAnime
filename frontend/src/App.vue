@@ -88,6 +88,7 @@
               </div>
               <p>{{ queue.description }}</p>
               <p class="queue-note">{{ queue.state_reason || queuePendingHint(queue) }}</p>
+              <p v-if="queue.state_detail" class="queue-note queue-detail-note">{{ queue.state_detail }}</p>
               <div class="queue-counts">
                 <span>待处理 <b>{{ queue.pending }}</b></span>
                 <span>运行中 <b>{{ queue.running }}</b></span>
@@ -156,11 +157,19 @@
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="title_cn" label="番剧" min-width="200" show-overflow-tooltip />
-                  <el-table-column prop="series_title" label="候选标题" min-width="200" show-overflow-tooltip />
+                  <el-table-column prop="display_title" label="对象" min-width="240" show-overflow-tooltip />
                   <el-table-column prop="episode_number" label="集" width="70" />
-                  <el-table-column prop="reason" label="原因" min-width="200" show-overflow-tooltip />
-                  <el-table-column prop="last_error" label="错误" min-width="240" show-overflow-tooltip />
+                  <el-table-column prop="display_reason" label="说明" min-width="260" show-overflow-tooltip />
+                  <el-table-column prop="last_error" label="错误" min-width="280" show-overflow-tooltip />
+                  <el-table-column label="进度" width="140">
+                    <template #default="{ row }">
+                      <span v-if="Number(row.progress || 0) > 0 || row.progress_text">
+                        {{ Number(row.progress || 0) > 0 ? `${row.progress}%` : '-' }}
+                        <span v-if="row.progress_text"> · {{ row.progress_text }}</span>
+                      </span>
+                      <span v-else>-</span>
+                    </template>
+                  </el-table-column>
                   <el-table-column label="等待" width="120">
                     <template #default="{ row }">{{ row.waiting_retry ? formatCountdown(row.retry_seconds) : '-' }}</template>
                   </el-table-column>
@@ -782,8 +791,14 @@ function queueBadge(queue) {
 }
 
 function taskStatusText(row) {
+  if (row?.status === 'completed') return '已完成'
+  if (row?.status === 'synced') return '已同步'
+  if (row?.status === 'submitted') return '已提交'
+  if (row?.status === 'running') return '处理中'
+  if (row?.status === 'pending' && row?.waiting_retry) return '等待重试'
+  if (row?.status === 'pending') return '待处理'
+  if (row?.status === 'failed') return '失败'
   if (row?.status === 'superseded') return '已替代'
-  if (row?.waiting_retry) return '等待重试'
   return row?.status || ''
 }
 
@@ -797,10 +812,12 @@ function formatCountdown(seconds) {
 }
 
 function queueState(queue) {
-  if (Number(queue.failed || 0) > 0) return '失败'
-  if (Number(queue.running || 0) > 0) return '运行中'
-  if (Number(queue.waiting || 0) > 0) return '等待重试'
-  if (Number(queue.pending || 0) > 0) return '待处理'
+  if (queue.queue_state === 'failed' || Number(queue.failed || 0) > 0) return '失败'
+  if (queue.queue_state === 'running' || Number(queue.running || 0) > 0) return '运行中'
+  if (queue.queue_state === 'debouncing') return '聚合中'
+  if (queue.queue_state === 'rerun_pending') return '待重跑'
+  if (queue.queue_state === 'cooldown' || Number(queue.waiting || 0) > 0) return '等待重试'
+  if (queue.queue_state === 'ready' || Number(queue.pending || 0) > 0) return '待处理'
   return '空闲'
 }
 

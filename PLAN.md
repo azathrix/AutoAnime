@@ -184,6 +184,17 @@ library（番剧库域）
   - `cloud_asset -> sync_plan/sync`
   - `sync -> nfo/local_presence`
 - `扫描全部` 与 `定时 RSS 扫描` 已收窄为源头触发，不再手工串行触发所有后续阶段。
+- 已开始收口旧的手工触发 API：
+  - `单条入云盘`
+  - `单条本地同步`
+  - `单条补全`
+  - `单条 release 入云盘`
+  这些入口现在主要负责写任务；后续推进交由任务桥接触发。
+- 控制台状态表达已开始按“排障视角”调整：
+  - 队列卡片增加 `state_detail`
+  - 队列详情增加统一的 `display_title` / `display_reason`
+  - 同步等任务显示 `progress/progress_text`
+  - 区分 `待处理 / 聚合中 / 待重跑 / 等待重试 / 处理中 / 已完成`
 
 反对继续使用的旧模式：
 

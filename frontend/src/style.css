@@ -385,6 +385,11 @@ h1 {
   color: #b45309 !important;
 }
 
+.queue-detail-note {
+  color: #64748b !important;
+  font-size: 12px !important;
+}
+
 .queue-counts {
   display: grid;
   gap: 8px;

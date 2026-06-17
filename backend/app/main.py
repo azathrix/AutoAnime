@@ -111,6 +111,24 @@ def enrich_download_tasks(rows: list[Any]) -> list[dict[str, Any]]:
         retry_seconds = seconds_until(str(row.get("retry_after") or ""))
         row["retry_seconds"] = retry_seconds
         row["waiting_retry"] = row.get("status") == "pending" and retry_seconds > 0
+        row["display_title"] = (
+            row.get("title_cn")
+            or row.get("series_title")
+            or row.get("release_title")
+            or row.get("cloud_name")
+            or row.get("title")
+            or ""
+        )
+        if row.get("progress_text"):
+            row["display_reason"] = row.get("progress_text")
+        elif row.get("reason"):
+            row["display_reason"] = row.get("reason")
+        elif row["waiting_retry"]:
+            row["display_reason"] = "等待重试"
+        elif row.get("last_error"):
+            row["display_reason"] = row.get("last_error")
+        else:
+            row["display_reason"] = ""
     return result
 
 
@@ -120,6 +138,25 @@ def enrich_retry_rows(rows: list[Any]) -> list[dict[str, Any]]:
         retry_seconds = seconds_until(str(row.get("retry_after") or ""))
         row["retry_seconds"] = retry_seconds
         row["waiting_retry"] = row.get("status") == "pending" and retry_seconds > 0
+        row["display_title"] = (
+            row.get("title_cn")
+            or row.get("series_title")
+            or row.get("release_title")
+            or row.get("local_path")
+            or row.get("cloud_name")
+            or row.get("title")
+            or ""
+        )
+        if row.get("progress_text"):
+            row["display_reason"] = row.get("progress_text")
+        elif row.get("reason"):
+            row["display_reason"] = row.get("reason")
+        elif row["waiting_retry"]:
+            row["display_reason"] = f"等待重试，剩余 {retry_seconds} 秒"
+        elif row.get("last_error"):
+            row["display_reason"] = row.get("last_error")
+        else:
+            row["display_reason"] = ""
     return result
 
 
@@ -311,7 +348,6 @@ def queue_entry_download(entry_id: int) -> dict[str, str]:
         return {"status": "skipped", "count": "0", "message": message}
     for release_id in ids:
         queue_release(release_id, settings)
-    trigger_queue("download", delay=0)
     return {"status": "queued", "count": str(len(ids)), "message": f"已加入云盘队列: {len(ids)} 条"}
 
 
@@ -330,7 +366,6 @@ def queue_entry_sync(entry_id: int) -> dict[str, str]:
     settings = get_settings()
     count, message = queue_sync_for_series(entry_id, settings)
     if count > 0:
-        trigger_queue("sync", delay=0)
         return {"status": "queued", "count": str(count), "message": message}
     return {"status": "completed", "count": "0", "message": message}
 
@@ -1365,6 +1400,18 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         else:
             item["queue_state"] = item.get("queue_state", "idle")
             item["state_reason"] = "当前没有可处理任务"
+        if item["queue_state"] == "ready" and pending > 0:
+            item["state_detail"] = f"当前批次可执行 {pending} 个"
+        elif item["queue_state"] == "debouncing":
+            item["state_detail"] = "检测到连续入队，正在聚合这一批任务"
+        elif item["queue_state"] == "cooldown":
+            item["state_detail"] = f"等待中的任务 {waiting} 个"
+        elif item["queue_state"] == "running":
+            item["state_detail"] = f"当前运行 {running} 个，待处理 {pending} 个"
+        elif item["queue_state"] == "failed":
+            item["state_detail"] = f"失败任务 {failed} 个"
+        else:
+            item["state_detail"] = ""
     return items
 
 
@@ -2131,10 +2178,7 @@ async def api_process_tasks(force: bool = Query(False)) -> dict[str, str]:
     async def run() -> str:
         settings = get_settings()
         await process_tasks(settings, force=force)
-        trigger_queue("cloud_poll", delay=0)
-        trigger_queue("cloud_asset", delay=0)
-        trigger_queue("sync_plan", delay=0)
-        return "已触发云盘提交，并继续触发云盘状态、资源登记和本地同步计划"
+        return "已执行云盘提交；后续状态、资源登记与同步计划会按任务链自动推进"
 
     operation_id = run_operation(
         "云盘队列立即处理" if force else "云盘队列处理",
@@ -2174,7 +2218,6 @@ async def api_scan_cloud() -> dict[str, str]:
         return f"入库 {imported} 个，跳过 {skipped} 个"
 
     operation_id = run_operation("扫描云盘库", run, "正在扫描 PikPak 云盘库")
-    trigger_queues(["sync_plan", "sync"])
     return {"status": "started", "operation_id": str(operation_id), "message": "云盘库扫描已启动"}
 
 
@@ -2189,7 +2232,6 @@ async def api_library_import(payload: LibraryImportPayload) -> dict[str, str]:
             return f"云盘扫描入库 {imported} 个，跳过 {skipped} 个"
 
         operation_id = run_operation("番剧库导入", run, "正在扫描云盘并写入番剧库条目")
-        trigger_queues(["sync_plan", "sync"])
         return {"status": "started", "operation_id": str(operation_id), "message": "番剧库云盘导入已启动"}
     if source_type in {"search", "magnet", "manual"}:
         log("info", f"番剧库导入请求已记录: {source_type}")
@@ -2220,7 +2262,6 @@ async def api_backfill_library_entry(entry_id: int) -> dict[str, str]:
             settings,
             now(),
         )
-    trigger_queue("backfill", delay=0)
     return {"status": "queued", "message": "番剧库补全任务已加入队列"}
 
 
@@ -2311,7 +2352,6 @@ async def api_download_series(series_id: int) -> dict[str, str]:
 @app.post("/api/releases/{release_id}/download")
 async def api_download_release(release_id: int) -> dict[str, str]:
     queue_release(release_id, get_settings())
-    trigger_queue("download", delay=0)
     return {"status": "queued"}
 
 
