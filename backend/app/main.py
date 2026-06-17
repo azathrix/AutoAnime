@@ -1877,78 +1877,6 @@ def dashboard_data() -> dict[str, Any]:
             ) failed_entries
             """
         ).fetchone()
-        # Legacy compatibility payload; primary UI no longer depends on series-wide aggregation.
-        series = conn.execute(
-            """
-            SELECT s.*
-            FROM series s
-            WHERE COALESCE(s.hidden, 0)=0
-              AND s.bangumi_id != ''
-            ORDER BY s.updated_at DESC
-            """
-        ).fetchall()
-        rss_candidates = conn.execute(
-            """
-            SELECT *
-            FROM rss_candidates
-            WHERE status IN ('pending', 'pending_metadata', 'failed')
-            ORDER BY updated_at DESC
-            LIMIT 120
-            """
-        ).fetchall()
-        tasks = conn.execute(
-            """
-            SELECT dt.*, e.display_title AS title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
-            FROM download_tasks dt
-            JOIN entries e ON e.id=dt.entry_id
-            JOIN releases r ON r.id=dt.release_id
-            WHERE e.bangumi_id != ''
-            ORDER BY dt.id DESC
-            LIMIT 80
-            """
-        ).fetchall()
-        selection_tasks = conn.execute(
-            """
-            SELECT st.*, e.display_title AS title_cn
-            FROM selection_tasks st
-            JOIN entries e ON e.id=st.entry_id
-            WHERE COALESCE(e.hidden, 0)=0
-            ORDER BY st.updated_at DESC
-            LIMIT 80
-            """
-        ).fetchall()
-        backfill_tasks = conn.execute(
-            """
-            SELECT bt.*, e.display_title AS title_cn
-            FROM backfill_tasks bt
-            JOIN entries e ON e.id=bt.entry_id
-            WHERE COALESCE(e.hidden, 0)=0
-            ORDER BY bt.updated_at DESC
-            LIMIT 80
-            """
-        ).fetchall()
-        logs = conn.execute("SELECT * FROM logs ORDER BY id DESC LIMIT 80").fetchall()
-        cloud_assets = conn.execute(
-            """
-            SELECT ca.*, e.display_title AS title_cn
-            FROM cloud_assets ca
-            JOIN entries e ON e.id=ca.entry_id
-            WHERE e.bangumi_id != ''
-            ORDER BY ca.updated_at DESC
-            LIMIT 80
-            """
-        ).fetchall()
-        sync_tasks = conn.execute(
-            """
-            SELECT st.*, e.display_title AS title_cn
-            FROM sync_tasks st
-            JOIN entries e ON e.id=st.entry_id
-            WHERE e.bangumi_id != ''
-              AND st.status IN ('pending', 'running', 'failed')
-            ORDER BY st.updated_at DESC
-            LIMIT 80
-            """
-        ).fetchall()
         operations = conn.execute(
             """
             SELECT *
@@ -1982,39 +1910,6 @@ def dashboard_data() -> dict[str, Any]:
               AND e.bangumi_id != ''
             ORDER BY sr.updated_at DESC
             LIMIT 200
-            """
-        ).fetchall()
-        task_counts = conn.execute(
-            "SELECT status, COUNT(*) AS count FROM download_tasks GROUP BY status"
-        ).fetchall()
-        active_tasks = conn.execute(
-            """
-            SELECT dt.*, e.display_title AS title_cn, r.episode_number, r.subtitle_group, r.resolution, r.language, r.title AS release_title
-            FROM download_tasks dt
-            JOIN entries e ON e.id=dt.entry_id
-            JOIN releases r ON r.id=dt.release_id
-            WHERE dt.status IN ('pending', 'running', 'submitted', 'failed')
-              AND e.bangumi_id != ''
-            ORDER BY
-              CASE dt.status
-                WHEN 'running' THEN 0
-                WHEN 'pending' THEN 1
-                WHEN 'submitted' THEN 2
-                WHEN 'failed' THEN 3
-                ELSE 4
-              END,
-              dt.updated_at DESC
-            LIMIT 20
-            """
-        ).fetchall()
-        calendar = conn.execute(
-            """
-            SELECT s.title_cn, e.episode_number, e.air_date, e.status
-            FROM episodes e
-            JOIN series s ON s.id=e.series_id
-            WHERE e.air_date != ''
-            ORDER BY e.air_date ASC
-            LIMIT 80
             """
         ).fetchall()
         seasonal_sync_calendar = conn.execute(
@@ -2061,21 +1956,10 @@ def dashboard_data() -> dict[str, Any]:
             "failed_entry_count": int((library_failed_row["failed_entry_count"] if library_failed_row else 0) or 0),
         },
         "seasonal_sync_calendar": rows_to_dicts(seasonal_sync_calendar),
-        "series": rows_to_dicts(series),
-        "rss_candidates": rows_to_dicts(rss_candidates),
-        "tasks": enrich_download_tasks(tasks),
-        "selection_tasks": enrich_retry_rows(selection_tasks),
-        "backfill_tasks": enrich_retry_rows(backfill_tasks),
-        "logs": rows_to_dicts(logs),
-        "cloud_assets": rows_to_dicts(cloud_assets),
         "sync_rules": rows_to_dicts(sync_rules),
-        "sync_tasks": enrich_retry_rows(sync_tasks),
         "operations": operations_list,
         "scheduled_jobs": scheduled_jobs,
         "scheduled_runs": rows_to_dicts(scheduled_runs),
-        "calendar": rows_to_dicts(calendar),
-        "task_counts": {row["status"]: row["count"] for row in task_counts},
-        "active_tasks": enrich_download_tasks(active_tasks),
         "queue_summary": queue_items,
         "queue_details": queue_detail_map(),
         "console_sections": console_sections(),

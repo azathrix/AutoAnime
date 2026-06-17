@@ -626,26 +626,15 @@ const dashboard = reactive({
   library_items: [],
   library_summary: {},
   seasonal_sync_calendar: [],
-  series: [],
-  rss_candidates: [],
-  tasks: [],
-  selection_tasks: [],
-  backfill_tasks: [],
-  sync_tasks: [],
   sync_rules: [],
-  cloud_assets: [],
   operations: [],
   scheduled_jobs: [],
   scheduled_runs: [],
-  logs: [],
   server_logs: [],
   queue_summary: [],
   queue_details: {},
   console_sections: [],
   console_overview: {},
-  calendar: [],
-  active_tasks: [],
-  task_counts: {}
 })
 const settings = reactive({})
 const diagnostics = reactive({ tables: {} })
@@ -662,13 +651,20 @@ const activeSeriesRows = computed(() => seasonalRows.value)
 const activeDetailRows = computed(() => selectedSeriesDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
 const cloudAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
-const issues = computed(() => {
-  const rows = []
-  for (const item of dashboard.rss_candidates) {
-    if (item.status === 'failed') {
-      rows.push({ type: 'RSS 候选', level: 'warning', title: item.series_title || item.title, message: item.reason || '候选处理失败', series_id: null })
+const failedQueueEntryIds = computed(() => {
+  const ids = new Set()
+  for (const queueKey of ['mikan_match', 'metadata', 'selection', 'backfill', 'cloud_presence', 'download_enqueue', 'cloud', 'cloud_poll', 'cloud_assets', 'sync_plan', 'sync', 'nfo', 'local_presence']) {
+    const items = dashboard.queue_details?.[queueKey]?.items || []
+    for (const item of items) {
+      if (String(item?.status || '') !== 'failed') continue
+      const entryId = Number(item?.entry_id || 0)
+      if (entryId > 0) ids.add(entryId)
     }
   }
+  return ids
+})
+const issues = computed(() => {
+  const rows = []
   for (const item of seasonalRows.value) {
     if (!item.bangumi_id) {
       rows.push({ type: '元数据', level: 'warning', title: item.title_cn, message: '缺少 Bangumi 绑定，不能可靠入库', series_id: item.id })
@@ -682,12 +678,9 @@ const issues = computed(() => {
     if (Number(item.language_count || 0) > 1 && !subtitleLanguageCanResolve(item)) {
       rows.push({ type: '字幕语言', level: 'warning', title: item.title_cn, message: '存在多个字幕语言组合，当前主/副字幕优先级无法唯一选择', series_id: item.id })
     }
-  }
-  for (const task of dashboard.tasks.filter(t => t.status === 'failed')) {
-    rows.push({ type: '云盘失败', level: 'danger', title: task.title_cn, message: task.last_error || 'PikPak 入库失败', series_id: task.entry_id })
-  }
-  for (const task of dashboard.sync_tasks.filter(t => t.status === 'failed' || (t.last_error && t.waiting_retry))) {
-    rows.push({ type: '同步失败', level: 'danger', title: task.title_cn, message: task.last_error || '本地同步失败', series_id: task.entry_id })
+    if (failedQueueEntryIds.value.has(Number(item.id || 0))) {
+      rows.push({ type: '任务失败', level: 'danger', title: item.title_cn, message: '该条目存在失败队列任务，请到控制台查看详情', series_id: item.id })
+    }
   }
   return rows
 })
@@ -803,7 +796,7 @@ const filteredSeries = computed(() => {
     if (seriesFilter.value === '待配置') return !item.bangumi_id || !item.group_count || !item.resolution_count
     if (seriesFilter.value === '已入云盘') return Number(item.cloud_asset_count || 0) > 0
     if (seriesFilter.value === '已同步') return Number(item.local_asset_count || 0) > 0
-    if (seriesFilter.value === '失败') return dashboard.tasks.some(t => t.entry_id === item.id && t.status === 'failed')
+    if (seriesFilter.value === '失败') return failedQueueEntryIds.value.has(Number(item.id || 0))
     return true
   })
 })

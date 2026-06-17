@@ -1294,6 +1294,10 @@ access_token + refresh_token
   - 无引用的 `requeue_sync_tasks_for_series()` 已删除
   - `sync_service` 当前仍保留 `backfill_cloud_assets_from_completed_tasks()` 作为兼容补洞逻辑
   - 后续可继续考虑把这类补洞动作降级到恢复/维护语义，而不是放在主链 handler 内
+- 控制台首页与 `dashboard_data()` 已继续去兼容聚合：
+  - 首页“失败/问题”感知已改为优先读取正式队列详情
+  - `dashboard_data()` 顶层已移除一批首页不再使用的旧兼容字段与重复查询
+  - 当前仍保留条目抽屉详情和旧 `/api/series/*` 兼容接口，后续再谨慎处理
 
 ### P4: 修复自动入云盘语义
 
