@@ -1769,6 +1769,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                     SELECT mt.*, rc.title, rc.series_title, rc.reason
                     FROM mikan_match_tasks mt
                     JOIN rss_candidates rc ON rc.id=mt.candidate_id
+                    WHERE mt.status IN ('pending', 'running', 'failed')
                     ORDER BY mt.updated_at DESC
                     LIMIT 120
                     """
@@ -1782,6 +1783,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                     SELECT mt.*, rc.title, rc.series_title, rc.reason, rc.bangumi_id
                     FROM metadata_tasks mt
                     JOIN rss_candidates rc ON rc.id=mt.candidate_id
+                    WHERE mt.status IN ('pending', 'running', 'failed')
                     ORDER BY mt.updated_at DESC
                     LIMIT 120
                     """
@@ -1796,6 +1798,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                     FROM selection_tasks st
                     JOIN entries e ON e.id=st.entry_id
                     WHERE COALESCE(e.hidden, 0)=0
+                      AND st.status IN ('pending', 'running', 'failed')
                     ORDER BY st.updated_at DESC
                     LIMIT 120
                     """
@@ -1810,6 +1813,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                     FROM backfill_tasks bt
                     JOIN entries e ON e.id=bt.entry_id
                     WHERE COALESCE(e.hidden, 0)=0
+                      AND bt.status IN ('pending', 'running', 'failed')
                     ORDER BY bt.updated_at DESC
                     LIMIT 120
                     """
@@ -1823,6 +1827,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 FROM cloud_presence_tasks cpt
                 JOIN releases r ON r.id=cpt.release_id
                 JOIN entries e ON e.id=cpt.entry_id
+                WHERE cpt.status IN ('pending', 'running', 'failed')
                 ORDER BY cpt.updated_at DESC
                 LIMIT 120
                 """
@@ -1835,6 +1840,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 FROM download_enqueue_tasks det
                 JOIN releases r ON r.id=det.release_id
                 JOIN entries e ON e.id=det.entry_id
+                WHERE det.status IN ('pending', 'running', 'failed')
                 ORDER BY det.updated_at DESC
                 LIMIT 120
                 """
@@ -1848,6 +1854,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 JOIN entries e ON e.id=dt.entry_id
                 JOIN releases r ON r.id=dt.release_id
                 WHERE e.bangumi_id != ''
+                  AND dt.status IN ('pending', 'running', 'submitted', 'failed')
                 ORDER BY dt.updated_at DESC
                 LIMIT 120
                 """
@@ -1862,6 +1869,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 JOIN download_tasks dt ON dt.id=cpt.download_task_id
                 JOIN entries e ON e.id=dt.entry_id
                 JOIN releases r ON r.id=dt.release_id
+                WHERE cpt.status IN ('pending', 'running', 'failed')
                 ORDER BY cpt.updated_at DESC
                 LIMIT 120
                 """
@@ -1875,6 +1883,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 JOIN download_tasks dt ON dt.id=cat.download_task_id
                 JOIN entries e ON e.id=dt.entry_id
                 JOIN releases r ON r.id=dt.release_id
+                WHERE cat.status IN ('pending', 'running', 'failed')
                 ORDER BY cat.updated_at DESC
                 LIMIT 120
                 """
@@ -1886,6 +1895,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 SELECT spt.*, e.display_title AS title_cn, e.domain_kind
                 FROM sync_plan_tasks spt
                 JOIN entries e ON e.id=spt.entry_id
+                WHERE spt.status IN ('pending', 'running', 'failed')
                 ORDER BY spt.updated_at DESC
                 LIMIT 120
                 """
@@ -1899,6 +1909,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 JOIN entries e ON e.id=st.entry_id
                 JOIN cloud_assets ca ON ca.id=st.cloud_asset_id
                 WHERE e.bangumi_id != ''
+                  AND st.status IN ('pending', 'running', 'failed')
                 ORDER BY st.updated_at DESC
                 LIMIT 120
                 """
@@ -1911,6 +1922,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 FROM nfo_tasks nt
                 JOIN entries e ON e.id=nt.entry_id
                 JOIN local_assets la ON la.id=nt.local_asset_id
+                WHERE nt.status IN ('pending', 'running', 'failed')
                 ORDER BY nt.updated_at DESC
                 LIMIT 120
                 """
@@ -1923,6 +1935,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 FROM local_presence_tasks lpt
                 JOIN entries e ON e.id=lpt.entry_id
                 JOIN local_assets la ON la.id=lpt.local_asset_id
+                WHERE lpt.status IN ('pending', 'running', 'failed')
                 ORDER BY lpt.updated_at DESC
                 LIMIT 120
                 """
@@ -1933,6 +1946,7 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 """
                 SELECT *
                 FROM cleanup_tasks
+                WHERE status IN ('pending', 'running', 'failed')
                 ORDER BY updated_at DESC
                 LIMIT 120
                 """

@@ -895,6 +895,7 @@ function queueState(queue) {
 
 function queuePendingHint(queue) {
   const key = String(queue?.key || '')
+  if (key === 'rss') return '这里只显示最近的 RSS 候选；后续 Mikan、元数据、选集、云盘和同步都由任务链自动推进。'
   if (key === 'cloud_assets') return '待处理表示已发现完成的云盘任务，等待登记成正式云盘资源。'
   if (key === 'sync') return '待处理表示云盘资源已就绪，等待进入本地同步。'
   if (key === 'selection') return '待处理表示元数据已完成，等待按规则自动选择发布。'
