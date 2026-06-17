@@ -1290,6 +1290,10 @@ access_token + refresh_token
   - 现在统一改为先登记 `cloud_asset`，再由云盘资源登记成功后唤醒 `sync_plan`
 - 运行时桥接层已移除多队列批量唤醒 helper：
   - 避免再次回退到“一个动作同时推进多个下游队列”的旧模式
+- 同步链旧 helper 已继续收口：
+  - 无引用的 `requeue_sync_tasks_for_series()` 已删除
+  - `sync_service` 当前仍保留 `backfill_cloud_assets_from_completed_tasks()` 作为兼容补洞逻辑
+  - 后续可继续考虑把这类补洞动作降级到恢复/维护语义，而不是放在主链 handler 内
 
 ### P4: 修复自动入云盘语义
 

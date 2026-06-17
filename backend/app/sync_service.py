@@ -363,28 +363,6 @@ def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | No
         )
 
 
-def requeue_sync_tasks_for_series(series_id: int, settings: dict[str, str]) -> int:
-    with connect() as conn:
-        entry_row = conn.execute(
-            "SELECT entry_id FROM releases WHERE series_id=? AND entry_id != 0 ORDER BY id ASC LIMIT 1",
-            (series_id,),
-        ).fetchone()
-        entry_id = int(entry_row["entry_id"]) if entry_row else series_id
-        assets = conn.execute(
-            """
-            SELECT ca.id, ca.cloud_name
-            FROM cloud_assets ca
-            WHERE ca.entry_id=? AND ca.status='available'
-            ORDER BY ca.episode_number ASC
-            """,
-            (entry_id,),
-        ).fetchall()
-        if not assets:
-            return 0
-    queued, _ = materialize_sync_tasks_for_entry(entry_id, settings)
-    return queued
-
-
 def local_episode_path(cloud_asset: dict, entry: dict, settings: dict[str, str]) -> str:
     root = Path(settings.get("local_library_root") or "/media/pikpak-anime")
     series_dir = render_series_dir(entry, settings)
