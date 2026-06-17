@@ -254,26 +254,34 @@
           <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
           <el-button plain @click="runAction('/library/import')">导入云盘到番剧库</el-button>
         </div>
-        <div class="anime-grid">
-          <article v-for="item in filteredSeries" :key="item.id" class="anime-card" @click="openSeries(item.id, view === 'library' ? 'library' : 'seasonal')">
-            <div class="cover">
-              <img v-if="item.poster_url" :src="item.poster_url" />
-              <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
-            </div>
-            <div class="anime-body">
-              <h3>{{ item.display_title || item.title_cn }}</h3>
-              <p>{{ item.work_title || item.title_root || '-' }}</p>
-              <p>Bangumi: {{ item.bangumi_id || '未关联' }}</p>
-              <div class="tagline">
-                <el-tag size="small">{{ item.group_count }} 字幕组</el-tag>
-                <el-tag size="small" type="success">{{ item.resolution_count }} 分辨率</el-tag>
-                <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
-                <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
-                <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
+        <div class="library-work-grid">
+          <section v-for="work in libraryWorks" :key="work.work_id || work.work_title" class="library-work-card">
+            <header class="library-work-header">
+              <div>
+                <h3>{{ work.work_title || '未命名作品' }}</h3>
+                <p>{{ work.entry_count }} 个条目 · 云盘 {{ work.cloud_asset_count }} · 本地 {{ work.local_asset_count }}</p>
               </div>
-              <el-progress :percentage="progressOf(item)" :show-text="false" />
+            </header>
+            <div class="library-entry-list">
+              <article v-for="item in work.entries" :key="item.id" class="library-entry-row" @click="openSeries(item.id, 'library')">
+                <div class="cover small">
+                  <img v-if="item.poster_url" :src="item.poster_url" />
+                  <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
+                </div>
+                <div class="anime-body">
+                  <h3>{{ item.display_title || item.title_cn }}</h3>
+                  <p>Bangumi: {{ item.bangumi_id || '未关联' }}</p>
+                  <div class="tagline">
+                    <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
+                    <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
+                    <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
+                    <el-tag size="small">{{ item.entry_kind || 'season' }}</el-tag>
+                  </div>
+                  <el-progress :percentage="libraryProgressOf(item)" :show-text="false" />
+                </div>
+              </article>
             </div>
-          </article>
+          </section>
         </div>
       </section>
 
@@ -552,6 +560,7 @@ const pageTitle = computed(() => ({
 const seasonalRows = computed(() => dashboard.seasonal_items || [])
 const libraryRows = computed(() => dashboard.library_items || [])
 const activeSeriesRows = computed(() => seasonalRows.value)
+const activeDetailRows = computed(() => selectedSeriesDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
 const cloudAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
 const cloudQueueCount = computed(() => dashboard.tasks.filter(t => ['pending', 'running', 'submitted'].includes(t.status)).length)
@@ -639,7 +648,7 @@ const filteredServerLogs = computed(() => {
 const filteredServerLogText = computed(() => filteredServerLogs.value.join('\n'))
 const selectedSeriesStats = computed(() => {
   const id = selectedSeries.value?.series?.id
-  return activeSeriesRows.value.find(item => item.id === id) || {}
+  return activeDetailRows.value.find(item => item.id === id) || {}
 })
 const selectedSyncRule = computed(() => {
   const id = selectedSeries.value?.series?.id
@@ -667,6 +676,32 @@ const filteredSeries = computed(() => {
     if (seriesFilter.value === '失败') return dashboard.tasks.some(t => t.entry_id === item.id && t.status === 'failed')
     return true
   })
+})
+
+const libraryWorks = computed(() => {
+  const groups = new Map()
+  for (const item of filteredSeries.value) {
+    const key = `${item.work_id || 0}:${item.work_title || item.title_root || item.display_title || item.title_cn || 'work'}`
+    if (!groups.has(key)) {
+      groups.set(key, {
+        work_id: item.work_id || 0,
+        work_title: item.work_title || item.title_root || item.display_title || item.title_cn || '未命名作品',
+        entry_count: 0,
+        cloud_asset_count: 0,
+        local_asset_count: 0,
+        entries: []
+      })
+    }
+    const group = groups.get(key)
+    group.entry_count += 1
+    group.cloud_asset_count += Number(item.cloud_asset_count || 0)
+    group.local_asset_count += Number(item.local_asset_count || 0)
+    group.entries.push(item)
+  }
+  return Array.from(groups.values()).map(group => ({
+    ...group,
+    entries: group.entries.sort((a, b) => String(a.display_title || '').localeCompare(String(b.display_title || '')))
+  }))
 })
 
 function taskTag(status) {
@@ -819,6 +854,11 @@ function subtitleLanguagePick(values, primary = [], secondary = []) {
 function progressOf(item) {
   const total = Number(item.episode_count || item.release_count || 1)
   return Math.min(100, Math.round(Number(item.downloaded_count || 0) / total * 100))
+}
+
+function libraryProgressOf(item) {
+  const total = Number(item.release_count || item.episode_count || 1)
+  return Math.min(100, Math.round(Number(item.local_asset_count || item.cloud_asset_count || 0) / total * 100))
 }
 
 async function reload() {

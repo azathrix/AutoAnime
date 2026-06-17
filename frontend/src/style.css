@@ -557,6 +557,52 @@ h1 {
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 }
 
+.library-work-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.library-work-card {
+  background: #fff;
+  border: 1px solid #dfe7f3;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.library-work-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.library-work-header h3 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.library-work-header p {
+  color: #64748b;
+  margin: 0;
+}
+
+.library-entry-list {
+  display: grid;
+  gap: 10px;
+}
+
+.library-entry-row {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  padding: 12px;
+}
+
 .anime-card {
   background: #fff;
   border: 1px solid #dfe7f3;
@@ -583,6 +629,11 @@ h1 {
   height: 112px;
   justify-content: center;
   overflow: hidden;
+}
+
+.cover.small {
+  height: 72px;
+  width: 72px;
 }
 
 .cover img {
