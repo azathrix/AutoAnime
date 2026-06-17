@@ -497,6 +497,96 @@ def match_cloud_file_to_series(item: dict, series_rows: list[dict]) -> dict | No
     return best
 
 
+def ensure_library_entry_for_series(
+    conn,
+    *,
+    series_row: dict,
+    display_title: str,
+    source_ref: str = "",
+) -> tuple[int, int]:
+    ts = now()
+    work_key = normalize_title_key(str(series_row.get("title_cn") or series_row.get("title_raw") or display_title or "Unknown"))
+    conn.execute(
+        """
+        INSERT INTO works
+          (root_key, title_root, title_root_raw, bangumi_id, metadata_source, hidden, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'cloud_import', 0, ?, ?)
+        ON CONFLICT(root_key) DO UPDATE SET
+          title_root=excluded.title_root,
+          title_root_raw=excluded.title_root_raw,
+          bangumi_id=CASE WHEN works.bangumi_id='' THEN excluded.bangumi_id ELSE works.bangumi_id END,
+          updated_at=excluded.updated_at
+        """,
+        (
+            work_key,
+            str(series_row.get("title_cn") or series_row.get("title_raw") or display_title or "Unknown"),
+            str(series_row.get("title_raw") or series_row.get("title_cn") or display_title or "Unknown"),
+            str(series_row.get("bangumi_id") or ""),
+            ts,
+            ts,
+        ),
+    )
+    work_id = int(conn.execute("SELECT id FROM works WHERE root_key=?", (work_key,)).fetchone()["id"])
+    fingerprint_key = f"cloud-library:{series_row.get('bangumi_id') or ''}:{normalize_title_key(display_title)}"
+    conn.execute(
+        """
+        INSERT INTO entries
+          (work_id, fingerprint, domain_kind, entry_kind, display_title, title_root,
+           season_label, arc_label, part_label, special_label,
+           title_raw, title_cn, bangumi_id, mikan_bangumi_id, tmdb_id, year, season_number,
+           poster_url, summary, metadata_source, hidden, auto_download, selected_group, selected_resolution,
+           backfill_mode, created_at, updated_at)
+        VALUES (?, ?, 'library', 'season', ?, ?, '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cloud_import', 0, 'inherit', '', '', 'inherit', ?, ?)
+        ON CONFLICT(fingerprint) DO UPDATE SET
+          work_id=excluded.work_id,
+          domain_kind='library',
+          display_title=excluded.display_title,
+          title_root=excluded.title_root,
+          title_raw=excluded.title_raw,
+          title_cn=excluded.title_cn,
+          bangumi_id=CASE WHEN entries.bangumi_id='' THEN excluded.bangumi_id ELSE entries.bangumi_id END,
+          mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE entries.mikan_bangumi_id END,
+          year=CASE WHEN excluded.year!=0 THEN excluded.year ELSE entries.year END,
+          season_number=CASE WHEN excluded.season_number!=0 THEN excluded.season_number ELSE entries.season_number END,
+          poster_url=CASE WHEN excluded.poster_url!='' THEN excluded.poster_url ELSE entries.poster_url END,
+          summary=CASE WHEN excluded.summary!='' THEN excluded.summary ELSE entries.summary END,
+          updated_at=excluded.updated_at
+        """,
+        (
+            work_id,
+            fingerprint_key,
+            display_title,
+            str(series_row.get("title_cn") or series_row.get("title_raw") or display_title or "Unknown"),
+            str(series_row.get("title_raw") or display_title or "Unknown"),
+            str(series_row.get("title_cn") or display_title or "Unknown"),
+            str(series_row.get("bangumi_id") or ""),
+            str(series_row.get("mikan_bangumi_id") or ""),
+            str(series_row.get("tmdb_id") or ""),
+            int(series_row.get("year") or 0),
+            int(series_row.get("season_number") or 1),
+            str(series_row.get("poster_url") or ""),
+            str(series_row.get("summary") or ""),
+            ts,
+            ts,
+        ),
+    )
+    entry_id = int(conn.execute("SELECT id FROM entries WHERE fingerprint=?", (fingerprint_key,)).fetchone()["id"])
+    conn.execute(
+        """
+        INSERT INTO library_entries
+          (entry_id, source_type, source_ref, wanted, archived, created_at, updated_at)
+        VALUES (?, 'cloud_scan', ?, 1, 0, ?, ?)
+        ON CONFLICT(entry_id) DO UPDATE SET
+          source_ref=CASE WHEN excluded.source_ref!='' THEN excluded.source_ref ELSE library_entries.source_ref END,
+          wanted=1,
+          archived=0,
+          updated_at=excluded.updated_at
+        """,
+        (entry_id, source_ref, ts, ts),
+    )
+    return int(series_row["id"]), entry_id
+
+
 def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str]) -> int | None:
     file_id = cloud_file_id(item)
     name = str(item.get("name") or Path(str(item.get("cloud_path") or "")).name)
@@ -507,6 +597,12 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
     if episode_number <= 0:
         return None
     with connect() as conn:
+        series_id, entry_id = ensure_library_entry_for_series(
+            conn,
+            series_row=series,
+            display_title=str(series.get("title_cn") or series.get("title_raw") or name),
+            source_ref=path,
+        )
         release = conn.execute(
             """
             SELECT *
@@ -515,7 +611,7 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
             ORDER BY selected DESC, id DESC
             LIMIT 1
             """,
-            (series["entry_id"], episode_number),
+            (entry_id, episode_number),
         ).fetchone()
         if not release:
             guid = f"cloud-import:pikpak:{file_id}"
@@ -529,8 +625,8 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
                   updated_at=excluded.updated_at
                 """,
                 (
-                    series["id"],
-                    series["entry_id"],
+                    series_id,
+                    entry_id,
                     episode_number,
                     f"第{episode_number:02d}话",
                     now(),
@@ -550,7 +646,7 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
                   title=excluded.title,
                   updated_at=excluded.updated_at
                 """,
-                (series["id"], series["entry_id"], episode_number, guid, name, now(), now()),
+                (series_id, entry_id, episode_number, guid, name, now(), now()),
             )
             release = conn.execute("SELECT * FROM releases WHERE guid=?", (guid,)).fetchone()
         if not release:
@@ -568,7 +664,7 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
                     status='available', updated_at=?
                 WHERE id=?
                 """,
-                (release["id"], series["id"], series["entry_id"], episode_number, path, name, ts, existing["id"]),
+                (release["id"], series_id, entry_id, episode_number, path, name, ts, existing["id"]),
             )
         else:
             conn.execute(
@@ -581,8 +677,8 @@ def upsert_scanned_cloud_asset(item: dict, series: dict, settings: dict[str, str
                 (
                     synthetic_task_id(file_id),
                     release["id"],
-                    series["id"],
-                    series["entry_id"],
+                    series_id,
+                    entry_id,
                     episode_number,
                     file_id,
                     path,
@@ -831,7 +927,7 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
         ]
     imported = 0
     skipped = 0
-    synced_series: set[int] = set()
+    synced_entries: set[int] = set()
     for item in files:
         name = str(item.get("name") or item.get("cloud_path") or "")
         if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
@@ -847,16 +943,16 @@ async def scan_cloud_library(settings: dict[str, str]) -> tuple[int, int]:
         imported += 1
         with connect() as conn:
             rule = conn.execute(
-                "SELECT * FROM sync_rules WHERE entry_id=?",
-                (series["entry_id"],),
+                "SELECT * FROM sync_rules WHERE entry_id=(SELECT entry_id FROM cloud_assets WHERE id=? LIMIT 1)",
+                (asset_id,),
             ).fetchone()
         if rule and rule["sync_enabled"]:
-            synced_series.add(int(series["entry_id"]))
-    for entry_id in synced_series:
+            synced_entries.add(int(rule["entry_id"]))
+    for entry_id in synced_entries:
         queue_sync_for_series(entry_id, settings)
-    if not synced_series:
+    if not synced_entries:
         reconcile_sync_intents(settings)
-    if synced_series:
+    if synced_entries:
         await process_sync_tasks(settings)
     else:
         with connect() as conn:

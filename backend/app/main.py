@@ -1164,11 +1164,20 @@ def dashboard_data() -> dict[str, Any]:
               e.bangumi_id,
               e.year,
               e.season_number,
-              w.title_root AS work_title
+              w.title_root AS work_title,
+              COUNT(DISTINCT ep.id) AS episode_count,
+              COUNT(DISTINCT r.id) AS release_count,
+              COUNT(DISTINCT ca.id) AS cloud_asset_count,
+              COUNT(DISTINCT la.id) AS local_asset_count
             FROM entries e
             JOIN library_entries le ON le.entry_id=e.id
             JOIN works w ON w.id=e.work_id
+            LEFT JOIN episodes ep ON ep.entry_id=e.id
+            LEFT JOIN releases r ON r.entry_id=e.id
+            LEFT JOIN cloud_assets ca ON ca.release_id=r.id
+            LEFT JOIN local_assets la ON la.release_id=r.id AND la.status='synced'
             WHERE COALESCE(e.hidden, 0)=0
+            GROUP BY e.id
             ORDER BY e.updated_at DESC
             """
         ).fetchall()

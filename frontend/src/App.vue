@@ -250,7 +250,7 @@
 
       <section v-if="view === 'library'" class="library">
         <div class="toolbar">
-          <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
+          <el-input v-model="keyword" clearable placeholder="搜索番剧库条目、Bangumi ID、标题" />
           <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
         </div>
         <div class="anime-grid">
