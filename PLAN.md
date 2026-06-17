@@ -1248,6 +1248,10 @@ access_token + refresh_token
 - 控制台任务说明已补强一轮：
   - `running / submitted / pending / waiting_retry` 都会给出更明确的 `display_reason`
   - 避免出现“卡住但看不出是在等 worker、等轮询还是等冷却”的空白状态
+- 控制台队列可观察性已继续补强：
+  - 队列卡片会显示防抖聚合剩余秒数，而不是只显示“聚合中”
+  - 队列明细补出 `attempts / updated_at`
+  - 前端 build 号继续显式更新，方便确认 NAS 上是否已部署到新版本
 
 这样后续做分域队列、分域失败重试和分域维护动作时，不需要再靠用户手动判断来源。
 

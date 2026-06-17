@@ -113,6 +113,18 @@ def seconds_until(value: str) -> int:
     return max(0, int((target - datetime.now(timezone.utc)).total_seconds()))
 
 
+def seconds_since(value: str) -> int:
+    if not value:
+        return 0
+    try:
+        target = datetime.fromisoformat(value)
+    except ValueError:
+        return 0
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - target).total_seconds()))
+
+
 def enrich_download_tasks(rows: list[Any]) -> list[dict[str, Any]]:
     result = rows_to_dicts(rows)
     for row in result:
@@ -1257,6 +1269,15 @@ async def scheduled_scan() -> None:
 
 def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
     with connect() as conn:
+        scheduled_rows = {
+            str(row["job_key"]): dict(row)
+            for row in conn.execute(
+                """
+                SELECT job_key, last_status, debounce_seconds, updated_at
+                FROM scheduled_jobs
+                """
+            ).fetchall()
+        }
         metadata_rows = {
             row["status"]: row["count"]
             for row in conn.execute(
@@ -1605,10 +1626,20 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
     for item in items:
         key = str(item["key"])
         runtime_key = canonical_queue_key(key)
+        scheduled_row = scheduled_rows.get(queue_job_key(runtime_key), {})
         running = int(item.get("running", 0) or 0)
         pending = int(item.get("pending", 0) or 0)
         failed = int(item.get("failed", 0) or 0)
         waiting = int(item.get("waiting", 0) or 0)
+        debounce_seconds = int(scheduled_row.get("debounce_seconds", 0) or 0)
+        debounce_remaining = 0
+        if scheduled_row and str(scheduled_row.get("last_status") or "") in {"debouncing", "queued"}:
+            debounce_remaining = max(
+                0,
+                debounce_seconds - seconds_since(str(scheduled_row.get("updated_at") or "")),
+            )
+        item["debounce_seconds"] = debounce_seconds
+        item["debounce_remaining_seconds"] = debounce_remaining
         if runtime_key in queue_running or running > 0:
             item["queue_state"] = "running"
             item["state_reason"] = "队列正在处理当前批次任务"
@@ -1619,7 +1650,8 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             task = queue_debounce_tasks.get(runtime_key)
             if task and not task.done():
                 item["queue_state"] = "debouncing"
-                item["state_reason"] = f"检测到新任务，等待 {int(QUEUE_DEBOUNCE_SECONDS)} 秒聚合后自动执行"
+                remaining = debounce_remaining or int(QUEUE_DEBOUNCE_SECONDS)
+                item["state_reason"] = f"检测到新任务，等待 {remaining} 秒聚合后自动执行"
             else:
                 item["queue_state"] = "ready"
                 item["state_reason"] = "已有待处理任务，可立即执行"
@@ -1637,7 +1669,8 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         if item["queue_state"] == "ready" and pending > 0:
             item["state_detail"] = f"当前批次可执行 {pending} 个"
         elif item["queue_state"] == "debouncing":
-            item["state_detail"] = "检测到连续入队，正在聚合这一批任务"
+            remaining = int(item.get("debounce_remaining_seconds", 0) or 0)
+            item["state_detail"] = f"检测到连续入队，正在聚合这一批任务；剩余 {remaining} 秒后自动开始"
         elif item["queue_state"] == "cooldown":
             item["state_detail"] = f"等待中的任务 {waiting} 个"
         elif item["queue_state"] == "running":

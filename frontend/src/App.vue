@@ -212,6 +212,8 @@
                   <el-table-column prop="display_title" label="对象" min-width="240" show-overflow-tooltip />
                   <el-table-column prop="episode_number" label="集" width="70" />
                   <el-table-column prop="display_reason" label="说明" min-width="260" show-overflow-tooltip />
+                  <el-table-column prop="attempts" label="尝试" width="80" />
+                  <el-table-column prop="updated_at" label="更新时间" width="190" show-overflow-tooltip />
                   <el-table-column prop="last_error" label="错误" min-width="280" show-overflow-tooltip />
                   <el-table-column label="进度" width="140">
                     <template #default="{ row }">
