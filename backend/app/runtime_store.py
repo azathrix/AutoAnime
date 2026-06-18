@@ -333,6 +333,15 @@ class RuntimeStore:
             "scheduler": list(self.scheduler.values()),
         }
 
+    def ready_count(self, processor_key: str = "") -> int:
+        return sum(
+            1
+            for task in self.tasks.values()
+            if task.status in {"pending", "waiting"}
+            and (not processor_key or task.processor_key == processor_key)
+            and due(task.retry_at)
+        )
+
     @staticmethod
     def task_dict(task: RuntimeTask) -> dict[str, Any]:
         return {

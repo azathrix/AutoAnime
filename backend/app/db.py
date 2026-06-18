@@ -1465,6 +1465,12 @@ def log(level: str, message: str) -> None:
     line = f"{ts} [{level.upper()}] {message[:2000]}"
     with LOG_LOCK:
         LOG_BUFFER.append(line)
+    try:
+        from .runtime_store import runtime_store
+
+        runtime_store.append_log_sync(normalized_level, message)
+    except Exception:
+        pass
     if normalized_level not in {"warn", "warning", "error"}:
         return
     try:

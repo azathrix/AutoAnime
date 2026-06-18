@@ -20,6 +20,7 @@ from .config import APP_DIR
 from .database import connect
 from .db import cleanup_operations, clear_runtime_data, clear_server_logs, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, run_cleanup_tasks, save_settings, start_operation, start_scheduled_job_run, update_operation
 from .queue_bridge import register_queue_trigger
+from .runtime_store import runtime_store
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
 from .pipeline_orchestrator import run_ready_tasks, start_pipeline
@@ -872,48 +873,18 @@ def ready_count_cleanup() -> int:
 
 
 def ready_count_processor_tasks() -> int:
-    return count_ready(
-        """
-        SELECT COUNT(*) AS count
-        FROM processor_tasks
-        WHERE status='pending'
-          AND (retry_after='' OR retry_after <= ?)
-        """,
-        (now(),),
-    )
+    return runtime_store.ready_count()
 
 
 def recoverable_queue_names() -> list[str]:
-    checks = [
-        ("processor", ready_count_processor_tasks),
-        ("mikan_match", ready_count_mikan_match),
-        ("metadata", ready_count_metadata),
-        ("selection", ready_count_selection),
-        ("backfill", ready_count_backfill),
-        ("cloud_presence", ready_count_cloud_presence),
-        ("download_enqueue", ready_count_download_enqueue),
-        ("download", ready_count_download),
-        ("cloud_poll", ready_count_cloud_poll),
-        ("cloud_asset", ready_count_cloud_asset),
-        ("sync_plan", ready_count_sync_plan),
-        ("sync", ready_count_sync),
-        ("nfo", ready_count_nfo),
-        ("local_presence", ready_count_local_presence),
-        ("cleanup", ready_count_cleanup),
-    ]
-    names: list[str] = []
-    for name, fn in checks:
-        runtime_key = canonical_queue_key(name)
-        if runtime_key in queue_running:
-            continue
-        pending_task = queue_debounce_tasks.get(runtime_key)
-        if pending_task and not pending_task.done():
-            continue
-        if runtime_key in queue_rerun_requested:
-            continue
-        if fn() > 0:
-            names.append(name)
-    return names
+    if "processor" in queue_running:
+        return []
+    pending_task = queue_debounce_tasks.get("processor")
+    if pending_task and not pending_task.done():
+        return []
+    if "processor" in queue_rerun_requested:
+        return []
+    return ["processor"] if runtime_store.ready_count() > 0 else []
 
 
 async def handle_mikan_match_queue() -> None:
@@ -1186,7 +1157,6 @@ async def run_scan_source(settings: dict[str, str], operation_id: int | None = N
     if run_id <= 0:
         raise RuntimeError("Mikan 新番追更流水线启动失败")
     trigger_queue("processor", delay=0)
-    trigger_queue("cleanup", delay=0)
     message = f"已启动 Mikan 新番追更流水线 run_id={run_id}；后续由 processor 队列自动推进"
     log("info", f"扫描全部: {message}")
     return message
@@ -1196,21 +1166,7 @@ def ensure_queue_handlers() -> None:
     queue_handlers.clear()
     queue_handlers.update(
         {
-            "mikan_match": handle_mikan_match_queue,
             "processor": handle_processor_queue,
-            "metadata": handle_metadata_queue,
-            "selection": handle_selection_queue,
-            "backfill": handle_backfill_queue,
-            "cloud_presence": handle_cloud_presence_queue,
-            "download_enqueue": handle_download_enqueue_queue,
-            "download": handle_download_queue,
-            "cloud_poll": handle_cloud_poll_queue,
-            "cloud_asset": handle_cloud_asset_queue,
-            "sync_plan": handle_sync_plan_queue,
-            "sync": handle_sync_queue,
-            "nfo": handle_nfo_queue,
-            "local_presence": handle_local_presence_queue,
-            "cleanup": handle_cleanup_queue,
         }
     )
     register_queue_trigger(trigger_queue)
@@ -1299,6 +1255,7 @@ def trigger_queues(names: list[str], delay: float | None = None) -> None:
 
 
 async def cancel_runtime_activity() -> None:
+    await runtime_store.cancel_all()
     for task in list(queue_debounce_tasks.values()):
         if task and not task.done():
             task.cancel()
@@ -1808,6 +1765,79 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
     return items
 
 
+def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
+    snapshot = runtime_store.snapshot()
+    runtime_queues = {str(item.get("key") or ""): item for item in snapshot.get("queues", [])}
+
+    def runtime_item(key: str, name: str, description: str = "") -> dict[str, Any]:
+        runtime_key = canonical_queue_key(key)
+        row = runtime_queues.get(runtime_key, {})
+        pending = int(row.get("pending", 0) or 0)
+        running = int(row.get("running", 0) or 0)
+        failed = int(row.get("failed", 0) or 0)
+        waiting = int(row.get("waiting", 0) or 0)
+        if running:
+            queue_state = "running"
+            state_reason = "队列正在处理当前批次任务"
+        elif pending:
+            queue_state = "ready"
+            state_reason = "已有待处理任务，可立即执行"
+        elif waiting:
+            queue_state = "cooldown"
+            state_reason = "任务正在等待重试"
+        elif failed:
+            queue_state = "failed"
+            state_reason = "存在失败任务，等待重试或人工处理"
+        else:
+            queue_state = "idle"
+            state_reason = "当前没有可处理任务"
+        return {
+            "key": key,
+            "runtime_queue_key": runtime_key,
+            "name": name,
+            "pending": pending,
+            "running": running,
+            "failed": failed,
+            "waiting": waiting,
+            "next_retry_after": "",
+            "next_retry_seconds": 0,
+            "queue_state": queue_state,
+            "state_reason": state_reason,
+            "state_detail": f"当前运行 {running} 个，待处理 {pending} 个" if running else (f"当前批次可执行 {pending} 个" if pending else ""),
+            "description": description,
+        }
+
+    return [
+        {
+            "key": "rss",
+            "name": "Mikan RSS",
+            "pending": 0,
+            "running": 0,
+            "failed": 0,
+            "waiting": 0,
+            "description": "周期读取 RSS，新增发布后进入 Runtime 流水线",
+            "queue_state": "scheduled" if bool_setting(settings.get("auto_scan", "false")) else "disabled",
+            "state_reason": "自动扫描已启用" if bool_setting(settings.get("auto_scan", "false")) else "自动扫描未启用",
+            "system_queue": True,
+            "runtime_queue_key": "rss",
+        },
+        runtime_item("processor", "流水线处理器", "统一 Runtime 处理器队列"),
+        runtime_item("mikan_match", "Mikan 匹配", "解析 Mikan 与 Bangumi 对应关系"),
+        runtime_item("metadata", "元数据", "刷新 Bangumi/条目元数据"),
+        runtime_item("selection", "自动选集", "根据全局优先级选择唯一发布"),
+        runtime_item("backfill", "整季补全", "补抓当季历史条目"),
+        runtime_item("cloud_presence", "云盘存在性检查", "先查云盘同集资源，避免重复提交"),
+        runtime_item("download_enqueue", "云盘提交准备", "Runtime 透传步骤，不写任务表"),
+        runtime_item("cloud", "PikPak 入库", "提交离线任务并写 cloud_submissions"),
+        runtime_item("cloud_poll", "PikPak 状态", "轮询离线任务完成状态"),
+        runtime_item("cloud_assets", "云盘资源登记", "完成后写 cloud_assets"),
+        runtime_item("sync_plan", "同步计划", "从 sync_rules 与 cloud_assets 生成内存同步任务"),
+        runtime_item("sync", "本地同步", "同步到本地并写 local_assets"),
+        runtime_item("nfo", "NFO", "本地同步完成后生成 NFO"),
+        runtime_item("local_presence", "本地存在性检查", "检查本地最终文件状态"),
+    ]
+
+
 def console_overview(
     queue_items: list[dict[str, Any]],
     scheduled_jobs: list[dict[str, Any]],
@@ -2125,6 +2155,17 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
                 """
             ).fetchall()
         )}
+    return details
+
+
+def queue_detail_map() -> dict[str, dict[str, Any]]:
+    snapshot = runtime_store.snapshot()
+    details = dict(snapshot.get("queue_details") or {})
+    for alias, canonical in QUEUE_KEY_ALIASES.items():
+        if canonical in details and alias not in details:
+            details[alias] = details[canonical]
+    details.setdefault("rss", {"items": []})
+    details.setdefault("processor", {"items": []})
     return details
 
 
@@ -2526,10 +2567,18 @@ async def api_dashboard() -> dict[str, Any]:
 @app.get("/api/dashboard/stream")
 async def api_dashboard_stream() -> StreamingResponse:
     async def event_stream():
+        version = -1
         while True:
-            data = await cached_dashboard_data()
+            snapshot = runtime_store.snapshot()
+            current_version = int(snapshot.get("version") or 0)
+            if version == current_version:
+                current_version = await runtime_store.wait_for_change(version, timeout=15.0)
+            version = current_version
+            data = await run_in_threadpool(dashboard_data)
+            async with dashboard_cache_lock:
+                dashboard_cache["data"] = data
+                dashboard_cache["ts"] = time.monotonic()
             yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(1)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -2812,65 +2861,30 @@ async def api_process_sync_tasks() -> dict[str, str]:
 
 @app.post("/api/tasks/retry-failed")
 async def api_retry_failed() -> dict[str, str]:
-    with connect() as conn:
-        total = 0
-        reset_tables = [
-            "cloud_presence_tasks",
-            "download_enqueue_tasks",
-            "download_tasks",
-            "cloud_poll_tasks",
-            "cloud_asset_tasks",
-            "sync_plan_tasks",
-            "sync_tasks",
-            "nfo_tasks",
-            "local_presence_tasks",
-            "selection_tasks",
-            "backfill_tasks",
-            "metadata_tasks",
-            "mikan_match_tasks",
-            "cleanup_tasks",
-        ]
-        for table in [
-            *reset_tables,
-        ]:
-            cursor = conn.execute(
-                f"""
-                UPDATE {table}
-                SET status='pending', attempts=0, retry_after='', last_error='', updated_at=?
-                WHERE status='failed'
-                """,
-                (now(),),
-            )
-            total += cursor.rowcount
-        cursor = conn.execute(
-            """
-            UPDATE operations
-            SET status='failed', finished_at=?
-            WHERE status='running'
-            """,
-            (now(),),
-        )
-    log("info", f"已重置失败任务: {total} 个")
-    trigger_queues(
-        [
-            "mikan_match",
-            "metadata",
-            "selection",
-            "backfill",
-            "cloud_presence",
-            "download_enqueue",
-            "download",
-            "cloud_poll",
-            "cloud_asset",
-            "sync_plan",
-            "sync",
-            "nfo",
-            "local_presence",
-            "cleanup",
-        ],
-        delay=0,
-    )
+    total = 0
+    for task in runtime_store.tasks.values():
+        if task.status == "failed":
+            task.status = "pending"
+            task.attempts = 0
+            task.retry_at = ""
+            task.error = ""
+            task.updated_at = now()
+            total += 1
+    await runtime_store.bump()
+    log("info", f"已重置 Runtime 失败任务: {total} 个")
+    trigger_queue("processor", delay=0)
     return {"status": "started", "count": str(total), "message": f"失败任务已重新入队: {total} 个"}
+
+
+@app.post("/api/runtime/retry-failed")
+async def api_runtime_retry_failed() -> dict[str, str]:
+    return await api_retry_failed()
+
+
+@app.post("/api/runtime/cancel")
+async def api_runtime_cancel() -> dict[str, str]:
+    await runtime_store.cancel_all()
+    return {"status": "completed", "message": "已取消 Runtime 中的运行和任务"}
 
 
 @app.post("/api/operations/clear")
@@ -2884,13 +2898,19 @@ async def api_clear_operations() -> dict[str, str]:
 
 @app.post("/api/logs/clear")
 async def api_clear_logs() -> dict[str, str]:
-    count = clear_server_logs()
+    count = await runtime_store.clear_logs()
     return {"status": "completed", "count": str(count), "message": "已清空日志"}
+
+
+@app.post("/api/runtime/logs/clear")
+async def api_runtime_clear_logs() -> dict[str, str]:
+    return await api_clear_logs()
 
 
 @app.post("/api/system/clear-data")
 async def api_clear_data() -> dict[str, str]:
     await cancel_runtime_activity()
+    await runtime_store.clear_all()
     clear_runtime_data()
     log("warn", "已清除所有运行数据")
     return {"status": "completed", "message": "已清除所有运行数据"}
