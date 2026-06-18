@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from collections import deque
+from threading import Lock
 from typing import Any
 
 from .config import DATA_DIR, DB_PATH, DEFAULT_SETTINGS
@@ -10,6 +11,8 @@ from .database import connect, initialize_database
 
 
 LOG_PATH = DATA_DIR / "autoanime.log"
+LOG_BUFFER: deque[str] = deque(maxlen=2000)
+LOG_LOCK = Lock()
 
 
 def now() -> str:
@@ -1457,31 +1460,47 @@ def bump_runtime_generation() -> str:
 
 
 def log(level: str, message: str) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    line = f"{now()} [{level.upper()}] {message[:2000]}\n"
+    ts = now()
+    normalized_level = level.lower()
+    line = f"{ts} [{level.upper()}] {message[:2000]}"
+    with LOG_LOCK:
+        LOG_BUFFER.append(line)
+    if normalized_level not in {"warn", "warning", "error"}:
+        return
     try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as output:
-            output.write(line)
-    except OSError:
-        pass
-    try:
+            output.write(f"{line}\n")
         with connect() as conn:
             conn.execute(
                 "INSERT INTO logs (level, message, created_at) VALUES (?, ?, ?)",
-                (level, message[:2000], now()),
+                (level, message[:2000], ts),
             )
     except sqlite3.OperationalError:
+        pass
+    except OSError:
         pass
 
 
 def read_server_logs(limit: int = 200) -> list[str]:
-    if not LOG_PATH.exists():
-        return []
+    with LOG_LOCK:
+        return list(LOG_BUFFER)[-limit:]
+
+
+def clear_server_logs() -> int:
+    with LOG_LOCK:
+        count = len(LOG_BUFFER)
+        LOG_BUFFER.clear()
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM logs")
+        count += max(0, cursor.rowcount)
     try:
-        with LOG_PATH.open("r", encoding="utf-8", errors="replace") as source:
-            return list(deque((line.rstrip("\n") for line in source), maxlen=limit))
+        LOG_PATH.unlink(missing_ok=True)
     except OSError:
-        return []
+        pass
+    with LOG_LOCK:
+        LOG_BUFFER.clear()
+    return count
 
 
 def start_operation(name: str, message: str = "") -> int:

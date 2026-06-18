@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -10,13 +11,14 @@ from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .config import APP_DIR
 from .database import connect
-from .db import LOG_PATH, cleanup_operations, clear_runtime_data, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, run_cleanup_tasks, save_settings, start_operation, start_scheduled_job_run, update_operation
+from .db import cleanup_operations, clear_runtime_data, clear_server_logs, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, run_cleanup_tasks, save_settings, start_operation, start_scheduled_job_run, update_operation
 from .queue_bridge import register_queue_trigger
 from .library import bool_setting
 from .metadata import generate_nfo_for_entry, refresh_entry_metadata
@@ -36,6 +38,9 @@ active_queue_tasks: set[asyncio.Task] = set()
 queue_running: set[str] = set()
 queue_rerun_requested: set[str] = set()
 active_operation_tasks: set[asyncio.Task] = set()
+DASHBOARD_CACHE_TTL = 1.0
+dashboard_cache: dict[str, Any] = {"ts": 0.0, "data": None}
+dashboard_cache_lock = asyncio.Lock()
 QUEUE_KEY_ALIASES = {
     "cloud": "download",
     "cloud_assets": "cloud_asset",
@@ -2501,16 +2506,28 @@ def dashboard_data() -> dict[str, Any]:
     }
 
 
+async def cached_dashboard_data() -> dict[str, Any]:
+    async with dashboard_cache_lock:
+        cached = dashboard_cache.get("data")
+        ts = float(dashboard_cache.get("ts") or 0)
+        if cached is not None and time.monotonic() - ts < DASHBOARD_CACHE_TTL:
+            return cached
+        data = await run_in_threadpool(dashboard_data)
+        dashboard_cache["data"] = data
+        dashboard_cache["ts"] = time.monotonic()
+        return data
+
+
 @app.get("/api/dashboard")
 async def api_dashboard() -> dict[str, Any]:
-    return dashboard_data()
+    return await cached_dashboard_data()
 
 
 @app.get("/api/dashboard/stream")
 async def api_dashboard_stream() -> StreamingResponse:
     async def event_stream():
         while True:
-            data = dashboard_data()
+            data = await cached_dashboard_data()
             yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
             await asyncio.sleep(1)
 
@@ -2867,13 +2884,8 @@ async def api_clear_operations() -> dict[str, str]:
 
 @app.post("/api/logs/clear")
 async def api_clear_logs() -> dict[str, str]:
-    with connect() as conn:
-        cursor = conn.execute("DELETE FROM logs")
-    try:
-        LOG_PATH.unlink(missing_ok=True)
-    except OSError:
-        pass
-    return {"status": "completed", "count": str(cursor.rowcount), "message": "已清空日志"}
+    count = clear_server_logs()
+    return {"status": "completed", "count": str(count), "message": "已清空日志"}
 
 
 @app.post("/api/system/clear-data")
