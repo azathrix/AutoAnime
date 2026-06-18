@@ -10,8 +10,9 @@
       </div>
       <nav>
         <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 控制台</button>
-        <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 更新日历</button>
-        <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧库</button>
+        <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon> 新番</button>
+        <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
+        <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
     </aside>
@@ -38,7 +39,7 @@
             <el-option label="30 秒" :value="30000" />
           </el-select>
           <el-button :icon="Refresh" @click="reload" :loading="loading">刷新状态</el-button>
-          <el-button v-if="view === 'dashboard'" type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
+          <el-button v-if="view === 'dashboard' || view === 'seasonal'" type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
         </div>
       </header>
 
@@ -320,6 +321,33 @@
         </div>
       </section>
 
+      <section v-if="view === 'seasonal'" class="library seasonal-page">
+        <div class="toolbar">
+          <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
+          <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
+        </div>
+        <div class="anime-grid catalog-card-grid">
+          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'seasonal')">
+            <div class="cover poster-cover">
+              <img v-if="item.poster_url" :src="item.poster_url" />
+              <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
+            </div>
+            <div class="anime-body">
+              <h3>{{ item.entry_display_title || item.display_title || item.title_cn }}</h3>
+              <p>{{ item.entry_secondary_title || item.work_display_title || item.bangumi_id || '未关联' }}</p>
+              <div class="tagline">
+                <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
+                <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
+                <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
+                <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
+              </div>
+              <p v-if="seasonalStatusSummary(item)" class="queue-note">{{ seasonalStatusSummary(item) }}</p>
+              <el-progress :percentage="progressOf(item)" :show-text="false" />
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section v-if="view === 'calendar'" class="calendar-page">
         <div class="toolbar calendar-toolbar">
           <el-date-picker
@@ -336,7 +364,7 @@
           </el-button-group>
         </div>
         <div class="week-calendar-grid">
-          <section v-for="day in weekDays" :key="day.key" class="week-day-column">
+          <section v-for="day in weekDays" :key="day.key" class="week-day-column" :class="{ today: day.isToday }">
             <header>
               <strong>{{ day.label }}</strong>
               <span>{{ day.dateLabel }}</span>
@@ -347,6 +375,10 @@
               class="calendar-entry-card"
               @click="openEntry(item.entry_id, 'seasonal')"
             >
+              <div class="calendar-entry-cover">
+                <img v-if="item.poster_url" :src="item.poster_url" />
+                <span v-else>{{ (item.work_display_title || item.entry_display_title || item.display_title || 'AN').slice(0, 2) }}</span>
+              </div>
               <div class="calendar-entry-meta">
                 <strong>{{ item.work_display_title || item.entry_display_title || item.display_title }}</strong>
                 <span>{{ item.entry_scope_label || item.entry_secondary_title || '-' }}</span>
@@ -386,16 +418,21 @@
           </div>
         </div>
         <div class="library-work-grid">
-          <section v-for="work in libraryWorks" :key="work.work_id || work.work_title" class="library-work-card">
-            <header class="library-work-header">
+          <section v-for="work in libraryWorks" :key="work.key" class="library-work-card">
+            <header class="library-work-header" @click="toggleWorkExpanded(work.key)">
+              <div class="cover work-cover">
+                <img v-if="work.poster_url" :src="work.poster_url" />
+                <span v-else>{{ work.work_title?.slice(0, 2) || 'AN' }}</span>
+              </div>
               <div>
                 <h3>{{ work.work_title || '未命名作品' }}</h3>
                 <p>{{ work.entry_count }} 个条目 · 云盘 {{ work.cloud_asset_count }} · 本地 {{ work.local_asset_count }}</p>
               </div>
+              <el-tag size="small">{{ isWorkExpanded(work.key) ? '收起' : '展开' }}</el-tag>
             </header>
-            <div class="library-entry-list">
-              <article v-for="item in work.entries" :key="item.id" class="library-entry-row" @click="openEntry(item.id, 'library')">
-                <div class="cover small">
+            <div v-show="isWorkExpanded(work.key)" class="library-entry-list library-entry-card-grid">
+              <article v-for="item in work.entries" :key="item.id" class="library-entry-row library-entry-card" @click="openEntry(item.id, 'library')">
+                <div class="cover poster-cover">
                   <img v-if="item.poster_url" :src="item.poster_url" />
                   <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
                 </div>
@@ -656,6 +693,7 @@ const selectedQueueDomainFilter = ref('全部')
 const queueVisibilityMode = ref('活跃')
 const utilityTab = ref('logs')
 const calendarWeek = ref('')
+const expandedWorkKeys = ref(new Set())
 let refreshTimer = null
 let dashboardStream = null
 let streamRetryTimer = null
@@ -685,8 +723,9 @@ const diagnostics = reactive({ tables: {} })
 
 const pageTitle = computed(() => ({
   dashboard: '控制台',
-  calendar: '更新日历',
-  library: '番剧库',
+  seasonal: '新番',
+  calendar: '日历',
+  library: '番剧',
   settings: '设置中心'
 }[view.value]))
 
@@ -706,6 +745,7 @@ const weekDays = computed(() => {
       key,
       label: labels[index],
       dateLabel: `${date.getMonth() + 1}/${date.getDate()}`,
+      isToday: key === formatDateKey(new Date()),
       items: seasonalCalendarCards.value.filter(item => formatDateKey(new Date(item.updated_at || item.synced_at || 0)) === key)
     }
   })
@@ -810,8 +850,10 @@ const filteredSeries = computed(() => {
   return source.filter(item => {
     const matched = !text || `${item.entry_display_title || item.display_title || item.title_cn} ${item.work_display_title || item.work_title || item.title_root || ''} ${item.entry_scope_label || ''} ${item.bangumi_id}`.toLowerCase().includes(text)
     if (!matched) return false
-    if (view.value === 'library') return true
-    if (seriesFilter.value === '待配置') return !item.bangumi_id || !item.group_count || !item.resolution_count
+    if (seriesFilter.value === '待配置') {
+      if (view.value === 'library') return !item.bangumi_id
+      return !item.bangumi_id || !item.group_count || !item.resolution_count
+    }
     if (seriesFilter.value === '已入云盘') return Number(item.cloud_asset_count || 0) > 0
     if (seriesFilter.value === '已同步') return Number(item.local_asset_count || 0) > 0
     if (seriesFilter.value === '失败') return Boolean(item.has_failed_task)
@@ -825,8 +867,10 @@ const libraryWorks = computed(() => {
     const key = `${item.work_id || 0}:${item.work_display_title || item.work_title || item.title_root || item.display_title || item.title_cn || 'work'}`
     if (!groups.has(key)) {
       groups.set(key, {
+        key,
         work_id: item.work_id || 0,
         work_title: item.work_display_title || item.work_title || item.title_root || item.display_title || item.title_cn || '未命名作品',
+        poster_url: item.poster_url || '',
         entry_count: 0,
         cloud_asset_count: 0,
         local_asset_count: 0,
@@ -837,6 +881,7 @@ const libraryWorks = computed(() => {
     group.entry_count += 1
     group.cloud_asset_count += Number(item.cloud_asset_count || 0)
     group.local_asset_count += Number(item.local_asset_count || 0)
+    if (!group.poster_url && item.poster_url) group.poster_url = item.poster_url
     group.entries.push(item)
   }
   return Array.from(groups.values()).map(group => ({
@@ -962,6 +1007,20 @@ function progressOf(item) {
 function libraryProgressOf(item) {
   const total = Number(item.release_count || item.episode_count || 1)
   return Math.min(100, Math.round(Number(item.local_asset_count || item.cloud_asset_count || 0) / total * 100))
+}
+
+function isWorkExpanded(key) {
+  return expandedWorkKeys.value.has(key)
+}
+
+function toggleWorkExpanded(key) {
+  const next = new Set(expandedWorkKeys.value)
+  if (next.has(key)) {
+    next.delete(key)
+  } else {
+    next.add(key)
+  }
+  expandedWorkKeys.value = next
 }
 
 function startOfWeek(date) {

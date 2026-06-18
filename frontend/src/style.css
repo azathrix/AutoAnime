@@ -472,6 +472,11 @@ h1 {
   padding: 12px;
 }
 
+.week-day-column.today {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .12);
+}
+
 .week-day-column header {
   border-bottom: 1px solid #e2e8f0;
   display: grid;
@@ -491,8 +496,30 @@ h1 {
   cursor: pointer;
   display: grid;
   gap: 10px;
-  min-height: 120px;
-  padding: 14px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-height: 112px;
+  padding: 10px;
+}
+
+.calendar-entry-cover {
+  align-items: center;
+  aspect-ratio: 2 / 3;
+  background: #e2e8f0;
+  border-radius: 7px;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.calendar-entry-cover img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.calendar-entry-cover span {
+  color: #2563eb;
+  font-weight: 800;
 }
 
 .calendar-entry-card:hover {
@@ -734,6 +761,10 @@ h1 {
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 }
 
+.catalog-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
 .library-work-grid {
   display: grid;
   gap: 16px;
@@ -743,14 +774,17 @@ h1 {
   background: #fff;
   border: 1px solid #dfe7f3;
   border-radius: 8px;
-  padding: 16px;
+  overflow: hidden;
+  padding: 0;
 }
 
 .library-work-header {
   align-items: center;
+  cursor: pointer;
   display: flex;
+  gap: 14px;
   justify-content: space-between;
-  margin-bottom: 12px;
+  padding: 14px;
 }
 
 .library-work-header h3 {
@@ -766,18 +800,26 @@ h1 {
 .library-entry-list {
   display: grid;
   gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.library-entry-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 }
 
 .library-entry-row {
-  align-items: center;
   background: #f8fafc;
   border: 1px solid #dbe4ef;
   border-radius: 8px;
   cursor: pointer;
   display: grid;
   gap: 12px;
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 88px minmax(0, 1fr);
   padding: 12px;
+}
+
+.library-entry-card {
+  align-items: start;
 }
 
 .anime-card {
@@ -808,9 +850,24 @@ h1 {
   overflow: hidden;
 }
 
+.catalog-card {
+  grid-template-columns: 96px minmax(0, 1fr);
+}
+
 .cover.small {
   height: 72px;
   width: 72px;
+}
+
+.poster-cover {
+  aspect-ratio: 2 / 3;
+  height: auto;
+  min-height: 132px;
+}
+
+.work-cover {
+  flex: 0 0 64px;
+  height: 88px;
 }
 
 .cover img {
@@ -1031,6 +1088,8 @@ h1 {
   .queue-grid,
   .log-layout,
   .console-workbench,
+  .dashboard-bottom-grid,
+  .library-entry-card-grid,
   .detail-summary-grid {
     grid-template-columns: 1fr;
   }
