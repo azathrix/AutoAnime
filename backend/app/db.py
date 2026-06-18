@@ -1741,6 +1741,9 @@ def clear_runtime_data() -> None:
     next_generation = now()
     with connect() as conn:
         for table in [
+            "processor_events",
+            "processor_tasks",
+            "pipeline_runs",
             "sync_tasks",
             "local_assets",
             "sync_rules",
@@ -1766,7 +1769,7 @@ def clear_runtime_data() -> None:
             "scheduled_job_runs",
         ]:
             conn.execute(f"DELETE FROM {table}")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','cloud_submissions','download_tasks','backfill_tasks','selection_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series','operations','logs','scheduled_job_runs')")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('processor_events','processor_tasks','pipeline_runs','sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','cloud_submissions','download_tasks','backfill_tasks','selection_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series','operations','logs','scheduled_job_runs')")
         conn.execute(
             """
             UPDATE scheduled_jobs

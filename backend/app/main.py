@@ -32,6 +32,7 @@ QUEUE_DEBOUNCE_SECONDS = 10.0
 QueueHandler = Callable[[], Awaitable[None]]
 queue_handlers: dict[str, QueueHandler] = {}
 queue_debounce_tasks: dict[str, asyncio.Task] = {}
+active_queue_tasks: set[asyncio.Task] = set()
 queue_running: set[str] = set()
 queue_rerun_requested: set[str] = set()
 active_operation_tasks: set[asyncio.Task] = set()
@@ -1147,8 +1148,8 @@ async def handle_cleanup_queue() -> None:
 
 async def handle_processor_queue() -> None:
     generation = get_runtime_generation()
-    for _ in range(30):
-        processed = await run_ready_tasks(limit=50)
+    for _ in range(10):
+        processed = await run_ready_tasks(limit=10)
         if not runtime_generation_alive(generation):
             return
         if processed:
@@ -1157,6 +1158,7 @@ async def handle_processor_queue() -> None:
             break
         if ready_count_processor_tasks() <= 0:
             break
+        await asyncio.sleep(0)
     if ready_count_processor_tasks() > 0:
         trigger_queue("processor", delay=0)
 
@@ -1225,6 +1227,11 @@ async def run_queue(name: str) -> None:
     run_message = f"队列 {name} 执行完成"
     try:
         await handler()
+    except asyncio.CancelledError:
+        run_status = "cancelled"
+        run_message = f"队列 {name} 已取消"
+        log("warn", f"队列已取消[{name}]")
+        raise
     except Exception as exc:
         log("error", f"队列处理失败[{name}]: {exc}")
         run_status = "failed"
@@ -1233,7 +1240,7 @@ async def run_queue(name: str) -> None:
         queue_running.discard(name)
         if run_id:
             finish_scheduled_job_run(run_id, run_status, run_message)
-        if name in queue_rerun_requested:
+        if run_status != "cancelled" and name in queue_rerun_requested:
             queue_rerun_requested.discard(name)
             trigger_queue(name)
 
@@ -1270,7 +1277,10 @@ def trigger_queue(name: str, delay: float | None = None) -> None:
             mark_scheduled_job(queue_job_key(name), last_status="debouncing", updated_at=now())
             return
 
-    queue_debounce_tasks[name] = loop.create_task(runner())
+    task = loop.create_task(runner())
+    queue_debounce_tasks[name] = task
+    active_queue_tasks.add(task)
+    task.add_done_callback(lambda finished: active_queue_tasks.discard(finished))
 
 
 def trigger_queues(names: list[str], delay: float | None = None) -> None:
@@ -1288,6 +1298,12 @@ async def cancel_runtime_activity() -> None:
         if task and not task.done():
             task.cancel()
     queue_debounce_tasks.clear()
+    for task in list(active_queue_tasks):
+        if task and not task.done():
+            task.cancel()
+    if active_queue_tasks:
+        await asyncio.gather(*list(active_queue_tasks), return_exceptions=True)
+    active_queue_tasks.clear()
     queue_running.clear()
     queue_rerun_requested.clear()
 

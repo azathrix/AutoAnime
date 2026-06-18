@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..database import connect
-from ..db import get_settings, now
+from ..db import get_settings, log, now
 from ..pipeline_models import ProcessorContext, ProcessorResult
 from ..scanner import enqueue_metadata_task, fetch_mikan_match, task_retry_after
 
@@ -34,6 +34,11 @@ async def process_mikan_match(context: ProcessorContext, payload: dict) -> Proce
         )
 
     try:
+        log(
+            "info",
+            f"Mikan 匹配开始: candidate_id={candidate_id} title={row['title']} "
+            f"page_url={row['page_url'] or '-'} known_mikan_id={existing_mikan or '-'}",
+        )
         bangumi_id, mikan_id = await fetch_mikan_match(
             settings,
             str(row["page_url"] or ""),
@@ -80,6 +85,10 @@ async def process_mikan_match(context: ProcessorContext, payload: dict) -> Proce
                 (mikan_id, ts, bangumi_id),
             )
         enqueue_metadata_task(conn, candidate_id, bangumi_id, ts)
+    log(
+        "info",
+        f"Mikan 匹配完成: candidate_id={candidate_id} bangumi_id={bangumi_id} mikan_id={mikan_id or '-'}",
+    )
 
     return ProcessorResult.success(
         "Mikan 匹配完成",

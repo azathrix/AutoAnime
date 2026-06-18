@@ -73,6 +73,11 @@ async def fetch_mikan_match(settings: dict[str, str], page_url: str, mikan_bangu
         resp.raise_for_status()
         bangumi_id, mikan_id = parse_mikan_ids(resp.text)
         mikan_id = mikan_id or parse_episode_page_mikan_id(resp.text) or mikan_bangumi_id
+        log(
+            "info",
+            f"Mikan 匹配请求: url={first_url} status={resp.status_code} "
+            f"bangumi_id={bangumi_id or '-'} mikan_id={mikan_id or '-'} bytes={len(resp.text)}",
+        )
         if bangumi_id and mikan_id:
             return bangumi_id, mikan_id
         if mikan_id:
@@ -81,6 +86,11 @@ async def fetch_mikan_match(settings: dict[str, str], page_url: str, mikan_bangu
             bgm_resp.raise_for_status()
             bangumi_id, parsed_mikan_id = parse_mikan_ids(bgm_resp.text)
             mikan_id = parsed_mikan_id or mikan_id
+            log(
+                "info",
+                f"Mikan 番组页请求: url={bgm_url} status={bgm_resp.status_code} "
+                f"bangumi_id={bangumi_id or '-'} mikan_id={mikan_id or '-'} bytes={len(bgm_resp.text)}",
+            )
             return bangumi_id, mikan_id
     return "", ""
 
@@ -860,12 +870,12 @@ def enqueue_backfill_task(conn, series_id: int, entry_id: int, settings: dict[st
     request_queue_trigger("backfill")
 
 
-async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+async def process_mikan_match_tasks(settings: dict[str, str], limit: int = 10) -> tuple[int, int]:
     async with mikan_match_lock:
         return await _process_mikan_match_tasks(settings, limit)
 
 
-async def _process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
+async def _process_mikan_match_tasks(settings: dict[str, str], limit: int = 10) -> tuple[int, int]:
     with connect() as conn:
         conn.execute(
             """
@@ -951,7 +961,7 @@ async def _process_mikan_match_tasks(settings: dict[str, str], limit: int = 20) 
             enqueue_metadata_task(conn, row["candidate_id"], bangumi_id, ts)
         return 1, 0
 
-    results = await gather_limited([handle(row) for row in rows], limit=4)
+    results = await gather_limited([handle(row) for row in rows], limit=2)
     completed = sum(item[0] for item in results)
     failed = sum(item[1] for item in results)
     return completed, failed
