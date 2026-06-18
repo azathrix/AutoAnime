@@ -77,6 +77,8 @@ class RuntimeStore:
         self._changed = asyncio.Condition()
         self._next_task_id = 1
         self._next_run_id = 1
+        self._next_operation_id = 1
+        self._next_scheduler_run_id = 1
         self._generation = utc_now()
         self._version = 0
         self.tasks: dict[int, RuntimeTask] = {}
@@ -84,6 +86,8 @@ class RuntimeStore:
         self.dedupe_index: dict[str, int] = {}
         self.logs: deque[str] = deque(maxlen=5000)
         self.scheduler: dict[str, dict[str, Any]] = {}
+        self.scheduler_runs: deque[dict[str, Any]] = deque(maxlen=200)
+        self.operations: dict[int, dict[str, Any]] = {}
 
     @property
     def generation(self) -> str:
@@ -94,6 +98,14 @@ class RuntimeStore:
             self._version += 1
             self._changed.notify_all()
             return self._version
+
+    def bump_sync(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._version += 1
+            return
+        loop.create_task(self.bump())
 
     async def wait_for_change(self, last_version: int, timeout: float = 15.0) -> int:
         async with self._changed:
@@ -286,6 +298,8 @@ class RuntimeStore:
             self.dedupe_index.clear()
             self.logs.clear()
             self.scheduler.clear()
+            self.scheduler_runs.clear()
+            self.operations.clear()
         await self.bump()
 
     async def set_scheduler(self, job_key: str, **fields: Any) -> None:
@@ -294,6 +308,92 @@ class RuntimeStore:
             item.update(fields)
             item["updated_at"] = utc_now()
         await self.bump()
+
+    def set_scheduler_sync(self, job_key: str, **fields: Any) -> None:
+        item = self.scheduler.setdefault(job_key, {"job_key": job_key, "last_status": "idle"})
+        item.update(fields)
+        item["updated_at"] = utc_now()
+        self.bump_sync()
+
+    def start_scheduler_run_sync(self, job_key: str, trigger_source: str = "system", message: str = "") -> int:
+        run_id = self._next_scheduler_run_id
+        self._next_scheduler_run_id += 1
+        started_at = utc_now()
+        run = {
+            "id": run_id,
+            "job_id": 0,
+            "job_key": job_key,
+            "job_type": "runtime",
+            "status": "running",
+            "trigger_source": trigger_source,
+            "message": message[:2000],
+            "stats_json": "",
+            "started_at": started_at,
+            "finished_at": "",
+        }
+        self.scheduler_runs.append(run)
+        self.set_scheduler_sync(job_key, last_status="running", last_run_at=started_at, last_error="")
+        return run_id
+
+    def finish_scheduler_run_sync(self, run_id: int, status: str, message: str = "", stats_json: str = "") -> None:
+        finished_at = utc_now()
+        for run in reversed(self.scheduler_runs):
+            if int(run.get("id") or 0) != run_id:
+                continue
+            run["status"] = status
+            run["message"] = message[:2000]
+            run["stats_json"] = stats_json[:4000]
+            run["finished_at"] = finished_at
+            job_key = str(run.get("job_key") or "")
+            self.set_scheduler_sync(
+                job_key,
+                last_status=status,
+                last_error="" if status == "completed" else message[:2000],
+                last_run_at=run.get("started_at", ""),
+            )
+            return
+        self.bump_sync()
+
+    def start_operation_sync(self, name: str, message: str = "") -> int:
+        operation_id = self._next_operation_id
+        self._next_operation_id += 1
+        self.operations[operation_id] = {
+            "id": operation_id,
+            "name": name,
+            "status": "running",
+            "message": message[:2000],
+            "started_at": utc_now(),
+            "finished_at": "",
+        }
+        self.bump_sync()
+        return operation_id
+
+    def update_operation_sync(self, operation_id: int, message: str) -> None:
+        operation = self.operations.get(operation_id)
+        if not operation:
+            return
+        operation["message"] = message[:2000]
+        self.bump_sync()
+
+    def finish_operation_sync(self, operation_id: int, status: str, message: str = "") -> None:
+        operation = self.operations.get(operation_id)
+        if not operation:
+            return
+        operation["status"] = status
+        operation["message"] = message[:2000]
+        operation["finished_at"] = utc_now()
+        self.bump_sync()
+
+    def clear_finished_operations_sync(self) -> int:
+        removable = [
+            operation_id
+            for operation_id, operation in self.operations.items()
+            if str(operation.get("status") or "") in {"completed", "failed", "cancelled"}
+        ]
+        for operation_id in removable:
+            self.operations.pop(operation_id, None)
+        self.bump_sync()
+        return len(removable)
 
     def snapshot(self) -> dict[str, Any]:
         tasks = list(self.tasks.values())
@@ -331,6 +431,8 @@ class RuntimeStore:
             "queue_details": {key: {"items": value["items"]} for key, value in queues.items()},
             "logs": list(self.logs)[-200:],
             "scheduler": list(self.scheduler.values()),
+            "scheduler_runs": list(self.scheduler_runs)[-40:],
+            "operations": sorted(self.operations.values(), key=lambda item: int(item.get("id") or 0), reverse=True)[:50],
         }
 
     def ready_count(self, processor_key: str = "") -> int:

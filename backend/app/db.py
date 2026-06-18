@@ -105,91 +105,10 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
             UNIQUE(pipeline_id, from_step_key, result_status, to_step_key)
         );
 
-        CREATE TABLE IF NOT EXISTS pipeline_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pipeline_id INTEGER NOT NULL,
-            trigger_source TEXT NOT NULL DEFAULT 'manual',
-            status TEXT NOT NULL DEFAULT 'running',
-            progress INTEGER NOT NULL DEFAULT 0,
-            message TEXT NOT NULL DEFAULT '',
-            stats_json TEXT NOT NULL DEFAULT '',
-            started_at TEXT NOT NULL,
-            finished_at TEXT NOT NULL DEFAULT '',
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS processor_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pipeline_id INTEGER NOT NULL DEFAULT 0,
-            run_id INTEGER NOT NULL DEFAULT 0,
-            step_id INTEGER NOT NULL DEFAULT 0,
-            parent_task_id INTEGER NOT NULL DEFAULT 0,
-            processor_key TEXT NOT NULL,
-            domain_kind TEXT NOT NULL DEFAULT '',
-            subject_type TEXT NOT NULL DEFAULT '',
-            subject_id INTEGER NOT NULL DEFAULT 0,
-            dedupe_key TEXT NOT NULL DEFAULT '',
-            payload_json TEXT NOT NULL DEFAULT '',
-            result_json TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            progress INTEGER NOT NULL DEFAULT 0,
-            progress_text TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            locked_at TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS processor_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL DEFAULT 0,
-            pipeline_id INTEGER NOT NULL DEFAULT 0,
-            run_id INTEGER NOT NULL DEFAULT 0,
-            processor_key TEXT NOT NULL DEFAULT '',
-            level TEXT NOT NULL DEFAULT 'info',
-            event_key TEXT NOT NULL DEFAULT '',
-            message TEXT NOT NULL DEFAULT '',
-            data_json TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL
-        );
-
         CREATE INDEX IF NOT EXISTS idx_pipeline_steps_pipeline_order
             ON pipeline_steps(pipeline_id, sort_order);
         CREATE INDEX IF NOT EXISTS idx_pipeline_transitions_lookup
             ON pipeline_transitions(pipeline_id, from_step_key, result_status);
-        CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status
-            ON pipeline_runs(pipeline_id, status, updated_at);
-        CREATE INDEX IF NOT EXISTS idx_processor_tasks_status
-            ON processor_tasks(status, retry_after, updated_at);
-        CREATE INDEX IF NOT EXISTS idx_processor_tasks_pipeline_status
-            ON processor_tasks(pipeline_id, status);
-        CREATE INDEX IF NOT EXISTS idx_processor_tasks_run
-            ON processor_tasks(run_id);
-        CREATE INDEX IF NOT EXISTS idx_processor_tasks_processor
-            ON processor_tasks(processor_key, status, retry_after);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_processor_tasks_dedupe
-            ON processor_tasks(dedupe_key)
-            WHERE dedupe_key != '';
-        CREATE INDEX IF NOT EXISTS idx_processor_events_task
-            ON processor_events(task_id, created_at);
-        CREATE INDEX IF NOT EXISTS idx_processor_events_run
-            ON processor_events(run_id, created_at);
-        """
-    )
-    for column, ddl in {
-        "parent_task_id": "INTEGER NOT NULL DEFAULT 0",
-        "dedupe_key": "TEXT NOT NULL DEFAULT ''",
-        "result_json": "TEXT NOT NULL DEFAULT ''",
-        "locked_at": "TEXT NOT NULL DEFAULT ''",
-    }.items():
-        ensure_column(conn, "processor_tasks", column, ddl)
-    conn.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_processor_tasks_dedupe
-        ON processor_tasks(dedupe_key)
-        WHERE dedupe_key != ''
         """
     )
     ts = now()
@@ -301,30 +220,6 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
                 """,
                 (pipeline_id, from_step, result_status, to_step, ts, ts),
             )
-    task_tables = [
-        "mikan_match_tasks",
-        "metadata_tasks",
-        "selection_tasks",
-        "backfill_tasks",
-        "cloud_presence_tasks",
-        "download_enqueue_tasks",
-        "download_tasks",
-        "cloud_poll_tasks",
-        "cloud_asset_tasks",
-        "sync_plan_tasks",
-        "sync_tasks",
-        "nfo_tasks",
-        "local_presence_tasks",
-        "cleanup_tasks",
-    ]
-    for table in task_tables:
-        ensure_column(conn, table, "pipeline_id", "INTEGER NOT NULL DEFAULT 0")
-        ensure_column(conn, table, "run_id", "INTEGER NOT NULL DEFAULT 0")
-        ensure_column(conn, table, "processor_key", "TEXT NOT NULL DEFAULT ''")
-        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_pipeline_status ON {table}(pipeline_id, status)")
-        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_status_retry ON {table}(status, retry_after, updated_at)")
-
-
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     initialize_database()
@@ -481,79 +376,6 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS download_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                release_id INTEGER NOT NULL,
-                series_id INTEGER NOT NULL,
-                entry_id INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL,
-                attempts INTEGER NOT NULL DEFAULT 0,
-                pikpak_task_id TEXT NOT NULL DEFAULT '',
-                pikpak_file_id TEXT NOT NULL DEFAULT '',
-                target_dir TEXT NOT NULL DEFAULT '',
-                normalized_name TEXT NOT NULL DEFAULT '',
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(release_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS selection_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                series_id INTEGER NOT NULL UNIQUE,
-                entry_id INTEGER NOT NULL DEFAULT 0 UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                reason TEXT NOT NULL DEFAULT '',
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS backfill_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                series_id INTEGER NOT NULL UNIQUE,
-                entry_id INTEGER NOT NULL DEFAULT 0 UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                backfill_mode TEXT NOT NULL DEFAULT 'none',
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS cloud_presence_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                release_id INTEGER NOT NULL UNIQUE,
-                series_id INTEGER NOT NULL,
-                entry_id INTEGER NOT NULL DEFAULT 0,
-                episode_number INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                cloud_asset_id INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS download_enqueue_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                release_id INTEGER NOT NULL UNIQUE,
-                series_id INTEGER NOT NULL,
-                entry_id INTEGER NOT NULL DEFAULT 0,
-                episode_number INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS cloud_submissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 series_id INTEGER NOT NULL,
@@ -574,54 +396,6 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL DEFAULT '',
                 UNIQUE(entry_id, episode_number, provider)
-            );
-
-            CREATE TABLE IF NOT EXISTS cloud_poll_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                download_task_id INTEGER NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS cloud_asset_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                download_task_id INTEGER NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS metadata_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                candidate_id INTEGER NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                bangumi_id TEXT NOT NULL DEFAULT '',
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS mikan_match_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                candidate_id INTEGER NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                mikan_url TEXT NOT NULL DEFAULT '',
-                mikan_bangumi_id TEXT NOT NULL DEFAULT '',
-                bangumi_id TEXT NOT NULL DEFAULT '',
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS cloud_assets (
@@ -663,119 +437,6 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'synced',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS sync_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cloud_asset_id INTEGER NOT NULL,
-                release_id INTEGER NOT NULL,
-                series_id INTEGER NOT NULL,
-                entry_id INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL,
-                attempts INTEGER NOT NULL DEFAULT 0,
-                sync_direction TEXT NOT NULL DEFAULT 'cloud_to_local',
-                source_path TEXT NOT NULL DEFAULT '',
-                target_path TEXT NOT NULL DEFAULT '',
-                progress INTEGER NOT NULL DEFAULT 0,
-                progress_text TEXT NOT NULL DEFAULT '',
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(cloud_asset_id, sync_direction)
-            );
-
-            CREATE TABLE IF NOT EXISTS sync_plan_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                entry_id INTEGER NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS nfo_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                local_asset_id INTEGER NOT NULL UNIQUE,
-                release_id INTEGER NOT NULL,
-                series_id INTEGER NOT NULL,
-                entry_id INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS local_presence_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                local_asset_id INTEGER NOT NULL UNIQUE,
-                release_id INTEGER NOT NULL,
-                series_id INTEGER NOT NULL,
-                entry_id INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS cleanup_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_scope TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                retry_after TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                level TEXT NOT NULL,
-                message TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS operations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'running',
-                message TEXT NOT NULL DEFAULT '',
-                started_at TEXT NOT NULL,
-                finished_at TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS scheduled_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_key TEXT NOT NULL UNIQUE,
-                job_type TEXT NOT NULL DEFAULT '',
-                enabled INTEGER NOT NULL DEFAULT 1,
-                interval_minutes INTEGER NOT NULL DEFAULT 0,
-                debounce_seconds INTEGER NOT NULL DEFAULT 10,
-                max_concurrency INTEGER NOT NULL DEFAULT 1,
-                last_run_at TEXT NOT NULL DEFAULT '',
-                next_run_at TEXT NOT NULL DEFAULT '',
-                last_status TEXT NOT NULL DEFAULT '',
-                last_error TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS scheduled_job_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
-                status TEXT NOT NULL DEFAULT 'running',
-                trigger_source TEXT NOT NULL DEFAULT 'system',
-                message TEXT NOT NULL DEFAULT '',
-                stats_json TEXT NOT NULL DEFAULT '',
-                started_at TEXT NOT NULL,
-                finished_at TEXT NOT NULL DEFAULT ''
             );
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
@@ -899,49 +560,6 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in release_additions.items():
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
-    download_task_columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(download_tasks)").fetchall()
-    }
-    download_task_additions = {
-        "retry_after": "TEXT NOT NULL DEFAULT ''",
-        "entry_id": "INTEGER NOT NULL DEFAULT 0",
-    }
-    for column, ddl in download_task_additions.items():
-        if column not in download_task_columns:
-            conn.execute(f"ALTER TABLE download_tasks ADD COLUMN {column} {ddl}")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS selection_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            series_id INTEGER NOT NULL UNIQUE,
-            entry_id INTEGER NOT NULL DEFAULT 0 UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            reason TEXT NOT NULL DEFAULT '',
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS backfill_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            series_id INTEGER NOT NULL UNIQUE,
-            entry_id INTEGER NOT NULL DEFAULT 0 UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            backfill_mode TEXT NOT NULL DEFAULT 'none',
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS cloud_submissions (
@@ -969,82 +587,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS cloud_poll_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            download_task_id INTEGER NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS cloud_asset_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            download_task_id INTEGER NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_assets_provider_file
         ON cloud_assets(provider, provider_file_id)
         WHERE provider_file_id != ''
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS operations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'running',
-            message TEXT NOT NULL DEFAULT '',
-            started_at TEXT NOT NULL,
-            finished_at TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS scheduled_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_key TEXT NOT NULL UNIQUE,
-            job_type TEXT NOT NULL DEFAULT '',
-            enabled INTEGER NOT NULL DEFAULT 1,
-            interval_minutes INTEGER NOT NULL DEFAULT 0,
-            debounce_seconds INTEGER NOT NULL DEFAULT 10,
-            max_concurrency INTEGER NOT NULL DEFAULT 1,
-            last_run_at TEXT NOT NULL DEFAULT '',
-            next_run_at TEXT NOT NULL DEFAULT '',
-            last_status TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS scheduled_job_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'running',
-            trigger_source TEXT NOT NULL DEFAULT 'system',
-            message TEXT NOT NULL DEFAULT '',
-            stats_json TEXT NOT NULL DEFAULT '',
-            started_at TEXT NOT NULL,
-            finished_at TEXT NOT NULL DEFAULT ''
-        )
         """
     )
     conn.execute(
@@ -1081,247 +626,21 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in rss_candidate_additions.items():
         if column not in rss_candidate_columns:
             conn.execute(f"ALTER TABLE rss_candidates ADD COLUMN {column} {ddl}")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS metadata_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            candidate_id INTEGER NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            bangumi_id TEXT NOT NULL DEFAULT '',
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    metadata_columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(metadata_tasks)").fetchall()
-    }
-    metadata_additions = {
-        "retry_after": "TEXT NOT NULL DEFAULT ''",
-    }
-    for column, ddl in metadata_additions.items():
-        if column not in metadata_columns:
-            conn.execute(f"ALTER TABLE metadata_tasks ADD COLUMN {column} {ddl}")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS mikan_match_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            candidate_id INTEGER NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            mikan_url TEXT NOT NULL DEFAULT '',
-            mikan_bangumi_id TEXT NOT NULL DEFAULT '',
-            bangumi_id TEXT NOT NULL DEFAULT '',
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    mikan_match_columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(mikan_match_tasks)").fetchall()
-    }
-    mikan_match_additions = {
-        "mikan_url": "TEXT NOT NULL DEFAULT ''",
-        "mikan_bangumi_id": "TEXT NOT NULL DEFAULT ''",
-        "bangumi_id": "TEXT NOT NULL DEFAULT ''",
-        "retry_after": "TEXT NOT NULL DEFAULT ''",
-    }
-    for column, ddl in mikan_match_additions.items():
-        if column not in mikan_match_columns:
-            conn.execute(f"ALTER TABLE mikan_match_tasks ADD COLUMN {column} {ddl}")
-    sync_task_columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(sync_tasks)").fetchall()
-    }
-    sync_task_additions = {
-        "entry_id": "INTEGER NOT NULL DEFAULT 0",
-        "progress": "INTEGER NOT NULL DEFAULT 0",
-        "progress_text": "TEXT NOT NULL DEFAULT ''",
-        "retry_after": "TEXT NOT NULL DEFAULT ''",
-    }
-    for column, ddl in sync_task_additions.items():
-        if column not in sync_task_columns:
-            conn.execute(f"ALTER TABLE sync_tasks ADD COLUMN {column} {ddl}")
     episode_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(episodes)").fetchall()
     }
     if "entry_id" not in episode_columns:
         conn.execute("ALTER TABLE episodes ADD COLUMN entry_id INTEGER NOT NULL DEFAULT 0")
-    for table in ["selection_tasks", "backfill_tasks", "cloud_submissions", "cloud_assets", "sync_rules", "local_assets"]:
+    for table in ["cloud_submissions", "cloud_assets", "sync_rules", "local_assets"]:
         columns = {
             row["name"]
             for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
         }
         if "entry_id" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN entry_id INTEGER NOT NULL DEFAULT 0")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS nfo_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            local_asset_id INTEGER NOT NULL UNIQUE,
-            release_id INTEGER NOT NULL,
-            series_id INTEGER NOT NULL,
-            entry_id INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sync_plan_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_id INTEGER NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS local_presence_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            local_asset_id INTEGER NOT NULL UNIQUE,
-            release_id INTEGER NOT NULL,
-            series_id INTEGER NOT NULL,
-            entry_id INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS cleanup_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_scope TEXT NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS cloud_presence_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            release_id INTEGER NOT NULL UNIQUE,
-            series_id INTEGER NOT NULL,
-            entry_id INTEGER NOT NULL DEFAULT 0,
-            episode_number INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            cloud_asset_id INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS download_enqueue_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            release_id INTEGER NOT NULL UNIQUE,
-            series_id INTEGER NOT NULL,
-            entry_id INTEGER NOT NULL DEFAULT 0,
-            episode_number INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NOT NULL DEFAULT '',
-            last_error TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    ensure_unique_index(conn, "metadata_tasks", ["candidate_id"], "idx_metadata_tasks_candidate_unique")
-    ensure_unique_index(conn, "mikan_match_tasks", ["candidate_id"], "idx_mikan_match_tasks_candidate_unique")
-    ensure_unique_index(conn, "selection_tasks", ["release_id"], "idx_selection_tasks_release_unique")
-    ensure_unique_index(conn, "backfill_tasks", ["entry_id"], "idx_backfill_tasks_entry_unique")
-    ensure_unique_index(conn, "cloud_presence_tasks", ["release_id"], "idx_cloud_presence_tasks_release_unique")
-    ensure_unique_index(conn, "download_enqueue_tasks", ["release_id"], "idx_download_enqueue_tasks_release_unique")
-    ensure_unique_index(conn, "download_tasks", ["release_id"], "idx_download_tasks_release_unique")
-    ensure_unique_index(conn, "cloud_poll_tasks", ["download_task_id"], "idx_cloud_poll_tasks_download_unique")
-    ensure_unique_index(conn, "cloud_asset_tasks", ["download_task_id"], "idx_cloud_asset_tasks_download_unique")
-    ensure_unique_index(conn, "sync_plan_tasks", ["entry_id"], "idx_sync_plan_tasks_entry_unique")
-    ensure_unique_index(conn, "sync_tasks", ["cloud_asset_id", "sync_direction"], "idx_sync_tasks_asset_direction_unique")
-    ensure_unique_index(conn, "nfo_tasks", ["local_asset_id"], "idx_nfo_tasks_local_asset_unique")
-    ensure_unique_index(conn, "local_presence_tasks", ["local_asset_id"], "idx_local_presence_tasks_local_asset_unique")
-    ensure_unique_index(conn, "cleanup_tasks", ["task_scope"], "idx_cleanup_tasks_scope_unique")
     ensure_pipeline_runtime(conn)
     merge_duplicate_series(conn)
-    ensure_scheduled_jobs(conn)
-
-
-def ensure_scheduled_jobs(conn: sqlite3.Connection) -> None:
-    ts = now()
-    conn.execute(
-        """
-        INSERT INTO cleanup_tasks
-          (task_scope, status, retry_after, last_error, created_at, updated_at)
-        VALUES ('runtime', 'pending', '', '', ?, ?)
-        ON CONFLICT(task_scope) DO NOTHING
-        """,
-        (ts, ts),
-    )
-    jobs = [
-        ("rss_scan", "rss_scan", 60, 0, 1),
-        ("queue_dispatch", "queue_dispatch", 1, 10, 1),
-        ("mikan_match_dispatch", "queue_dispatch", 0, 10, 1),
-        ("metadata_dispatch", "queue_dispatch", 0, 10, 1),
-        ("selection_dispatch", "queue_dispatch", 0, 10, 1),
-        ("backfill_dispatch", "queue_dispatch", 0, 10, 1),
-        ("cloud_presence_dispatch", "queue_dispatch", 0, 10, 1),
-        ("download_enqueue_dispatch", "queue_dispatch", 0, 10, 1),
-        ("download_dispatch", "queue_dispatch", 0, 10, 1),
-        ("cloud_poll_dispatch", "queue_dispatch", 0, 10, 1),
-        ("cloud_asset_dispatch", "queue_dispatch", 0, 10, 1),
-        ("sync_plan_dispatch", "queue_dispatch", 0, 10, 1),
-        ("sync_dispatch", "queue_dispatch", 0, 10, 1),
-        ("nfo_dispatch", "queue_dispatch", 0, 10, 1),
-        ("local_presence_dispatch", "queue_dispatch", 0, 10, 1),
-        ("cleanup_dispatch", "queue_dispatch", 0, 10, 1),
-    ]
-    for job_key, job_type, interval_minutes, debounce_seconds, max_concurrency in jobs:
-        conn.execute(
-            """
-            INSERT INTO scheduled_jobs
-              (job_key, job_type, enabled, interval_minutes, debounce_seconds, max_concurrency, created_at, updated_at)
-            VALUES (?, ?, 1, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_key) DO UPDATE SET
-              job_type=excluded.job_type,
-              interval_minutes=excluded.interval_minutes,
-              debounce_seconds=excluded.debounce_seconds,
-              max_concurrency=excluded.max_concurrency,
-              updated_at=excluded.updated_at
-            """,
-            (job_key, job_type, interval_minutes, debounce_seconds, max_concurrency, ts, ts),
-        )
 
 
 def merge_duplicate_series(conn: sqlite3.Connection) -> None:
@@ -1342,10 +661,7 @@ def merge_duplicate_series(conn: sqlite3.Connection) -> None:
             conn.execute("UPDATE releases SET series_id=? WHERE series_id=?", (keep_id, old_id))
             conn.execute("UPDATE cloud_assets SET series_id=? WHERE series_id=?", (keep_id, old_id))
             conn.execute("UPDATE local_assets SET series_id=? WHERE series_id=?", (keep_id, old_id))
-            conn.execute("UPDATE sync_tasks SET series_id=? WHERE series_id=?", (keep_id, old_id))
             conn.execute("UPDATE cloud_submissions SET series_id=? WHERE series_id=?", (keep_id, old_id))
-            conn.execute("UPDATE selection_tasks SET series_id=? WHERE series_id=?", (keep_id, old_id))
-            conn.execute("UPDATE backfill_tasks SET series_id=? WHERE series_id=?", (keep_id, old_id))
             conn.execute(
                 """
                 INSERT INTO sync_rules
@@ -1382,7 +698,6 @@ def merge_duplicate_series(conn: sqlite3.Connection) -> None:
                         ep["updated_at"],
                     ),
             )
-            conn.execute("UPDATE download_tasks SET series_id=? WHERE series_id=?", (keep_id, old_id))
             conn.execute("UPDATE cloud_submissions SET series_id=? WHERE series_id=?", (keep_id, old_id))
             conn.execute("DELETE FROM episodes WHERE series_id=?", (old_id,))
             conn.execute("DELETE FROM sync_rules WHERE series_id=?", (old_id,))
@@ -1397,7 +712,6 @@ def restore_visible_series(conn: sqlite3.Connection) -> int:
         WHERE COALESCE(hidden, 0)=1
           AND (
             id IN (SELECT DISTINCT series_id FROM releases)
-            OR id IN (SELECT DISTINCT series_id FROM download_tasks)
             OR id IN (SELECT DISTINCT series_id FROM cloud_assets)
             OR id IN (SELECT DISTINCT series_id FROM local_assets)
           )
@@ -1414,7 +728,6 @@ def hide_orphan_series(conn: sqlite3.Connection) -> int:
         SET hidden=1, updated_at=?
         WHERE COALESCE(hidden, 0)=0
           AND id NOT IN (SELECT DISTINCT series_id FROM releases)
-          AND id NOT IN (SELECT DISTINCT series_id FROM download_tasks)
           AND id NOT IN (SELECT DISTINCT series_id FROM cloud_assets)
           AND id NOT IN (SELECT DISTINCT series_id FROM local_assets)
         """,
@@ -1471,21 +784,6 @@ def log(level: str, message: str) -> None:
         runtime_store.append_log_sync(normalized_level, message)
     except Exception:
         pass
-    if normalized_level not in {"warn", "warning", "error"}:
-        return
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with LOG_PATH.open("a", encoding="utf-8") as output:
-            output.write(f"{line}\n")
-        with connect() as conn:
-            conn.execute(
-                "INSERT INTO logs (level, message, created_at) VALUES (?, ?, ?)",
-                (level, message[:2000], ts),
-            )
-    except sqlite3.OperationalError:
-        pass
-    except OSError:
-        pass
 
 
 def read_server_logs(limit: int = 200) -> list[str]:
@@ -1497,195 +795,7 @@ def clear_server_logs() -> int:
     with LOG_LOCK:
         count = len(LOG_BUFFER)
         LOG_BUFFER.clear()
-    with connect() as conn:
-        cursor = conn.execute("DELETE FROM logs")
-        count += max(0, cursor.rowcount)
-    try:
-        LOG_PATH.unlink(missing_ok=True)
-    except OSError:
-        pass
-    with LOG_LOCK:
-        LOG_BUFFER.clear()
     return count
-
-
-def start_operation(name: str, message: str = "") -> int:
-    with connect() as conn:
-        cursor = conn.execute(
-            "INSERT INTO operations (name, status, message, started_at) VALUES (?, 'running', ?, ?)",
-            (name, message[:2000], now()),
-        )
-        return int(cursor.lastrowid)
-
-
-def finish_operation(operation_id: int, status: str, message: str = "") -> None:
-    with connect() as conn:
-        conn.execute(
-            """
-            UPDATE operations
-            SET status=?, message=?, finished_at=?
-            WHERE id=?
-            """,
-            (status, message[:2000], now(), operation_id),
-        )
-        if status == "completed":
-            conn.execute("DELETE FROM operations WHERE id=?", (operation_id,))
-
-
-def update_operation(operation_id: int, message: str) -> None:
-    with connect() as conn:
-        conn.execute(
-            "UPDATE operations SET message=? WHERE id=?",
-            (message[:2000], operation_id),
-        )
-
-
-def cleanup_operations(max_failed: int = 20) -> None:
-    ts = now()
-    with connect() as conn:
-        conn.execute(
-            """
-            UPDATE operations
-            SET status='failed', message='服务重启，上次运行已中断', finished_at=?
-            WHERE status='running'
-            """,
-            (ts,),
-        )
-        failed_ids = [
-            int(row["id"])
-            for row in conn.execute(
-                "SELECT id FROM operations WHERE status='failed' ORDER BY id DESC"
-            ).fetchall()
-        ]
-        if len(failed_ids) > max_failed:
-            stale_ids = failed_ids[max_failed:]
-            conn.executemany(
-                "DELETE FROM operations WHERE id=?",
-                [(operation_id,) for operation_id in stale_ids],
-            )
-
-
-def run_cleanup_tasks(max_failed_operations: int = 20, completed_task_limit: int = 200) -> dict[str, int]:
-    ts = now()
-    deleted_operations = 0
-    trimmed_task_rows = 0
-    cleanup_operations(max_failed=max_failed_operations)
-    with connect() as conn:
-        completed_ids = [
-            int(row["id"])
-            for row in conn.execute(
-                "SELECT id FROM operations WHERE status IN ('completed', 'failed') ORDER BY id DESC"
-            ).fetchall()
-        ]
-        if len(completed_ids) > max_failed_operations:
-            stale_ids = completed_ids[max_failed_operations:]
-            conn.executemany("DELETE FROM operations WHERE id=?", [(operation_id,) for operation_id in stale_ids])
-            deleted_operations += len(stale_ids)
-
-        for table in [
-            "cloud_presence_tasks",
-            "download_enqueue_tasks",
-            "download_tasks",
-            "cloud_poll_tasks",
-            "cloud_asset_tasks",
-            "sync_plan_tasks",
-            "sync_tasks",
-            "nfo_tasks",
-            "local_presence_tasks",
-        ]:
-            rows = conn.execute(
-                f"SELECT id FROM {table} WHERE status IN ('completed', 'superseded', 'synced') ORDER BY id DESC"
-            ).fetchall()
-            if len(rows) > completed_task_limit:
-                stale = [(int(row["id"]),) for row in rows[completed_task_limit:]]
-                conn.executemany(f"DELETE FROM {table} WHERE id=?", stale)
-                trimmed_task_rows += len(stale)
-    return {"deleted_operations": deleted_operations, "trimmed_task_rows": trimmed_task_rows, "ran_at": 1 if ts else 0}
-
-
-def mark_scheduled_job(job_key: str, **fields: Any) -> None:
-    if not fields:
-        return
-    allowed = {
-        "enabled",
-        "interval_minutes",
-        "debounce_seconds",
-        "max_concurrency",
-        "last_run_at",
-        "next_run_at",
-        "last_status",
-        "last_error",
-        "updated_at",
-    }
-    updates = [(key, value) for key, value in fields.items() if key in allowed]
-    if not updates:
-        return
-    sql = ", ".join(f"{key}=?" for key, _ in updates)
-    params = [value for _, value in updates]
-    params.append(job_key)
-    with connect() as conn:
-        conn.execute(f"UPDATE scheduled_jobs SET {sql} WHERE job_key=?", params)
-
-
-def start_scheduled_job_run(job_key: str, trigger_source: str = "system", message: str = "") -> int:
-    ts = now()
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT id FROM scheduled_jobs WHERE job_key=?",
-            (job_key,),
-        ).fetchone()
-        if not row:
-            return 0
-        cursor = conn.execute(
-            """
-            INSERT INTO scheduled_job_runs
-              (job_id, status, trigger_source, message, stats_json, started_at, finished_at)
-            VALUES (?, 'running', ?, ?, '', ?, '')
-            """,
-            (int(row["id"]), trigger_source, message[:2000], ts),
-        )
-        conn.execute(
-            """
-            UPDATE scheduled_jobs
-            SET last_run_at=?, last_status='running', last_error='', updated_at=?
-            WHERE id=?
-            """,
-            (ts, ts, int(row["id"])),
-        )
-        return int(cursor.lastrowid)
-
-
-def finish_scheduled_job_run(run_id: int, status: str, message: str = "", stats_json: str = "") -> None:
-    if not run_id:
-        return
-    ts = now()
-    with connect() as conn:
-        run = conn.execute(
-            "SELECT job_id FROM scheduled_job_runs WHERE id=?",
-            (run_id,),
-        ).fetchone()
-        conn.execute(
-            """
-            UPDATE scheduled_job_runs
-            SET status=?, message=?, stats_json=?, finished_at=?
-            WHERE id=?
-            """,
-            (status, message[:2000], stats_json[:4000], ts, run_id),
-        )
-        if run:
-            conn.execute(
-                """
-                UPDATE scheduled_jobs
-                SET last_status=?, last_error=?, updated_at=?
-                WHERE id=?
-                """,
-                (
-                    status,
-                    "" if status == "completed" else message[:2000],
-                    ts,
-                    int(run["job_id"]),
-                ),
-            )
 
 
 def table_count(conn: sqlite3.Connection, table: str) -> int:
@@ -1720,6 +830,9 @@ def diagnostics() -> dict[str, Any]:
     with connect() as conn:
         tables = [
             "settings",
+            "pipelines",
+            "pipeline_steps",
+            "pipeline_transitions",
             "works",
             "entries",
             "seasonal_entries",
@@ -1728,20 +841,10 @@ def diagnostics() -> dict[str, Any]:
             "episodes",
             "releases",
             "rss_candidates",
-            "mikan_match_tasks",
-            "metadata_tasks",
-            "selection_tasks",
-            "backfill_tasks",
             "cloud_submissions",
-            "download_tasks",
-            "cloud_poll_tasks",
-            "cloud_asset_tasks",
             "cloud_assets",
             "sync_rules",
             "local_assets",
-            "sync_tasks",
-            "logs",
-            "operations",
         ]
         result["tables"] = {table: table_count(conn, table) for table in tables}
         total_series = max(0, table_count(conn, "series"))
@@ -1766,21 +869,10 @@ def clear_runtime_data() -> None:
     next_generation = now()
     with connect() as conn:
         for table in [
-            "processor_events",
-            "processor_tasks",
-            "pipeline_runs",
-            "sync_tasks",
             "local_assets",
             "sync_rules",
             "cloud_assets",
-            "cloud_asset_tasks",
-            "cloud_poll_tasks",
             "cloud_submissions",
-            "download_tasks",
-            "backfill_tasks",
-            "selection_tasks",
-            "metadata_tasks",
-            "mikan_match_tasks",
             "rss_candidates",
             "library_entries",
             "seasonal_entries",
@@ -1789,30 +881,12 @@ def clear_runtime_data() -> None:
             "releases",
             "episodes",
             "series",
-            "operations",
-            "logs",
-            "scheduled_job_runs",
         ]:
             conn.execute(f"DELETE FROM {table}")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('processor_events','processor_tasks','pipeline_runs','sync_tasks','local_assets','sync_rules','cloud_assets','cloud_asset_tasks','cloud_poll_tasks','cloud_submissions','download_tasks','backfill_tasks','selection_tasks','metadata_tasks','mikan_match_tasks','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series','operations','logs','scheduled_job_runs')")
-        conn.execute(
-            """
-            UPDATE scheduled_jobs
-            SET last_run_at='',
-                next_run_at='',
-                last_status='idle',
-                last_error='',
-                updated_at=?
-            """
-            ,
-            (next_generation,),
-        )
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('local_assets','sync_rules','cloud_assets','cloud_submissions','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series')")
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('runtime_generation', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (next_generation,),
         )
-    try:
-        LOG_PATH.unlink(missing_ok=True)
-    except OSError:
-        pass
+

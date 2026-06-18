@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from .config import APP_DIR
 from .database import connect
-from .db import cleanup_operations, clear_runtime_data, diagnostics, finish_operation, finish_scheduled_job_run, get_runtime_generation, get_settings, init_db, log, mark_scheduled_job, merge_duplicate_series, now, read_server_logs, save_settings, start_operation, start_scheduled_job_run, update_operation
+from .db import clear_runtime_data, diagnostics, get_runtime_generation, get_settings, init_db, log, merge_duplicate_series, now, save_settings
 from .queue_bridge import register_queue_trigger
 from .runtime_store import runtime_store
 from .library import bool_setting
@@ -641,7 +641,7 @@ def cancel_entry_sync(entry_id: int) -> dict[str, str]:
     return {"status": "completed", "count": str(count), "message": message}
 
 
-def ready_count_processor_tasks() -> int:
+def ready_count_runtime_processor() -> int:
     return runtime_store.ready_count()
 
 
@@ -666,10 +666,10 @@ async def handle_processor_queue() -> None:
             log("info", f"Processor 队列已处理: {processed} 个")
         if processed == 0:
             break
-        if ready_count_processor_tasks() <= 0:
+        if ready_count_runtime_processor() <= 0:
             break
         await asyncio.sleep(0)
-    if ready_count_processor_tasks() > 0:
+    if ready_count_runtime_processor() > 0:
         trigger_queue("processor", delay=0)
 
 
@@ -678,7 +678,7 @@ async def run_scan_source(settings: dict[str, str], operation_id: int | None = N
         log("warn", "未配置 Mikan RSS")
         return "未配置 Mikan RSS"
     if operation_id:
-        update_operation(operation_id, "正在启动 Mikan 新番追更流水线")
+        runtime_store.update_operation_sync(operation_id, "正在启动 Mikan 新番追更流水线")
     run_id = start_pipeline(
         "seasonal_mikan_tracking",
         trigger_source="manual",
@@ -713,11 +713,11 @@ async def run_queue(name: str) -> None:
         return
     if name in queue_running:
         queue_rerun_requested.add(name)
-        mark_scheduled_job(queue_job_key(name), last_status="rerun_pending", updated_at=now())
+        runtime_store.set_scheduler_sync(queue_job_key(name), last_status="rerun_pending", updated_at=now())
         return
     queue_debounce_tasks.pop(name, None)
     queue_running.add(name)
-    run_id = start_scheduled_job_run(queue_job_key(name), "event", f"执行队列 {name}")
+    run_id = runtime_store.start_scheduler_run_sync(queue_job_key(name), "event", f"执行队列 {name}")
     run_status = "completed"
     run_message = f"队列 {name} 执行完成"
     try:
@@ -734,7 +734,7 @@ async def run_queue(name: str) -> None:
     finally:
         queue_running.discard(name)
         if run_id:
-            finish_scheduled_job_run(run_id, run_status, run_message)
+            runtime_store.finish_scheduler_run_sync(run_id, run_status, run_message)
         if run_status != "cancelled" and name in queue_rerun_requested:
             queue_rerun_requested.discard(name)
             trigger_queue(name)
@@ -750,13 +750,13 @@ def trigger_queue(name: str, delay: float | None = None) -> None:
         return
     if name in queue_running:
         queue_rerun_requested.add(name)
-        mark_scheduled_job(queue_job_key(name), last_status="rerun_pending", debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
+        runtime_store.set_scheduler_sync(queue_job_key(name), last_status="rerun_pending", debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
         return
     pending_task = queue_debounce_tasks.get(name)
     if pending_task and not pending_task.done():
         pending_task.cancel()
     actual_delay = QUEUE_DEBOUNCE_SECONDS if delay is None else max(0.0, delay)
-    mark_scheduled_job(
+    runtime_store.set_scheduler_sync(
         queue_job_key(name),
         last_status="debouncing" if actual_delay > 0 else "queued",
         debounce_seconds=int(actual_delay),
@@ -769,7 +769,7 @@ def trigger_queue(name: str, delay: float | None = None) -> None:
                 await asyncio.sleep(actual_delay)
             await run_queue(name)
         except asyncio.CancelledError:
-            mark_scheduled_job(queue_job_key(name), last_status="debouncing", updated_at=now())
+            runtime_store.set_scheduler_sync(queue_job_key(name), last_status="debouncing", updated_at=now())
             return
 
     task = loop.create_task(runner())
@@ -813,13 +813,13 @@ async def cancel_runtime_activity() -> None:
 
 
 async def dispatch_ready_queues() -> None:
-    run_id = start_scheduled_job_run("queue_dispatch", "system", "恢复挂起队列")
+    run_id = runtime_store.start_scheduler_run_sync("queue_dispatch", "system", "恢复挂起队列")
     try:
         names = recoverable_queue_names()
         trigger_queues(names, delay=0)
-        finish_scheduled_job_run(run_id, "completed", f"已恢复触发队列: {', '.join(names) if names else '无'}")
+        runtime_store.finish_scheduler_run_sync(run_id, "completed", f"已恢复触发队列: {', '.join(names) if names else '无'}")
     except Exception as exc:
-        finish_scheduled_job_run(run_id, "failed", str(exc))
+        runtime_store.finish_scheduler_run_sync(run_id, "failed", str(exc))
         raise
 
 
@@ -828,10 +828,10 @@ def reschedule() -> None:
     ensure_queue_handlers()
     settings = get_settings()
     minutes = max(1, int(settings.get("scan_interval_minutes") or 60))
-    mark_scheduled_job("rss_scan", interval_minutes=minutes, updated_at=now())
-    mark_scheduled_job("queue_dispatch", interval_minutes=1, debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
+    runtime_store.set_scheduler_sync("rss_scan", interval_minutes=minutes, updated_at=now())
+    runtime_store.set_scheduler_sync("queue_dispatch", interval_minutes=1, debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
     for name in queue_handlers:
-        mark_scheduled_job(queue_job_key(name), debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
+        runtime_store.set_scheduler_sync(queue_job_key(name), debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
     scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes, id="rss_scan")
     scheduler.add_job(lambda: asyncio.create_task(dispatch_ready_queues()), "interval", minutes=1, id="queue_dispatch")
 
@@ -841,16 +841,16 @@ def runtime_generation_alive(expected: str) -> bool:
 
 
 async def scheduled_scan() -> None:
-    run_id = start_scheduled_job_run("rss_scan", "system", "定时 RSS 扫描")
+    run_id = runtime_store.start_scheduler_run_sync("rss_scan", "system", "定时 RSS 扫描")
     settings = get_settings()
     try:
         if bool_setting(settings.get("auto_scan", "false")):
             message = await run_scan_source(settings)
-            finish_scheduled_job_run(run_id, "completed", message)
+            runtime_store.finish_scheduler_run_sync(run_id, "completed", message)
         else:
-            finish_scheduled_job_run(run_id, "completed", "已关闭自动 RSS 扫描")
+            runtime_store.finish_scheduler_run_sync(run_id, "completed", "已关闭自动 RSS 扫描")
     except Exception as exc:
-        finish_scheduled_job_run(run_id, "failed", str(exc))
+        runtime_store.finish_scheduler_run_sync(run_id, "failed", str(exc))
         raise
 
 
@@ -975,32 +975,20 @@ def console_overview(
 
 
 def scheduled_jobs_summary() -> list[dict[str, Any]]:
-    with connect() as conn:
-        jobs = conn.execute(
-            """
-            SELECT *
-            FROM scheduled_jobs
-            ORDER BY job_key ASC
-            """
-        ).fetchall()
-        latest_runs = conn.execute(
-            """
-            SELECT r.*
-            FROM scheduled_job_runs r
-            JOIN (
-              SELECT job_id, MAX(id) AS max_id
-              FROM scheduled_job_runs
-              GROUP BY job_id
-            ) latest ON latest.max_id=r.id
-            ORDER BY r.id DESC
-            """
-        ).fetchall()
-    run_map = {int(row["job_id"]): dict(row) for row in latest_runs}
+    snapshot = runtime_store.snapshot()
+    latest_runs: dict[str, dict[str, Any]] = {}
+    for run in snapshot.get("scheduler_runs", []):
+        job_key = str(run.get("job_key") or "")
+        if job_key and job_key not in latest_runs:
+            latest_runs[job_key] = dict(run)
     result = []
-    for job in jobs:
+    for job in sorted(snapshot.get("scheduler", []), key=lambda item: str(item.get("job_key") or "")):
         item = dict(job)
-        latest = run_map.get(int(job["id"]), {})
-        item["latest_run"] = latest
+        item.setdefault("id", 0)
+        item.setdefault("job_type", "runtime")
+        item.setdefault("enabled", 1)
+        item.setdefault("last_status", "idle")
+        item["latest_run"] = latest_runs.get(str(item.get("job_key") or ""), {})
         result.append(item)
     return result
 
@@ -1047,7 +1035,6 @@ def console_sections() -> list[dict[str, Any]]:
 async def lifespan(_: FastAPI):
     init_db()
     register_builtin_processors()
-    cleanup_operations()
     reschedule()
     scheduler.start()
     yield
@@ -1058,20 +1045,20 @@ app = FastAPI(title="AutoAnime", lifespan=lifespan)
 
 
 def run_operation(name: str, coro_factory, start_message: str = "") -> int:
-    operation_id = start_operation(name, start_message)
+    operation_id = runtime_store.start_operation_sync(name, start_message)
     log("info", f"{name} 已启动: {start_message or '处理中'}")
 
     async def runner() -> None:
         try:
             message = await coro_factory()
         except asyncio.CancelledError:
-            finish_operation(operation_id, "failed", "操作已取消")
+            runtime_store.finish_operation_sync(operation_id, "cancelled", "操作已取消")
             return
         except Exception as exc:
-            finish_operation(operation_id, "failed", str(exc))
+            runtime_store.finish_operation_sync(operation_id, "failed", str(exc))
             log("error", f"{name} 失败: {exc}")
             return
-        finish_operation(operation_id, "completed", str(message or "完成"))
+        runtime_store.finish_operation_sync(operation_id, "completed", str(message or "完成"))
         log("info", f"{name} 完成: {message or '完成'}")
 
     task = asyncio.create_task(runner())
@@ -1081,20 +1068,20 @@ def run_operation(name: str, coro_factory, start_message: str = "") -> int:
 
 
 def run_progress_operation(name: str, coro_factory, start_message: str = "") -> int:
-    operation_id = start_operation(name, start_message)
+    operation_id = runtime_store.start_operation_sync(name, start_message)
     log("info", f"{name} 已启动: {start_message or '处理中'}")
 
     async def runner() -> None:
         try:
             message = await coro_factory(operation_id)
         except asyncio.CancelledError:
-            finish_operation(operation_id, "failed", "操作已取消")
+            runtime_store.finish_operation_sync(operation_id, "cancelled", "操作已取消")
             return
         except Exception as exc:
-            finish_operation(operation_id, "failed", str(exc))
+            runtime_store.finish_operation_sync(operation_id, "failed", str(exc))
             log("error", f"{name} 失败: {exc}")
             return
-        finish_operation(operation_id, "completed", str(message or "完成"))
+        runtime_store.finish_operation_sync(operation_id, "completed", str(message or "完成"))
         log("info", f"{name} 完成: {message or '完成'}")
 
     task = asyncio.create_task(runner())
@@ -1206,30 +1193,6 @@ def dashboard_data() -> dict[str, Any]:
             """
         ).fetchone()
         library_failed_row = {"failed_entry_count": 0}
-        operations = conn.execute(
-            """
-            SELECT *
-            FROM operations
-            WHERE status IN ('running', 'failed')
-            ORDER BY
-              CASE status
-                WHEN 'running' THEN 0
-                WHEN 'failed' THEN 1
-                ELSE 2
-              END,
-              id DESC
-            LIMIT 20
-            """
-        ).fetchall()
-        scheduled_runs = conn.execute(
-            """
-            SELECT r.*, j.job_key, j.job_type
-            FROM scheduled_job_runs r
-            JOIN scheduled_jobs j ON j.id=r.job_id
-            ORDER BY r.id DESC
-            LIMIT 40
-            """
-        ).fetchall()
         sync_rules = conn.execute(
             """
             SELECT sr.*, e.display_title AS title_cn
@@ -1332,9 +1295,15 @@ def dashboard_data() -> dict[str, Any]:
             (int(recent_cutoff),),
         ).fetchall()
     queue_items = queue_summary(settings)
+    runtime_snapshot = runtime_store.snapshot()
     scheduled_jobs = scheduled_jobs_summary()
-    server_logs = read_server_logs(160)
-    operations_list = rows_to_dicts(operations)
+    scheduled_runs = list(runtime_snapshot.get("scheduler_runs") or [])[-40:]
+    server_logs = list(runtime_snapshot.get("logs") or [])[-160:]
+    operations_list = [
+        dict(item)
+        for item in runtime_snapshot.get("operations", [])
+        if str(item.get("status") or "") in {"running", "failed", "cancelled"}
+    ][:20]
     queue_details = queue_detail_map()
     seasonal_task_index = build_entry_queue_index(queue_details)
     seasonal_rows = [
@@ -1364,7 +1333,7 @@ def dashboard_data() -> dict[str, Any]:
         "sync_rules": rows_to_dicts(sync_rules),
         "operations": operations_list,
         "scheduled_jobs": scheduled_jobs,
-        "scheduled_runs": rows_to_dicts(scheduled_runs),
+        "scheduled_runs": scheduled_runs,
         "queue_summary": queue_items,
         "queue_details": queue_details,
         "pipelines": pipeline_overview(),
@@ -1432,7 +1401,7 @@ async def api_start_pipeline(pipeline_key: str, payload: PipelineStartPayload) -
 
 
 @app.post("/api/processors/tasks/run")
-async def api_run_processor_tasks(limit: int = Query(20, ge=1, le=200), processor_key: str = "") -> dict[str, str]:
+async def api_run_runtime_processor(limit: int = Query(20, ge=1, le=200), processor_key: str = "") -> dict[str, str]:
     processed = await run_ready_tasks(limit=limit, processor_key=processor_key.strip())
     return {"status": "completed", "count": str(processed), "message": f"已处理 processor task: {processed} 个"}
 
@@ -1573,12 +1542,16 @@ async def api_delete_library_entry(entry_id: int) -> dict[str, str]:
 
 @app.post("/api/scan")
 async def api_scan() -> dict[str, str]:
-    with connect() as conn:
-        running = conn.execute(
-            "SELECT id FROM operations WHERE name='扫描全部' AND status='running' LIMIT 1"
-        ).fetchone()
+    running = next(
+        (
+            item
+            for item in runtime_store.snapshot().get("operations", [])
+            if item.get("name") == "扫描全部" and item.get("status") == "running"
+        ),
+        None,
+    )
     if running:
-        return {"status": "running", "operation_id": str(running["id"]), "message": "扫描全部正在执行"}
+        return {"status": "running", "operation_id": str(running.get("id") or ""), "message": "扫描全部正在执行"}
     operation_id = run_progress_operation(
         "扫描全部",
         lambda op_id: run_scan_source(get_settings(), op_id),
@@ -1679,7 +1652,7 @@ async def api_backfill_library_entry(entry_id: int) -> dict[str, str]:
 
 
 @app.post("/api/sync/tasks/process")
-async def api_process_sync_tasks() -> dict[str, str]:
+async def api_process_runtime_sync() -> dict[str, str]:
     async def run() -> str:
         with connect() as conn:
             entry_ids = [
@@ -1735,11 +1708,8 @@ async def api_runtime_cancel() -> dict[str, str]:
 
 @app.post("/api/operations/clear")
 async def api_clear_operations() -> dict[str, str]:
-    with connect() as conn:
-        cursor = conn.execute(
-            "DELETE FROM operations WHERE status IN ('completed', 'failed')"
-        )
-    return {"status": "completed", "count": str(cursor.rowcount), "message": "已清空已结束操作"}
+    count = runtime_store.clear_finished_operations_sync()
+    return {"status": "completed", "count": str(count), "message": "已清空已结束操作"}
 
 
 @app.post("/api/logs/clear")
