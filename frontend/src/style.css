@@ -17,6 +17,8 @@ body {
   display: grid;
   grid-template-columns: 236px 1fr;
   min-height: 100vh;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 .sidebar {

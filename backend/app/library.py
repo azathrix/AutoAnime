@@ -11,13 +11,17 @@ def bool_setting(value: str) -> bool:
 
 def normalize_series_root_title(value: str) -> str:
     text = clean_name(value or "Unknown")
+    labels = parse_entry_labels(text)
+    text = str(labels.get("title_root") or text)
     patterns = [
         r"\s+第[一二三四五六七八九十百零两\d]+季$",
         r"\s+第[一二三四五六七八九十百零两\d]+期$",
+        r"\s+第[一二三四五六七八九十百零两\d]+[章部]$",
         r"\s+season\s*\d+$",
         r"\s+s(?:eason)?\s*\d+$",
         r"\s+part\s*\d+$",
         r"\s+cour\s*\d+$",
+        r"\s+[^ ]{1,18}[篇編]$",
     ]
     for pattern in patterns:
         text = re.sub(pattern, "", text, flags=re.I)
@@ -26,6 +30,7 @@ def normalize_series_root_title(value: str) -> str:
 
 def parse_entry_labels(value: str) -> dict[str, str | int]:
     text = clean_name(value or "Unknown")
+    text = re.sub(r"\b(season|part|cour|s)\s+(\d+)\b", r"\1\2", text, flags=re.I)
     tokens = [token for token in text.split(" ") if token]
     season_label = ""
     arc_label = ""
@@ -45,6 +50,8 @@ def parse_entry_labels(value: str) -> dict[str, str | int]:
     for token in tokens:
         normalized = token.strip()
         lower = normalized.lower()
+        spaced_season_match = re.match(r"^(?:season|s)\s*(\d+)$", normalized, re.I)
+        spaced_part_match = re.match(r"^part\s*(\d+)$", normalized, re.I)
         if lower in specials:
             special_label = normalized
             continue
@@ -54,16 +61,16 @@ def parse_entry_labels(value: str) -> dict[str, str | int]:
             season_number = cn_number_to_int(season_match.group(1))
             continue
         season_word_match = season_word_pattern.match(lower)
-        if season_word_match:
+        if season_word_match or spaced_season_match:
             season_label = normalized
-            season_number = max(1, int(season_word_match.group(1)))
+            season_number = max(1, int((season_word_match or spaced_season_match).group(1)))
             continue
         part_match = part_pattern.match(normalized)
         if part_match:
             part_label = normalized
             continue
         part_word_match = part_word_pattern.match(lower)
-        if part_word_match:
+        if part_word_match or spaced_part_match:
             part_label = normalized
             continue
         if normalized in arc_words or normalized.endswith(arc_suffixes):

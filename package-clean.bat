@@ -37,7 +37,7 @@ mkdir "%TARGET%"
 
 robocopy "%ROOT%" "%TARGET%" ^
   /MIR ^
-  /XD ".git" "build" "data" "test-data" "node_modules" ".vite" "frontend_dist" "__pycache__" ^
+  /XD ".git" "build" "data" "test-data" "node_modules" ".vite" "__pycache__" ^
   /XF "*.zip" "*.log" "*.pyc" ".env" ^
   /R:2 /W:2 /NFL /NDL /NP
 

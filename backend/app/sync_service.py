@@ -917,6 +917,101 @@ def upsert_cloud_asset_from_download_task(task_id: int, item: dict, settings: di
     return None
 
 
+def upsert_cloud_asset_for_release(release_id: int, item: dict, settings: dict[str, str]) -> int | None:
+    file_id = cloud_file_id(item)
+    name = str(item.get("name") or Path(str(item.get("cloud_path") or "")).name)
+    path = str(item.get("cloud_path") or name)
+    if not name:
+        return None
+    with connect() as conn:
+        release = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
+        if not release:
+            return None
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (release["entry_id"],)).fetchone()
+        if not entry:
+            return None
+        ts = now()
+        series_id = resolve_entry_series_id(conn, int(release["entry_id"]))
+        provider_file_id = file_id or f"rclone:{path}"
+        task_id = synthetic_task_id(provider_file_id)
+        existing = conn.execute(
+            "SELECT id FROM cloud_assets WHERE provider='pikpak' AND provider_file_id=?",
+            (provider_file_id,),
+        ).fetchone()
+        existing_by_episode = conn.execute(
+            """
+            SELECT id
+            FROM cloud_assets
+            WHERE entry_id=? AND episode_number=? AND provider='pikpak'
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (release["entry_id"], release["episode_number"]),
+        ).fetchone()
+        existing_asset = existing or existing_by_episode
+        if existing_asset:
+            conn.execute(
+                """
+                UPDATE cloud_assets
+                SET task_id=?, release_id=?, series_id=?, entry_id=?, episode_number=?, provider_file_id=?,
+                    cloud_path=?, cloud_name=?, status='available', updated_at=?
+                WHERE id=?
+                """,
+                (
+                    task_id,
+                    release["id"],
+                    series_id,
+                    release["entry_id"],
+                    release["episode_number"],
+                    provider_file_id,
+                    path,
+                    name,
+                    ts,
+                    existing_asset["id"],
+                ),
+            )
+            asset_id = int(existing_asset["id"])
+        else:
+            conn.execute(
+                """
+                INSERT INTO cloud_assets
+                  (task_id, release_id, series_id, entry_id, episode_number, provider, provider_file_id,
+                   cloud_path, cloud_name, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                  release_id=excluded.release_id,
+                  series_id=excluded.series_id,
+                  entry_id=excluded.entry_id,
+                  episode_number=excluded.episode_number,
+                  provider_file_id=excluded.provider_file_id,
+                  cloud_path=excluded.cloud_path,
+                  cloud_name=excluded.cloud_name,
+                  status='available',
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    task_id,
+                    release["id"],
+                    series_id,
+                    release["entry_id"],
+                    release["episode_number"],
+                    provider_file_id,
+                    path,
+                    name,
+                    ts,
+                    ts,
+                ),
+            )
+            asset = conn.execute("SELECT id FROM cloud_assets WHERE task_id=?", (task_id,)).fetchone()
+            asset_id = int(asset["id"]) if asset else 0
+            if asset_id:
+                log("info", f"云盘资源已入库: {name}")
+        if asset_id:
+            enqueue_sync_plan_task(conn, int(release["entry_id"]), ts)
+            return asset_id
+    return None
+
+
 async def reconcile_rclone_submitted_tasks(settings: dict[str, str], limit: int = 20) -> tuple[int, int]:
     if not rclone_service.enabled(settings):
         return 0, 0

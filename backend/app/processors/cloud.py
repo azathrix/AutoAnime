@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..database import connect
 from ..db import get_settings, now
+from ..library import render_episode_name, target_dir
 from ..pipeline_models import ProcessorContext, ProcessorResult
 from ..pikpak_service import submit_offline_download
 from .. import rclone_service
@@ -25,6 +26,7 @@ from ..sync_service import (
     process_cloud_asset_tasks,
     reconcile_rclone_submitted_tasks,
     upsert_cloud_asset,
+    upsert_cloud_asset_for_release,
     upsert_cloud_asset_from_download_task,
 )
 
@@ -33,6 +35,7 @@ async def process_cloud_presence(context: ProcessorContext, payload: dict) -> Pr
     release_id = context.subject_id if context.subject_type == "release" else int(payload.get("release_id") or 0)
     if release_id <= 0:
         return ProcessorResult.terminal("云盘存在性检查缺少 release_id")
+    settings = get_settings()
     with connect() as conn:
         task = conn.execute(
             """
@@ -83,6 +86,51 @@ async def process_cloud_presence(context: ProcessorContext, payload: dict) -> Pr
                 },
             )
 
+        release = conn.execute(
+            """
+            SELECT r.*, e.display_title, e.title_raw, e.title_cn, e.bangumi_id, e.tmdb_id, e.year, e.season_number
+            FROM releases r
+            JOIN entries e ON e.id=r.entry_id
+            WHERE r.id=?
+            """,
+            (release_id,),
+        ).fetchone()
+        if not release:
+            return ProcessorResult.terminal(f"发布不存在: {release_id}")
+        remote_target = target_dir(dict(release), settings)
+        remote_name = render_episode_name(dict(release), episode_number, "", settings)
+
+    try:
+        existing_remote = await find_existing_remote_episode(settings, remote_target, remote_name, episode_number)
+    except Exception as exc:
+        return ProcessorResult.retryable(f"云盘存在性检查失败，等待后重试: {str(exc)[:1800]}", task_retry_after(settings, context.attempts + 1))
+    if existing_remote:
+        asset_id = upsert_cloud_asset_for_release(release_id, existing_remote, settings) or 0
+        file_id = cloud_file_id(existing_remote)
+        actual_name = str(existing_remote.get("name") or remote_name or "")
+        with connect() as conn:
+            ts = now()
+            conn.execute(
+                """
+                UPDATE cloud_presence_tasks
+                SET status='completed', cloud_asset_id=?, retry_after='', last_error='云盘同集文件已存在，跳过下载准备', updated_at=?
+                WHERE release_id=?
+                """,
+                (asset_id, ts, release_id),
+            )
+        return ProcessorResult.skipped(
+            "云盘同集文件已存在，跳过下载准备",
+            data={"release_id": release_id, "entry_id": entry_id, "cloud_asset_id": asset_id, "provider_file_id": file_id},
+            next_payload={
+                "_subject_type": "entry",
+                "_subject_id": entry_id,
+                "entry_id": entry_id,
+                "cloud_asset_id": asset_id,
+                "cloud_name": actual_name,
+            },
+        )
+
+    with connect() as conn:
         enqueue_download_enqueue_task(conn, release_id, 0, entry_id, episode_number, ts)
         conn.execute(
             """
