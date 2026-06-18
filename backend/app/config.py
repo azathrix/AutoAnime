@@ -35,7 +35,7 @@ DEFAULT_SETTINGS = {
     "pikpak_proxy": "",
     "library_root": "/Anime",
     "local_library_root": "/media/pikpak-anime",
-    "auto_sync_following": "true",
+    "auto_sync_following": "false",
     "migration_auto_sync_default_v2": "",
     "nfo_output_root": "",
     "series_dir_template": "{title_base} ({year}) [bangumi-{bangumi_id}]",

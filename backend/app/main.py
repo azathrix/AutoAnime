@@ -72,7 +72,7 @@ class SettingsPayload(BaseModel):
     pikpak_proxy: str = ""
     library_root: str = "/Anime"
     local_library_root: str = "/media/pikpak-anime"
-    auto_sync_following: bool = True
+    auto_sync_following: bool = False
     nfo_output_root: str = ""
     work_dir_template: str = ""
     season_dir_template: str = ""
@@ -472,7 +472,7 @@ def settings_response() -> dict[str, Any]:
     result["auto_scan"] = bool_setting(settings.get("auto_scan", "false"))
     result["auto_download_unique"] = bool_setting(settings.get("auto_download_unique", "true"))
     result["auto_download_by_priority"] = bool_setting(settings.get("auto_download_by_priority", "true"))
-    result["auto_sync_following"] = bool_setting(settings.get("auto_sync_following", "true"))
+    result["auto_sync_following"] = bool_setting(settings.get("auto_sync_following", "false"))
     result["subtitle_priority"] = split_setting(settings.get("subtitle_priority", ""))
     result["resolution_priority"] = split_setting(settings.get("resolution_priority", ""))
     result["language_priority"] = split_setting(settings.get("language_priority", ""))
@@ -2756,7 +2756,7 @@ async def api_backfill_library_entry(entry_id: int) -> dict[str, str]:
 async def api_process_sync_tasks() -> dict[str, str]:
     settings = get_settings()
     async def run() -> str:
-        auto_sync = bool_setting(settings.get("auto_sync_following", "true"))
+        auto_sync = bool_setting(settings.get("auto_sync_following", "false"))
         with connect() as conn:
             entry_ids = [
                 int(row["entry_id"])

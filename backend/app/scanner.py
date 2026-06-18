@@ -16,7 +16,7 @@ from .library import bool_setting, parse_entry_labels, render_episode_name, targ
 from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_year, split_lines
 from .pikpak_service import list_offline_tasks, rename_cloud_file, submit_offline_download
-from .sync_service import enqueue_cloud_asset_task
+from .sync_service import cloud_file_id, enqueue_cloud_asset_task, find_existing_remote_episode, upsert_cloud_asset_from_download_task
 from . import rclone_service
 
 download_tasks_lock = asyncio.Lock()
@@ -1850,6 +1850,69 @@ async def _process_tasks(settings: dict[str, str], limit: int = 6, force: bool =
                     last_error="发布缺少 magnet/torrent 链接，等待后自动重试",
                 )
             log("warn", f"下载任务跳过: {task['title']} - 发布缺少 magnet/torrent 链接")
+            continue
+        try:
+            existing_remote = await find_existing_remote_episode(
+                settings,
+                str(task["target_dir"] or ""),
+                str(task["normalized_name"] or ""),
+                int(task["episode_number"] or 0),
+            )
+        except Exception as exc:
+            retry_after = task_retry_after(settings, int(task["attempts"] or 0) + 1)
+            with connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE download_tasks
+                    SET status='pending', retry_after=?, last_error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (retry_after, f"云盘存在性检查失败，等待后重试: {str(exc)[:1800]}", now(), task["id"]),
+                )
+                sync_cloud_submission(
+                    conn,
+                    series_id=0,
+                    entry_id=int(task["entry_id"]),
+                    episode_number=int(task["episode_number"]),
+                    release_id=int(task["release_id"]),
+                    download_task_id=int(task["id"]),
+                    status="pending",
+                    target_dir=str(task["target_dir"] or ""),
+                    normalized_name=str(task["normalized_name"] or ""),
+                    retry_after=retry_after,
+                    last_error=f"云盘存在性检查失败，等待后重试: {str(exc)[:1800]}",
+                )
+            log("warn", f"云盘存在性检查失败: {task['title']} - {exc}")
+            continue
+        if existing_remote:
+            asset_id = upsert_cloud_asset_from_download_task(int(task["id"]), existing_remote, settings)
+            file_id = cloud_file_id(existing_remote)
+            actual_name = str(existing_remote.get("name") or task["normalized_name"] or "")
+            with connect() as conn:
+                ts = now()
+                conn.execute(
+                    """
+                    UPDATE download_tasks
+                    SET status='completed', pikpak_file_id=?, normalized_name=?, retry_after='', last_error='', updated_at=?
+                    WHERE id=?
+                    """,
+                    (file_id, actual_name, ts, task["id"]),
+                )
+                sync_cloud_submission(
+                    conn,
+                    series_id=0,
+                    entry_id=int(task["entry_id"]),
+                    episode_number=int(task["episode_number"]),
+                    release_id=int(task["release_id"]),
+                    download_task_id=int(task["id"]),
+                    status="completed",
+                    target_dir=str(task["target_dir"] or ""),
+                    normalized_name=actual_name,
+                    provider_file_id=file_id,
+                )
+                enqueue_cloud_asset_task(conn, int(task["id"]), ts)
+                request_queue_trigger("cloud_asset")
+            log("info", f"云盘同集文件已存在，跳过重复提交: {actual_name}")
             continue
         with connect() as conn:
             conn.execute(

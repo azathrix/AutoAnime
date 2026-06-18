@@ -786,23 +786,6 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, value),
             )
-        migrated = conn.execute(
-            "SELECT value FROM settings WHERE key='migration_auto_sync_default_v2'"
-        ).fetchone()
-        if not migrated or not migrated["value"]:
-            conn.execute(
-                """
-                UPDATE settings
-                SET value='true'
-                WHERE key='auto_sync_following' AND value='false'
-                """
-            )
-            conn.execute(
-                """
-                INSERT INTO settings (key, value) VALUES ('migration_auto_sync_default_v2', 'done')
-                ON CONFLICT(key) DO UPDATE SET value='done'
-                """
-            )
         migrate(conn)
 
 

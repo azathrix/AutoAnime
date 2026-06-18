@@ -17,7 +17,16 @@ from ..scanner import (
     task_retry_after,
 )
 from ..scanner import poll_submitted_tasks
-from ..sync_service import enqueue_cloud_asset_task, enqueue_sync_plan_task, process_cloud_asset_tasks, reconcile_rclone_submitted_tasks, upsert_cloud_asset
+from ..sync_service import (
+    cloud_file_id,
+    enqueue_cloud_asset_task,
+    enqueue_sync_plan_task,
+    find_existing_remote_episode,
+    process_cloud_asset_tasks,
+    reconcile_rclone_submitted_tasks,
+    upsert_cloud_asset,
+    upsert_cloud_asset_from_download_task,
+)
 
 
 async def process_cloud_presence(context: ProcessorContext, payload: dict) -> ProcessorResult:
@@ -216,6 +225,55 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
                 last_error="发布缺少 magnet/torrent 链接，等待后自动重试",
             )
         return ProcessorResult.retryable("发布缺少 magnet/torrent 链接，等待后自动重试", retry_after)
+
+    try:
+        existing_remote = await find_existing_remote_episode(
+            settings,
+            str(task["target_dir"] or ""),
+            str(task["normalized_name"] or ""),
+            int(task["episode_number"] or 0),
+        )
+    except Exception as exc:
+        return ProcessorResult.retryable(f"云盘存在性检查失败，等待后重试: {str(exc)[:1800]}", task_retry_after(settings, context.attempts + 1))
+    if existing_remote:
+        asset_id = upsert_cloud_asset_from_download_task(download_task_id, existing_remote, settings)
+        file_id = cloud_file_id(existing_remote)
+        actual_name = str(existing_remote.get("name") or task["normalized_name"] or "")
+        with connect() as conn:
+            ts = now()
+            conn.execute(
+                """
+                UPDATE download_tasks
+                SET status='completed', pikpak_file_id=?, normalized_name=?, retry_after='', last_error='', updated_at=?
+                WHERE id=?
+                """,
+                (file_id, actual_name, ts, download_task_id),
+            )
+            sync_cloud_submission(
+                conn,
+                series_id=0,
+                entry_id=int(task["entry_id"]),
+                episode_number=int(task["episode_number"]),
+                release_id=int(task["release_id"]),
+                download_task_id=download_task_id,
+                status="completed",
+                target_dir=str(task["target_dir"] or ""),
+                normalized_name=actual_name,
+                provider_file_id=file_id,
+            )
+            enqueue_cloud_asset_task(conn, download_task_id, ts)
+        return ProcessorResult.skipped(
+            "云盘同集文件已存在，跳过重复提交",
+            data={"download_task_id": download_task_id, "cloud_asset_id": asset_id, "provider_file_id": file_id},
+            next_payload={
+                "_subject_type": "download_task",
+                "_subject_id": download_task_id,
+                "download_task_id": download_task_id,
+                "release_id": int(task["release_id"]),
+                "entry_id": int(task["entry_id"]),
+                "cloud_asset_id": asset_id,
+            },
+        )
 
     with connect() as conn:
         conn.execute(

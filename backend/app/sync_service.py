@@ -177,7 +177,19 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
                 """
                 UPDATE cloud_assets
                 SET task_id=?, release_id=?, series_id=?, entry_id=?, episode_number=?,
-                    cloud_path=?, cloud_name=?, status='available', updated_at=?
+                    provider_file_id=CASE
+                      WHEN ?!='' THEN ?
+                      ELSE provider_file_id
+                    END,
+                    cloud_path=CASE
+                      WHEN provider_file_id!='' AND ?='' THEN cloud_path
+                      ELSE ?
+                    END,
+                    cloud_name=CASE
+                      WHEN provider_file_id!='' AND ?='' THEN cloud_name
+                      ELSE ?
+                    END,
+                    status='available', updated_at=?
                 WHERE id=?
                 """,
                 (
@@ -186,7 +198,11 @@ def upsert_cloud_asset(task_id: int, settings: dict[str, str]) -> int | None:
                     task["series_id"],
                     task["entry_id"],
                     release["episode_number"],
+                    task["pikpak_file_id"],
+                    task["pikpak_file_id"],
+                    task["pikpak_file_id"],
                     cloud_path,
+                    task["pikpak_file_id"],
                     cloud_name,
                     ts,
                     existing_asset["id"],
@@ -336,7 +352,7 @@ async def _process_cloud_asset_tasks(settings: dict[str, str], limit: int = 20, 
 
 def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | None = None) -> None:
     ts = now()
-    auto_sync = settings.get("auto_sync_following", "true").lower() == "true"
+    auto_sync = settings.get("auto_sync_following", "false").lower() == "true"
     sync_enabled = auto_sync if enabled is None else enabled
     with connect() as conn:
         series_id = resolve_entry_series_id(conn, entry_id)
@@ -388,8 +404,11 @@ def normalize_local_target_path(target_path: str, source_name: str = "") -> str:
 
 
 def materialize_sync_tasks_for_entry(entry_id: int, settings: dict[str, str]) -> tuple[int, str]:
-    ensure_sync_rule(entry_id, settings, enabled=True)
+    ensure_sync_rule(entry_id, settings)
     with connect() as conn:
+        rule = conn.execute("SELECT sync_enabled FROM sync_rules WHERE entry_id=?", (entry_id,)).fetchone()
+        if not rule or not int(rule["sync_enabled"] or 0):
+            return 0, "本地同步未开启，跳过同步计划"
         assets = conn.execute(
             """
             SELECT ca.*, e.display_title
@@ -554,6 +573,34 @@ def backfill_cloud_assets_from_completed_tasks(settings: dict[str, str]) -> int:
 
 
 VIDEO_SUFFIXES = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"}
+
+
+async def find_existing_remote_episode(
+    settings: dict[str, str],
+    target_directory: str,
+    expected_name: str,
+    episode_number: int,
+) -> dict | None:
+    if not rclone_service.enabled(settings) or not target_directory:
+        return None
+    try:
+        files = await rclone_service.list_files(settings, target_directory, recursive=False)
+    except Exception as exc:
+        if "directory not found" in str(exc).lower():
+            return None
+        raise
+    normalized_expected = normalize_title_key(expected_name)
+    for item in files:
+        if item.get("is_dir"):
+            continue
+        name = str(item.get("name") or "")
+        if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
+            continue
+        if normalized_expected and normalize_title_key(name) == normalized_expected:
+            return item
+        if episode_number > 0 and parse_episode(name) == episode_number:
+            return item
+    return None
 
 
 def cloud_file_id(item: dict) -> str:
@@ -977,18 +1024,33 @@ async def reconcile_rclone_submitted_tasks(settings: dict[str, str], limit: int 
         with connect() as conn:
             ts = now()
             conn.execute(
-                "UPDATE download_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE id=?",
-                (ts, task["id"]),
+                """
+                UPDATE download_tasks
+                SET status='completed',
+                    pikpak_file_id=?,
+                    normalized_name=?,
+                    retry_after='',
+                    last_error='',
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    str(matched.get("id") or matched.get("file_id") or matched.get("fileId") or ""),
+                    str(matched.get("name") or task["normalized_name"] or ""),
+                    ts,
+                    task["id"],
+                ),
             )
             conn.execute(
                 """
                 UPDATE cloud_submissions
-                SET status='completed', provider_file_id=?, retry_after='', last_error='',
+                SET status='completed', provider_file_id=?, normalized_name=?, retry_after='', last_error='',
                     updated_at=?, last_seen_at=?
                 WHERE download_task_id=?
                 """,
                 (
                     str(matched.get("id") or matched.get("file_id") or matched.get("fileId") or ""),
+                    str(matched.get("name") or task["normalized_name"] or ""),
                     ts,
                     ts,
                     task["id"],
