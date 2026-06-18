@@ -268,6 +268,7 @@
                 <div class="log-console">
                   <div class="log-toolbar">
                     <el-input v-model="logKeyword" clearable placeholder="搜索日志" />
+                    <el-button plain @click="exportLogs">导出日志</el-button>
                     <el-button plain @click="runAction('/logs/clear')">清空日志</el-button>
                   </div>
                   <pre class="server-log">{{ filteredServerLogText }}</pre>
@@ -310,6 +311,7 @@
                 <div class="log-console compact-log-console">
                   <div class="log-toolbar">
                     <el-input v-model="logKeyword" clearable placeholder="搜索日志" />
+                    <el-button plain @click="exportLogs">导出日志</el-button>
                     <el-button plain @click="runAction('/logs/clear')">清空日志</el-button>
                   </div>
                   <pre class="server-log">{{ filteredServerLogText }}</pre>
@@ -1166,6 +1168,24 @@ async function runAction(path) {
   } catch (error) {
     ElMessage.error(apiErrorMessage(error))
   }
+}
+
+function exportLogs() {
+  const text = filteredServerLogText.value || ''
+  if (!text.trim()) {
+    ElMessage.warning('没有可导出的日志')
+    return
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const blob = new Blob([`${text}\n`], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `autoanime-log-${timestamp}.txt`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 async function saveAllSettings() {

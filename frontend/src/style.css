@@ -20,9 +20,10 @@ body {
 }
 
 .sidebar {
-  background: #141821;
-  border-right: 1px solid rgba(15, 23, 42, .12);
-  color: #e5e7eb;
+  background: #ffffff;
+  border-right: 1px solid #dfe7f3;
+  box-shadow: 8px 0 28px rgba(15, 23, 42, .05);
+  color: #1f2937;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -54,7 +55,7 @@ body {
 }
 
 .brand-wordmark span {
-  color: #7dd3fc;
+  color: #2563eb;
 }
 
 .brand strong,
@@ -63,7 +64,7 @@ body {
 }
 
 .brand span {
-  color: #94a3b8;
+  color: #64748b;
   font-size: 12px;
 }
 
@@ -85,7 +86,7 @@ nav button {
   background: transparent;
   border: 0;
   border-radius: 8px;
-  color: #b9becc;
+  color: #475569;
   cursor: pointer;
   display: flex;
   gap: 10px;
@@ -96,14 +97,14 @@ nav button {
 
 nav button.active,
 nav button:hover {
-  background: #2563eb;
-  box-shadow: 0 12px 28px rgba(37, 99, 235, .24);
-  color: white;
+  background: #eef4ff;
+  box-shadow: inset 3px 0 0 #2563eb;
+  color: #1d4ed8;
 }
 
 .sidebar-status {
   align-items: center;
-  border-top: 1px solid rgba(255, 255, 255, .08);
+  border-top: 1px solid #e2e8f0;
   display: grid;
   gap: 10px;
   grid-template-columns: 42px minmax(0, 1fr);
@@ -114,7 +115,7 @@ nav button:hover {
 .sidebar-avatar {
   align-items: center;
   background: radial-gradient(circle at 35% 30%, #bae6fd, #2563eb 74%);
-  border: 2px solid rgba(255, 255, 255, .82);
+  border: 2px solid #dbeafe;
   border-radius: 50%;
   color: #eff6ff;
   display: flex;
@@ -134,12 +135,12 @@ nav button:hover {
 }
 
 .sidebar-status strong {
-  color: #f8fafc;
+  color: #1f2937;
   font-size: 13px;
 }
 
 .sidebar-status small {
-  color: #8f96a7;
+  color: #64748b;
   font-size: 11px;
   margin-top: 3px;
 }
@@ -1187,11 +1188,11 @@ h1 {
   .mobile-nav {
     align-items: center;
     backdrop-filter: blur(14px);
-    background: rgba(20, 24, 33, .92);
-    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(255, 255, 255, .94);
+    border: 1px solid #dfe7f3;
     border-radius: 18px;
     bottom: 10px;
-    box-shadow: 0 18px 48px rgba(15, 23, 42, .34);
+    box-shadow: 0 18px 48px rgba(15, 23, 42, .16);
     display: grid;
     gap: 4px;
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1207,7 +1208,7 @@ h1 {
     background: transparent;
     border: 0;
     border-radius: 13px;
-    color: #b9becc;
+    color: #475569;
     display: grid;
     gap: 2px;
     justify-items: center;
@@ -1216,8 +1217,8 @@ h1 {
   }
 
   .mobile-nav button.active {
-    background: #2563eb;
-    color: #fff;
+    background: #eef4ff;
+    color: #1d4ed8;
   }
 
   .mobile-nav b {
