@@ -4,7 +4,7 @@ from ..database import connect
 from ..db import get_settings, now
 from ..library import render_episode_name, target_dir
 from ..pipeline_models import ProcessorContext, ProcessorResult
-from ..pikpak_service import submit_offline_download
+from ..pikpak_service import list_offline_tasks, submit_offline_download
 from .. import rclone_service
 from ..scanner import (
     enqueue_cloud_poll_task,
@@ -19,14 +19,11 @@ from ..scanner import (
     sync_cloud_submission,
     task_retry_after,
 )
-from ..scanner import poll_submitted_tasks
 from ..sync_service import (
     cloud_file_id,
     enqueue_cloud_asset_task,
     enqueue_sync_plan_task,
     find_existing_remote_episode,
-    process_cloud_asset_tasks,
-    reconcile_rclone_submitted_tasks,
     upsert_cloud_asset,
     upsert_cloud_asset_for_release,
     upsert_cloud_asset_from_download_task,
@@ -505,20 +502,130 @@ async def process_cloud_poll(context: ProcessorContext, payload: dict) -> Proces
     if download_task_id <= 0:
         return ProcessorResult.terminal("云盘状态轮询缺少 download_task_id")
     settings = get_settings()
-    try:
-        await reconcile_rclone_submitted_tasks(settings, limit=10)
-        await poll_submitted_tasks(settings, limit=10, force=True)
-    except Exception as exc:
-        return ProcessorResult.retryable(str(exc)[:2000], task_retry_after(settings, context.attempts + 1))
-
     with connect() as conn:
-        task = conn.execute("SELECT * FROM download_tasks WHERE id=?", (download_task_id,)).fetchone()
+        task = conn.execute(
+            """
+            SELECT dt.*, r.episode_number, r.title AS release_title
+            FROM download_tasks dt
+            JOIN releases r ON r.id=dt.release_id
+            WHERE dt.id=?
+            """,
+            (download_task_id,),
+        ).fetchone()
     if not task:
         return ProcessorResult.terminal(f"下载任务不存在: {download_task_id}")
-    if task["status"] != "completed":
-        return ProcessorResult.retryable("云盘任务尚未完成，等待后继续轮询", task_retry_after(settings, context.attempts + 1))
+
+    matched = None
+    status = str(task["status"] or "")
+    file_id = str(task["pikpak_file_id"] or "")
+    message = ""
+    if status != "completed":
+        try:
+            if rclone_service.enabled(settings):
+                matched = await find_existing_remote_episode(
+                    settings,
+                    str(task["target_dir"] or ""),
+                    str(task["normalized_name"] or ""),
+                    int(task["episode_number"] or 0),
+                )
+                if matched:
+                    file_id = cloud_file_id(matched)
+                    status = "completed"
+                else:
+                    message = "rclone 已提交，目标目录暂未发现完成文件"
+            elif file_id and not str(task["pikpak_task_id"] or ""):
+                status = "completed"
+            else:
+                remote_tasks = await list_offline_tasks(settings)
+                remote = next((item for item in remote_tasks if item.get("id") == task["pikpak_task_id"]), None)
+                if not remote:
+                    message = "PikPak 暂未返回该离线任务，等待后重试"
+                else:
+                    phase = remote.get("phase", "")
+                    file_id = str(remote.get("file_id") or remote.get("reference_resource", {}).get("id", "") or file_id)
+                    if phase == "PHASE_TYPE_COMPLETE":
+                        status = "completed"
+                    elif phase == "PHASE_TYPE_ERROR":
+                        status = "failed"
+                        message = str(remote.get("message") or "PikPak 离线任务失败")
+                    else:
+                        message = "云盘任务尚未完成，等待后继续轮询"
+        except Exception as exc:
+            return ProcessorResult.retryable(str(exc)[:2000], task_retry_after(settings, context.attempts + 1))
+
+    if status != "completed":
+        retry_after = task_retry_after(settings, context.attempts + 1)
+        with connect() as conn:
+            ts = now()
+            conn.execute(
+                """
+                UPDATE download_tasks
+                SET status=?, pikpak_file_id=?, retry_after=?, last_error=?, updated_at=?
+                WHERE id=?
+                """,
+                ("pending" if status == "failed" else "submitted", file_id, retry_after, message[:2000], ts, download_task_id),
+            )
+            conn.execute(
+                """
+                UPDATE cloud_poll_tasks
+                SET status='pending', retry_after=?, last_error=?, updated_at=?
+                WHERE download_task_id=?
+                """,
+                (retry_after, message[:2000], ts, download_task_id),
+            )
+            sync_cloud_submission(
+                conn,
+                series_id=0,
+                entry_id=int(task["entry_id"]),
+                episode_number=int(task["episode_number"]),
+                release_id=int(task["release_id"]),
+                download_task_id=download_task_id,
+                status="submitted",
+                target_dir=str(task["target_dir"] or ""),
+                normalized_name=str(task["normalized_name"] or ""),
+                submission_id=str(task["pikpak_task_id"] or ""),
+                provider_file_id=file_id,
+                retry_after=retry_after,
+                last_error=message,
+            )
+        return ProcessorResult.retryable(message or "云盘任务尚未完成，等待后继续轮询", retry_after)
+
+    if matched:
+        upsert_cloud_asset_from_download_task(download_task_id, matched, settings)
     with connect() as conn:
-        enqueue_cloud_asset_task(conn, download_task_id, now())
+        ts = now()
+        actual_name = str(matched.get("name") if matched else task["normalized_name"] or "")
+        conn.execute(
+            """
+            UPDATE download_tasks
+            SET status='completed', pikpak_file_id=?, normalized_name=CASE WHEN ?!='' THEN ? ELSE normalized_name END,
+                retry_after='', last_error='', updated_at=?
+            WHERE id=?
+            """,
+            (file_id, actual_name, actual_name, ts, download_task_id),
+        )
+        conn.execute(
+            """
+            UPDATE cloud_poll_tasks
+            SET status='completed', retry_after='', last_error='', updated_at=?
+            WHERE download_task_id=?
+            """,
+            (ts, download_task_id),
+        )
+        sync_cloud_submission(
+            conn,
+            series_id=0,
+            entry_id=int(task["entry_id"]),
+            episode_number=int(task["episode_number"]),
+            release_id=int(task["release_id"]),
+            download_task_id=download_task_id,
+            status="completed",
+            target_dir=str(task["target_dir"] or ""),
+            normalized_name=actual_name or str(task["normalized_name"] or ""),
+            submission_id=str(task["pikpak_task_id"] or ""),
+            provider_file_id=file_id,
+        )
+        enqueue_cloud_asset_task(conn, download_task_id, ts)
     return ProcessorResult.success(
         "云盘任务已完成",
         data={"download_task_id": download_task_id, "entry_id": int(task["entry_id"])},
@@ -539,9 +646,6 @@ async def process_cloud_asset_register(context: ProcessorContext, payload: dict)
     settings = get_settings()
     try:
         asset_id = upsert_cloud_asset(download_task_id, settings)
-        if not asset_id:
-            await process_cloud_asset_tasks(settings, limit=1, force=True)
-            asset_id = upsert_cloud_asset(download_task_id, settings)
     except Exception as exc:
         return ProcessorResult.retryable(str(exc)[:2000], task_retry_after(settings, context.attempts + 1))
     if not asset_id:

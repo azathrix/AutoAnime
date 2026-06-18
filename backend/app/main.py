@@ -392,38 +392,6 @@ def summarize_seasonal_entry(
         result["status_summary"] = "缺少 Bangumi 关联，不能进入正式处理"
         return result
 
-    subtitle_groups = split_candidate_values(result.get("subtitle_groups"))
-    if (
-        int(result.get("group_count") or 0) > 1
-        and not str(result.get("selected_group") or "").strip()
-        and not can_resolve_priority(subtitle_groups, subtitle_priority)
-    ):
-        result["needs_attention"] = True
-        result["status_category"] = "attention"
-        result["status_level"] = "warning"
-        result["status_summary"] = "存在多个字幕组，当前规则不能唯一选择"
-        return result
-
-    resolutions = split_candidate_values(result.get("resolutions"))
-    if (
-        int(result.get("resolution_count") or 0) > 1
-        and not str(result.get("selected_resolution") or "").strip()
-        and not can_resolve_priority(resolutions, resolution_priority)
-    ):
-        result["needs_attention"] = True
-        result["status_category"] = "attention"
-        result["status_level"] = "warning"
-        result["status_summary"] = "存在多个分辨率，当前规则不能唯一选择"
-        return result
-
-    languages = split_candidate_values(result.get("languages"))
-    if int(result.get("language_count") or 0) > 1 and not pick_subtitle_language(languages, language_priority, secondary_language_priority):
-        result["needs_attention"] = True
-        result["status_category"] = "attention"
-        result["status_level"] = "warning"
-        result["status_summary"] = "存在多个字幕语言组合，当前规则不能唯一选择"
-        return result
-
     auto_download_enabled = result.get("auto_download") == "on" or (
         result.get("auto_download") == "inherit" and bool_setting(settings.get("auto_download_unique", "true"))
     )

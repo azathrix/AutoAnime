@@ -595,18 +595,6 @@
           </div>
           <template v-if="selectedEntryDomain === 'seasonal'">
             <div class="form-row">
-              <el-form-item label="字幕组">
-                <el-select v-model="selectedEntry.selected_group" clearable>
-                  <el-option v-for="g in selectedEntryDetail.groups" :key="g" :label="g" :value="g" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="分辨率">
-                <el-select v-model="selectedEntry.selected_resolution" clearable>
-                  <el-option v-for="r in selectedEntryDetail.resolutions" :key="r" :label="r" :value="r" />
-                </el-select>
-              </el-form-item>
-            </div>
-            <div class="form-row">
               <el-form-item label="自动入云盘">
                 <el-select v-model="selectedEntry.auto_download">
                   <el-option label="跟随全局" value="inherit" />
@@ -648,6 +636,12 @@
           <el-tab-pane label="RSS 发布">
             <el-table :data="selectedEntryDetail.releases" height="320">
               <el-table-column prop="episode_number" label="集" width="70" />
+              <el-table-column label="选中" width="80">
+                <template #default="{ row }">
+                  <el-tag v-if="row.selected" size="small" type="success">是</el-tag>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="subtitle_group" label="字幕组" width="140" />
               <el-table-column prop="resolution" label="分辨率" width="100" />
               <el-table-column prop="language" label="语言" width="90" />
