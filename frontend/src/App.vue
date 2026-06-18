@@ -4,17 +4,26 @@
       <div class="brand">
         <div class="brand-mark">A</div>
         <div>
-          <strong>AutoAnime</strong>
+          <strong class="brand-wordmark">Auto<span>Anime</span></strong>
           <span>Media automation</span>
         </div>
       </div>
       <nav>
+        <div class="nav-caption">媒体</div>
         <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 控制台</button>
         <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon> 新番</button>
         <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
         <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧</button>
+        <div class="nav-caption">系统</div>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
+      <div class="sidebar-status">
+        <span class="sidebar-avatar">A</span>
+        <div>
+          <strong>{{ liveConnected ? '动态连接' : '本地服务' }}</strong>
+          <small>{{ dashboard.console_overview?.pending_task_count || 0 }} 个待处理任务</small>
+        </div>
+      </div>
     </aside>
 
     <main class="main">
@@ -555,6 +564,14 @@
         </el-card>
       </section>
     </main>
+
+    <nav class="mobile-nav" aria-label="移动端导航">
+      <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon><b>控制台</b></button>
+      <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon><b>新番</b></button>
+      <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon><b>日历</b></button>
+      <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon><b>番剧</b></button>
+      <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon><b>设置</b></button>
+    </nav>
 
     <el-drawer v-model="entryDrawerOpen" size="720px" :title="selectedEntryDetail?.entry?.title_cn || (selectedEntryDomain === 'library' ? '番剧库条目' : '番剧设置')">
       <template v-if="selectedEntryDetail?.entry">

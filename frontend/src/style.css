@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: #eef2f7;
+  background: #f2f4f8;
   color: #1f2937;
 }
 
@@ -15,15 +15,18 @@ body {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 236px 1fr;
   min-height: 100vh;
 }
 
 .sidebar {
-  background: #111827;
+  background: #141821;
+  border-right: 1px solid rgba(15, 23, 42, .12);
   color: #e5e7eb;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
-  padding: 22px 16px;
+  padding: 18px 14px;
   position: sticky;
   top: 0;
   align-self: start;
@@ -33,18 +36,23 @@ body {
   align-items: center;
   display: flex;
   gap: 12px;
-  margin-bottom: 28px;
+  margin-bottom: 24px;
 }
 
 .brand-mark {
   align-items: center;
-  background: linear-gradient(135deg, #38bdf8, #6366f1);
-  border-radius: 8px;
+  background: linear-gradient(135deg, #2dd4bf, #2563eb);
+  border-radius: 9px;
+  box-shadow: 0 12px 28px rgba(37, 99, 235, .24);
   display: flex;
   font-weight: 800;
   height: 42px;
   justify-content: center;
   width: 42px;
+}
+
+.brand-wordmark span {
+  color: #7dd3fc;
 }
 
 .brand strong,
@@ -62,39 +70,93 @@ nav {
   gap: 8px;
 }
 
+.nav-caption {
+  color: #7f8798;
+  font-size: 11px;
+  font-weight: 800;
+  margin: 12px 10px 2px;
+  text-transform: uppercase;
+}
+
 nav button {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 7px;
-  color: #cbd5e1;
+  border-radius: 8px;
+  color: #b9becc;
   cursor: pointer;
   display: flex;
   gap: 10px;
-  padding: 11px 12px;
+  font-weight: 700;
+  padding: 10px 12px;
   text-align: left;
 }
 
 nav button.active,
 nav button:hover {
-  background: #1f2937;
+  background: #2563eb;
+  box-shadow: 0 12px 28px rgba(37, 99, 235, .24);
   color: white;
+}
+
+.sidebar-status {
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  margin-top: auto;
+  padding-top: 14px;
+}
+
+.sidebar-avatar {
+  align-items: center;
+  background: radial-gradient(circle at 35% 30%, #bae6fd, #2563eb 74%);
+  border: 2px solid rgba(255, 255, 255, .82);
+  border-radius: 50%;
+  color: #eff6ff;
+  display: flex;
+  font-weight: 900;
+  height: 40px;
+  justify-content: center;
+  width: 40px;
+}
+
+.sidebar-status strong,
+.sidebar-status small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-status strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.sidebar-status small {
+  color: #8f96a7;
+  font-size: 11px;
+  margin-top: 3px;
 }
 
 .main {
   min-width: 0;
-  padding: 22px;
+  padding: 20px 24px 28px;
 }
 
 .hero {
   align-items: center;
-  background: linear-gradient(135deg, #ffffff, #e8f1ff);
-  border: 1px solid #d9e2f2;
-  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #dfe7f3;
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, .06);
   display: flex;
   justify-content: space-between;
-  margin-bottom: 18px;
-  padding: 22px;
+  margin-bottom: 16px;
+  padding: 18px 20px;
 }
 
 .eyebrow {
@@ -107,7 +169,7 @@ nav button:hover {
 }
 
 h1 {
-  font-size: 28px;
+  font-size: 26px;
   margin: 0;
 }
 
@@ -155,7 +217,8 @@ h1 {
 .metric-card {
   background: #fff;
   border: 1px solid #dfe7f3;
-  border-radius: 10px;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, .05);
   padding: 18px;
 }
 
@@ -872,7 +935,7 @@ h1 {
 
 .cover img {
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   width: 100%;
 }
 
@@ -901,6 +964,10 @@ h1 {
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 12px;
+}
+
+.mobile-nav {
+  display: none;
 }
 
 .settings-form {
@@ -1065,14 +1132,51 @@ h1 {
 @media (max-width: 1000px) {
   .app-shell {
     grid-template-columns: 1fr;
+    padding-bottom: 76px;
   }
 
   .sidebar {
-    position: static;
+    display: none;
   }
 
-  nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .mobile-nav {
+    align-items: center;
+    backdrop-filter: blur(14px);
+    background: rgba(20, 24, 33, .92);
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 18px;
+    bottom: 10px;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, .34);
+    display: grid;
+    gap: 4px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    left: 10px;
+    padding: 6px;
+    position: fixed;
+    right: 10px;
+    z-index: 40;
+  }
+
+  .mobile-nav button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 13px;
+    color: #b9becc;
+    display: grid;
+    gap: 2px;
+    justify-items: center;
+    min-height: 50px;
+    padding: 6px 4px;
+  }
+
+  .mobile-nav button.active {
+    background: #2563eb;
+    color: #fff;
+  }
+
+  .mobile-nav b {
+    font-size: 10px;
   }
 
   .hero,
