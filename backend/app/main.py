@@ -2373,6 +2373,7 @@ def dashboard_data() -> dict[str, Any]:
             JOIN entries e ON e.id=r.entry_id
             JOIN seasonal_entries se ON se.entry_id=e.id
             JOIN works w ON w.id=e.work_id
+            JOIN sync_rules sr ON sr.entry_id=e.id AND sr.sync_enabled=1
             WHERE la.status='synced'
               AND COALESCE(e.hidden, 0)=0
               AND strftime('%s', la.updated_at) >= ?
@@ -2401,9 +2402,11 @@ def dashboard_data() -> dict[str, Any]:
             JOIN entries e ON e.id=r.entry_id
             JOIN seasonal_entries se ON se.entry_id=e.id
             JOIN works w ON w.id=e.work_id
+            JOIN sync_rules sr ON sr.entry_id=e.id AND sr.sync_enabled=1
             LEFT JOIN cloud_assets ca ON ca.release_id=r.id
             LEFT JOIN local_assets la ON la.release_id=r.id
             WHERE COALESCE(e.hidden, 0)=0
+              AND la.status='synced'
               AND strftime('%s', COALESCE(la.updated_at, ca.updated_at, r.updated_at, r.created_at)) >= ?
             GROUP BY e.id, r.episode_number
             ORDER BY updated_at DESC

@@ -354,6 +354,7 @@ def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | No
     ts = now()
     auto_sync = settings.get("auto_sync_following", "false").lower() == "true"
     sync_enabled = auto_sync if enabled is None else enabled
+    explicit_enabled = enabled is not None
     with connect() as conn:
         series_id = resolve_entry_series_id(conn, entry_id)
         conn.execute(
@@ -363,6 +364,11 @@ def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | No
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(entry_id) DO UPDATE SET
               series_id=excluded.series_id,
+              sync_enabled=CASE
+                WHEN ?=1 THEN excluded.sync_enabled
+                ELSE sync_rules.sync_enabled
+              END,
+              auto_sync_following=excluded.auto_sync_following,
               local_root=CASE WHEN sync_rules.local_root='' THEN excluded.local_root ELSE sync_rules.local_root END,
               updated_at=excluded.updated_at
             """,
@@ -374,6 +380,7 @@ def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | No
                 settings.get("local_library_root") or "/media/pikpak-anime",
                 ts,
                 ts,
+                1 if explicit_enabled else 0,
             ),
         )
 

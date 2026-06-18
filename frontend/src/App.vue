@@ -749,7 +749,7 @@ const libraryRows = computed(() => dashboard.library_items || [])
 const activeDetailRows = computed(() => selectedEntryDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
 const cloudAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
-const seasonalCalendarCards = computed(() => dashboard.seasonal_update_calendar || [])
+const seasonalCalendarCards = computed(() => dashboard.seasonal_sync_calendar || [])
 const weekStart = computed(() => startOfWeek(calendarWeek.value ? new Date(calendarWeek.value) : new Date()))
 const weekDays = computed(() => {
   const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
@@ -1076,8 +1076,9 @@ function shiftCalendarWeek(delta) {
 
 function applyDashboard(nextDashboard) {
   Object.assign(dashboard, nextDashboard || {})
-  if (!queueConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
-    const fallback = queueConsoleSections.value.find(item => item.kind !== 'group')
+  const source = consoleNavMode.value === '定时任务' ? scheduledConsoleSections.value : queueListSections.value
+  if (!source.some(item => item.key === selectedConsoleSection.value)) {
+    const fallback = source[0] || queueListSections.value[0]
     selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
   }
 }
