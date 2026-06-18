@@ -208,27 +208,7 @@ async def process_cloud_presence(context: ProcessorContext, payload: dict) -> Pr
     )
 
 
-async def process_download_enqueue(context: ProcessorContext, payload: dict) -> ProcessorResult:
-    release_id = _release_subject(context, payload)
-    if release_id <= 0:
-        return ProcessorResult.terminal("下载准备缺少 release_id")
-    release = _release_row(release_id)
-    if not release:
-        return ProcessorResult.terminal(f"发布不存在: {release_id}")
-    return ProcessorResult.success(
-        "云盘提交准备完成",
-        data={"release_id": release_id, "entry_id": int(release["entry_id"] or 0)},
-        next_payload={
-            "_subject_type": "release",
-            "_subject_id": release_id,
-            "release_id": release_id,
-            "entry_id": int(release["entry_id"] or 0),
-            "episode_number": int(release["episode_number"] or 0),
-        },
-    )
-
-
-async def process_download_submit(context: ProcessorContext, payload: dict) -> ProcessorResult:
+async def process_cloud_submit(context: ProcessorContext, payload: dict) -> ProcessorResult:
     release_id = _release_subject(context, payload)
     if release_id <= 0:
         return ProcessorResult.terminal("云盘提交缺少 release_id")

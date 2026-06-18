@@ -42,10 +42,7 @@ active_operation_tasks: set[asyncio.Task] = set()
 DASHBOARD_CACHE_TTL = 1.0
 dashboard_cache: dict[str, Any] = {"ts": 0.0, "data": None}
 dashboard_cache_lock = asyncio.Lock()
-QUEUE_KEY_ALIASES = {
-    "cloud": "download",
-    "cloud_assets": "cloud_asset",
-}
+QUEUE_KEY_ALIASES: dict[str, str] = {}
 
 
 def canonical_queue_key(name: str) -> str:
@@ -263,12 +260,11 @@ SEASONAL_STATUS_QUEUE_ORDER = [
     "selection",
     "backfill",
     "cloud_presence",
-    "download_enqueue",
-    "cloud",
+    "cloud_submit",
     "cloud_poll",
-    "cloud_assets",
+    "cloud_asset_register",
     "sync_plan",
-    "sync",
+    "local_sync",
     "nfo",
     "local_presence",
 ]
@@ -279,12 +275,11 @@ SEASONAL_STATUS_QUEUE_NAMES = {
     "selection": "自动选集",
     "backfill": "整季补全",
     "cloud_presence": "云盘存在性检查",
-    "download_enqueue": "下载准备",
-    "cloud": "PikPak 入库",
+    "cloud_submit": "PikPak 入库",
     "cloud_poll": "PikPak 状态",
-    "cloud_assets": "云盘资源登记",
+    "cloud_asset_register": "云盘资源登记",
     "sync_plan": "同步计划",
-    "sync": "本地同步",
+    "local_sync": "本地同步",
     "nfo": "NFO",
     "local_presence": "本地存在性检查",
 }
@@ -916,12 +911,11 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         runtime_item("selection", "自动选集", "根据全局优先级选择唯一发布"),
         runtime_item("backfill", "整季补全", "补抓当季历史条目"),
         runtime_item("cloud_presence", "云盘存在性检查", "先查云盘同集资源，避免重复提交"),
-        runtime_item("download_enqueue", "云盘提交准备", "Runtime 透传步骤，不写任务表"),
-        runtime_item("cloud", "PikPak 入库", "提交离线任务并写 cloud_submissions"),
+        runtime_item("cloud_submit", "PikPak 入库", "提交离线任务并写 cloud_submissions"),
         runtime_item("cloud_poll", "PikPak 状态", "轮询离线任务完成状态"),
-        runtime_item("cloud_assets", "云盘资源登记", "完成后写 cloud_assets"),
+        runtime_item("cloud_asset_register", "云盘资源登记", "完成后写 cloud_assets"),
         runtime_item("sync_plan", "同步计划", "从 sync_rules 与 cloud_assets 生成内存同步任务"),
-        runtime_item("sync", "本地同步", "同步到本地并写 local_assets"),
+        runtime_item("local_sync", "本地同步", "同步到本地并写 local_assets"),
         runtime_item("nfo", "NFO", "本地同步完成后生成 NFO"),
         runtime_item("local_presence", "本地存在性检查", "检查本地最终文件状态"),
     ]
@@ -1014,12 +1008,11 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:selection", "name": "自动选集", "kind": "queue", "queue_key": "selection"},
         {"key": "queue:backfill", "name": "整季补全", "kind": "queue", "queue_key": "backfill"},
         {"key": "queue:cloud_presence", "name": "云盘存在性检查", "kind": "queue", "queue_key": "cloud_presence"},
-        {"key": "queue:download_enqueue", "name": "下载准备", "kind": "queue", "queue_key": "download_enqueue"},
-        {"key": "queue:cloud", "name": "PikPak 入库", "kind": "queue", "queue_key": "cloud"},
+        {"key": "queue:cloud_submit", "name": "PikPak 入库", "kind": "queue", "queue_key": "cloud_submit"},
         {"key": "queue:cloud_poll", "name": "PikPak 状态", "kind": "queue", "queue_key": "cloud_poll"},
-        {"key": "queue:cloud_assets", "name": "云盘资源登记", "kind": "queue", "queue_key": "cloud_assets"},
+        {"key": "queue:cloud_asset_register", "name": "云盘资源登记", "kind": "queue", "queue_key": "cloud_asset_register"},
         {"key": "queue:sync_plan", "name": "同步计划", "kind": "queue", "queue_key": "sync_plan"},
-        {"key": "queue:sync", "name": "本地同步", "kind": "queue", "queue_key": "sync"},
+        {"key": "queue:local_sync", "name": "本地同步", "kind": "queue", "queue_key": "local_sync"},
         {"key": "queue:nfo", "name": "NFO", "kind": "queue", "queue_key": "nfo"},
         {"key": "queue:local_presence", "name": "本地存在性检查", "kind": "queue", "queue_key": "local_presence"},
         {"key": "queue:cleanup", "name": "清理", "kind": "queue", "queue_key": "cleanup"},

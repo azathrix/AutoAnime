@@ -465,7 +465,6 @@ class RuntimeStore:
             "entry_id": task.payload.get("entry_id", task.subject_id if task.subject_type == "entry" else 0),
             "release_id": task.payload.get("release_id", task.subject_id if task.subject_type == "release" else 0),
             "candidate_id": task.payload.get("candidate_id", task.subject_id if task.subject_type == "rss_candidate" else 0),
-            "download_task_id": task.payload.get("download_task_id", task.subject_id if task.subject_type == "download_task" else 0),
             "episode_number": task.payload.get("episode_number", ""),
             "title_cn": task.payload.get("title", ""),
             "release_title": task.payload.get("title", ""),
