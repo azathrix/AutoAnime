@@ -5,15 +5,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .database import connect
-from .db import log, now
+from .db import log
 from .pipeline_models import ProcessorContext, ProcessorResult, merge_payload
 from .pipeline_runtime import finish_pipeline_run, get_pipeline_id, record_processor_event, start_pipeline_run
 from .processor_registry import get_processor
 from .queue_bridge import request_queue_trigger
+from .runtime_store import RuntimeTask, runtime_store
 
 
-TERMINAL_STATUSES = {"completed", "failed", "blocked", "cancelled"}
-STALE_RUNNING_MINUTES = 10
 LOG_PAYLOAD_KEYS = [
     "entry_id",
     "release_id",
@@ -37,16 +36,8 @@ def load_json(value: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def dump_json(value: dict[str, Any] | None) -> str:
-    return json.dumps(value or {}, ensure_ascii=False, separators=(",", ":"))
-
-
 def retry_after_seconds(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=max(1, seconds))).isoformat()
-
-
-def stale_running_cutoff() -> str:
-    return (datetime.now(timezone.utc) - timedelta(minutes=STALE_RUNNING_MINUTES)).isoformat()
 
 
 def compact_payload(payload: dict[str, Any] | None) -> str:
@@ -106,73 +97,67 @@ def enqueue_processor_task(
     step = pipeline_step(pipeline_id, step_key)
     if not step:
         return 0
-    ts = now()
-    payload_json = dump_json(payload)
-    with connect() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO processor_tasks
-              (pipeline_id, run_id, step_id, parent_task_id, processor_key, domain_kind,
-               subject_type, subject_id, dedupe_key, payload_json, result_json, status,
-               attempts, retry_after, progress, progress_text, last_error, locked_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 0, '', 0, '', '', '', ?, ?)
-            ON CONFLICT(dedupe_key) WHERE dedupe_key != '' DO UPDATE SET
-              run_id=excluded.run_id,
-              step_id=excluded.step_id,
-              parent_task_id=excluded.parent_task_id,
-              processor_key=excluded.processor_key,
-              domain_kind=excluded.domain_kind,
-              subject_type=excluded.subject_type,
-              subject_id=excluded.subject_id,
-              payload_json=excluded.payload_json,
-              status=CASE
-                WHEN processor_tasks.run_id=excluded.run_id AND processor_tasks.status IN ('completed', 'running') THEN processor_tasks.status
-                ELSE 'pending'
-              END,
-              attempts=CASE
-                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.attempts
-                ELSE 0
-              END,
-              result_json=CASE
-                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.result_json
-                ELSE ''
-              END,
-              progress=CASE
-                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.progress
-                ELSE 0
-              END,
-              progress_text=CASE
-                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.progress_text
-                ELSE ''
-              END,
-              retry_after='',
-              last_error='',
-              locked_at='',
-              updated_at=excluded.updated_at
-            """,
-            (
-                pipeline_id,
-                run_id,
-                int(step["id"]),
-                parent_task_id,
-                step["processor_key"],
-                domain_kind or step.get("domain_kind", ""),
-                subject_type,
-                int(subject_id or 0),
-                dedupe_key,
-                payload_json,
-                ts,
-                ts,
-            ),
-        )
-        if cursor.lastrowid:
-            request_queue_trigger("processor")
-            return int(cursor.lastrowid)
-        if dedupe_key:
-            row = conn.execute("SELECT id FROM processor_tasks WHERE dedupe_key=?", (dedupe_key,)).fetchone()
-            request_queue_trigger("processor")
-            return int(row["id"]) if row else 0
+    try:
+        loop = __import__("asyncio").get_running_loop()
+    except RuntimeError:
         return 0
+
+    task_id_holder = {"id": 0}
+
+    async def enqueue() -> None:
+        task_id_holder["id"] = await runtime_store.enqueue_task(
+            pipeline_id=pipeline_id,
+            run_id=run_id,
+            step_id=int(step["id"]),
+            step_key=str(step["step_key"]),
+            processor_key=str(step["processor_key"]),
+            subject_type=subject_type,
+            subject_id=int(subject_id or 0),
+            payload=payload or {},
+            domain_kind=domain_kind or str(step.get("domain_kind", "")),
+            parent_task_id=parent_task_id,
+            dedupe_key=dedupe_key,
+        )
+        request_queue_trigger("processor")
+
+    if loop.is_running():
+        task = loop.create_task(enqueue())
+        # The caller needs an id only for display/logging. The actual queue
+        # operation runs immediately in the current event loop.
+        return int(runtime_store._next_task_id)
+    return 0
+
+
+async def enqueue_processor_task_async(
+    *,
+    pipeline_id: int,
+    run_id: int,
+    step_key: str,
+    subject_type: str,
+    subject_id: int = 0,
+    payload: dict[str, Any] | None = None,
+    domain_kind: str = "",
+    parent_task_id: int = 0,
+    dedupe_key: str = "",
+) -> int:
+    step = pipeline_step(pipeline_id, step_key)
+    if not step:
+        return 0
+    task_id = await runtime_store.enqueue_task(
+        pipeline_id=pipeline_id,
+        run_id=run_id,
+        step_id=int(step["id"]),
+        step_key=str(step["step_key"]),
+        processor_key=str(step["processor_key"]),
+        subject_type=subject_type,
+        subject_id=int(subject_id or 0),
+        payload=payload or {},
+        domain_kind=domain_kind or str(step.get("domain_kind", "")),
+        parent_task_id=parent_task_id,
+        dedupe_key=dedupe_key,
+    )
+    request_queue_trigger("processor")
+    return task_id
 
 
 def start_pipeline(
@@ -197,154 +182,46 @@ def start_pipeline(
         f"流水线启动: run_id={run_id} pipeline={pipeline_key} trigger={trigger_source} "
         f"first_step={step['step_key']} subject={subject_type}:{subject_id} payload={compact_payload(payload)}",
     )
-    enqueue_processor_task(
-        pipeline_id=pipeline_id,
-        run_id=run_id,
-        step_key=str(step["step_key"]),
-        subject_type=subject_type,
-        subject_id=subject_id,
-        payload=payload,
-        domain_kind=str(payload.get("domain_kind", "") if payload else ""),
-        dedupe_key=f"{run_id}:{step['step_key']}:{subject_type}:{subject_id}",
+    try:
+        loop = __import__("asyncio").get_running_loop()
+    except RuntimeError:
+        return run_id
+    loop.create_task(
+        enqueue_processor_task_async(
+            pipeline_id=pipeline_id,
+            run_id=run_id,
+            step_key=str(step["step_key"]),
+            subject_type=subject_type,
+            subject_id=subject_id,
+            payload=payload,
+            domain_kind=str(payload.get("domain_kind", "") if payload else ""),
+            dedupe_key=f"{run_id}:{step['step_key']}:{subject_type}:{subject_id}",
+        )
     )
     return run_id
 
 
-def claim_next_task(processor_key: str = "") -> dict[str, Any]:
-    params: list[Any] = []
-    processor_filter = ""
-    if processor_key:
-        processor_filter = "AND pt.processor_key=?"
-        params.append(processor_key)
-    task: dict[str, Any] = {}
-    with connect() as conn:
-        conn.execute(
-            """
-            UPDATE processor_tasks
-            SET status='pending',
-                locked_at='',
-                last_error=CASE
-                  WHEN last_error='' THEN '上次处理器执行中断，已自动放回待处理'
-                  ELSE last_error
-                END,
-                updated_at=?
-            WHERE status='running'
-              AND locked_at != ''
-              AND locked_at < ?
-            """,
-            (now(), stale_running_cutoff()),
-        )
-        row = conn.execute(
-            f"""
-            SELECT pt.*, ps.step_key
-            FROM processor_tasks pt
-            JOIN pipeline_steps ps ON ps.id=pt.step_id
-            JOIN pipelines p ON p.id=pt.pipeline_id
-            WHERE pt.status='pending'
-              AND p.enabled=1
-              AND ps.enabled=1
-              AND (pt.retry_after='' OR pt.retry_after<=?)
-              {processor_filter}
-            ORDER BY pt.updated_at ASC, pt.id ASC
-            LIMIT 1
-            """,
-            [now(), *params],
-        ).fetchone()
-        if not row:
-            return {}
-        ts = now()
-        cursor = conn.execute(
-            """
-            UPDATE processor_tasks
-            SET status='running', attempts=attempts+1, locked_at=?, updated_at=?
-            WHERE id=? AND status='pending'
-            """,
-            (ts, ts, row["id"]),
-        )
-        if cursor.rowcount != 1:
-            return {}
-        claimed = conn.execute(
-            """
-            SELECT pt.*, ps.step_key
-            FROM processor_tasks pt
-            JOIN pipeline_steps ps ON ps.id=pt.step_id
-            WHERE pt.id=?
-            """,
-            (row["id"],),
-        ).fetchone()
-        if not claimed:
-            return {}
-        task = dict(claimed)
-    log(
-        "info",
-        f"处理器开始: task_id={task['id']} run_id={task['run_id']} step={task['step_key']} "
-        f"processor={task['processor_key']} subject={task['subject_type']}:{task['subject_id']} "
-        f"attempt={task['attempts']} payload={compact_payload(load_json(str(task['payload_json'] or '')))}",
-    )
-    return task
-
-
-def task_context(task: dict[str, Any]) -> ProcessorContext:
+def task_context(task: RuntimeTask) -> ProcessorContext:
     return ProcessorContext(
-        task_id=int(task["id"]),
-        pipeline_id=int(task["pipeline_id"]),
-        run_id=int(task["run_id"]),
-        step_id=int(task["step_id"]),
-        step_key=str(task["step_key"]),
-        processor_key=str(task["processor_key"]),
-        domain_kind=str(task["domain_kind"] or ""),
-        subject_type=str(task["subject_type"] or ""),
-        subject_id=int(task["subject_id"] or 0),
-        attempts=int(task["attempts"] or 0),
+        task_id=int(task.id),
+        pipeline_id=int(task.pipeline_id),
+        run_id=int(task.run_id),
+        step_id=int(task.step_id),
+        step_key=str(task.step_key),
+        processor_key=str(task.processor_key),
+        domain_kind=str(task.domain_kind or ""),
+        subject_type=str(task.subject_type or ""),
+        subject_id=int(task.subject_id or 0),
+        attempts=int(task.attempts or 0),
     )
 
 
-def complete_task(task: dict[str, Any], result: ProcessorResult) -> None:
-    task_status = "completed"
-    if result.status == "failed_retryable":
-        task_status = "pending"
-    elif result.status in {"failed_terminal", "conflict"}:
-        task_status = "failed"
-    ts = now()
-    with connect() as conn:
-        conn.execute(
-            """
-            UPDATE processor_tasks
-            SET status=?,
-                result_json=?,
-                retry_after=?,
-                progress=CASE WHEN ?='completed' THEN 100 ELSE progress END,
-                progress_text=?,
-                last_error=?,
-                locked_at='',
-                updated_at=?
-            WHERE id=?
-            """,
-            (
-                task_status,
-                dump_json({"status": result.status, "message": result.message, "data": result.data}),
-                result.retry_after,
-                task_status,
-                result.message[:500],
-                "" if task_status == "completed" else result.message[:2000],
-                ts,
-                task["id"],
-            ),
-        )
-    log(
-        "info" if task_status == "completed" else "warn",
-        f"处理器完成: task_id={task['id']} run_id={task['run_id']} step={task['step_key']} "
-        f"processor={task['processor_key']} result={result.status} task_status={task_status} "
-        f"retry_after={result.retry_after or '-'} message={result.message or '-'} data={compact_payload(result.data)}",
-    )
-
-
-def dispatch_result(task: dict[str, Any], payload: dict[str, Any], result: ProcessorResult) -> int:
+async def dispatch_result(task: RuntimeTask, payload: dict[str, Any], result: ProcessorResult) -> int:
     record_processor_event(
-        task_id=int(task["id"]),
-        pipeline_id=int(task["pipeline_id"]),
-        run_id=int(task["run_id"]),
-        processor_key=str(task["processor_key"]),
+        task_id=int(task.id),
+        pipeline_id=int(task.pipeline_id),
+        run_id=int(task.run_id),
+        processor_key=str(task.processor_key),
         level="error" if result.status.startswith("failed") else "info",
         event_key=result.status,
         message=result.message,
@@ -360,23 +237,13 @@ def dispatch_result(task: dict[str, Any], payload: dict[str, Any], result: Proce
             WHERE pipeline_id=? AND from_step_key=? AND result_status=?
             ORDER BY id ASC
             """,
-            (task["pipeline_id"], task["step_key"], result.status),
+            (task.pipeline_id, task.step_key, result.status),
         ).fetchall()
     if not transitions:
         if result.status == "success":
-            finish_pipeline_run(int(task["run_id"]), "completed", result.message or "流水线执行完成", result.data)
-            log(
-                "info",
-                f"流水线完成: run_id={task['run_id']} task_id={task['id']} step={task['step_key']} "
-                f"message={result.message or '流水线执行完成'}",
-            )
+            finish_pipeline_run(int(task.run_id), "completed", result.message or "流水线执行完成", result.data)
         elif result.status in {"failed_terminal", "conflict"}:
-            finish_pipeline_run(int(task["run_id"]), "failed", result.message, result.data)
-            log(
-                "warn",
-                f"流水线失败: run_id={task['run_id']} task_id={task['id']} step={task['step_key']} "
-                f"result={result.status} message={result.message}",
-            )
+            finish_pipeline_run(int(task.run_id), "failed", result.message, result.data)
         return 0
 
     enqueued = 0
@@ -387,30 +254,30 @@ def dispatch_result(task: dict[str, Any], payload: dict[str, Any], result: Proce
             continue
         for index, next_item in enumerate(next_task_payloads):
             item_payload = merge_payload(payload, next_item)
-            item_subject_type = str(item_payload.pop("_subject_type", task["subject_type"] or ""))
-            item_subject_id = int(item_payload.pop("_subject_id", task["subject_id"] or 0) or 0)
+            item_subject_type = str(item_payload.pop("_subject_type", task.subject_type or ""))
+            item_subject_id = int(item_payload.pop("_subject_id", task.subject_id or 0) or 0)
             item_dedupe = str(
                 item_payload.pop(
                     "_dedupe_key",
-                    f"{task['run_id']}:{step_key}:{item_subject_type}:{item_subject_id}:{index}",
+                    f"{task.run_id}:{step_key}:{item_subject_type}:{item_subject_id}:{index}",
                 )
             )
-            task_id = enqueue_processor_task(
-                pipeline_id=int(task["pipeline_id"]),
-                run_id=int(task["run_id"]),
+            task_id = await enqueue_processor_task_async(
+                pipeline_id=int(task.pipeline_id),
+                run_id=int(task.run_id),
                 step_key=step_key,
                 subject_type=item_subject_type,
                 subject_id=item_subject_id,
                 payload=item_payload,
-                domain_kind=str(task["domain_kind"] or ""),
-                parent_task_id=int(task["id"]),
+                domain_kind=str(task.domain_kind or ""),
+                parent_task_id=int(task.id),
                 dedupe_key=item_dedupe,
             )
             if task_id:
                 log(
                     "info",
-                    f"流水线转移: run_id={task['run_id']} from={task['step_key']} to={step_key} "
-                    f"parent_task_id={task['id']} next_task_id={task_id} subject={item_subject_type}:{item_subject_id} "
+                    f"流水线转移: run_id={task.run_id} from={task.step_key} to={step_key} "
+                    f"parent_task_id={task.id} next_task_id={task_id} subject={item_subject_type}:{item_subject_id} "
                     f"payload={compact_payload(item_payload)}",
                 )
                 enqueued += 1
@@ -418,25 +285,47 @@ def dispatch_result(task: dict[str, Any], payload: dict[str, Any], result: Proce
 
 
 async def run_one_task(processor_key: str = "") -> bool:
-    task = claim_next_task(processor_key)
+    task = await runtime_store.claim_task(processor_key)
     if not task:
         return False
-    processor = get_processor(str(task["processor_key"]))
-    payload = load_json(str(task["payload_json"] or ""))
+    processor = get_processor(str(task.processor_key))
+    payload = dict(task.payload or {})
+    log(
+        "info",
+        f"处理器开始: task_id={task.id} run_id={task.run_id} step={task.step_key} "
+        f"processor={task.processor_key} subject={task.subject_type}:{task.subject_id} "
+        f"attempt={task.attempts} payload={compact_payload(payload)}",
+    )
     if not processor:
-        result = ProcessorResult.terminal(f"未注册处理器: {task['processor_key']}")
+        result = ProcessorResult.terminal(f"未注册处理器: {task.processor_key}")
     else:
         try:
             result = await processor(task_context(task), payload)
         except Exception as exc:
             log(
                 "error",
-                f"处理器异常: task_id={task['id']} run_id={task['run_id']} step={task['step_key']} "
-                f"processor={task['processor_key']} error={str(exc)[:1800]}",
+                f"处理器异常: task_id={task.id} run_id={task.run_id} step={task.step_key} "
+                f"processor={task.processor_key} error={str(exc)[:1800]}",
             )
             result = ProcessorResult.retryable(str(exc), retry_after_seconds(60))
-    complete_task(task, result)
-    dispatch_result(task, payload, result)
+    task_status = "completed"
+    retry = ""
+    if result.status == "failed_retryable":
+        task_status = "waiting"
+        retry = result.retry_after
+    elif result.status in {"failed_terminal", "conflict"}:
+        task_status = "failed"
+    elif result.status == "skipped":
+        task_status = "skipped"
+    await runtime_store.complete_task(
+        task.id,
+        task_status,
+        result.message,
+        {"status": result.status, "message": result.message, "data": result.data},
+        retry,
+    )
+    await dispatch_result(task, payload, result)
+    await __import__("asyncio").sleep(0)
     return True
 
 
