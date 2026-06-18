@@ -1583,11 +1583,12 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         {
             "key": "rss",
             "name": "Mikan RSS",
-            "pending": 1 if bool_setting(settings.get("auto_scan", "false")) else 0,
+            "pending": 0,
             "running": 0,
             "failed": 0,
             "description": "周期读取 RSS，新增发布后进入后续队列",
             "queue_state": "scheduled" if bool_setting(settings.get("auto_scan", "false")) else "disabled",
+            "system_queue": True,
         },
         {
             "key": "processor",
@@ -1752,6 +1753,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             "next_retry_after": cleanup_retry["next_retry_after"] if cleanup_retry else "",
             "next_retry_seconds": seconds_until(cleanup_retry["next_retry_after"] if cleanup_retry else ""),
             "description": "独立清理已完成操作、历史队列项和运行期残留状态",
+            "system_queue": True,
         },
     ]
     for item in items:
@@ -1762,6 +1764,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         pending = int(item.get("pending", 0) or 0)
         failed = int(item.get("failed", 0) or 0)
         waiting = int(item.get("waiting", 0) or 0)
+        system_queue = bool(item.get("system_queue"))
         debounce_seconds = int(scheduled_row.get("debounce_seconds", 0) or 0)
         debounce_remaining = 0
         if scheduled_row and str(scheduled_row.get("last_status") or "") in {"debouncing", "queued"}:
@@ -1777,7 +1780,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         elif runtime_key in queue_rerun_requested:
             item["queue_state"] = "rerun_pending"
             item["state_reason"] = "当前批次结束后会立刻重跑"
-        elif pending > 0:
+        elif pending > 0 and not system_queue:
             task = queue_debounce_tasks.get(runtime_key)
             if task and not task.done():
                 item["queue_state"] = "debouncing"
@@ -1786,7 +1789,7 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             else:
                 item["queue_state"] = "ready"
                 item["state_reason"] = "已有待处理任务，可立即执行"
-        elif waiting > 0:
+        elif waiting > 0 and not system_queue:
             item["queue_state"] = "cooldown"
             next_retry_seconds = int(item.get("next_retry_seconds", 0) or 0)
             item["state_reason"] = f"任务正在等待重试，最近一次将在 {next_retry_seconds} 秒后恢复"
@@ -1797,7 +1800,9 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
             item["queue_state"] = item.get("queue_state", "idle")
             item["state_reason"] = "当前没有可处理任务"
         item["runtime_queue_key"] = runtime_key
-        if item["queue_state"] == "ready" and pending > 0:
+        if system_queue and pending > 0 and item["queue_state"] not in {"running", "failed"}:
+            item["state_detail"] = "系统维护占位，不计入番剧流程待处理"
+        elif item["queue_state"] == "ready" and pending > 0:
             item["state_detail"] = f"当前批次可执行 {pending} 个"
         elif item["queue_state"] == "debouncing":
             remaining = int(item.get("debounce_remaining_seconds", 0) or 0)
@@ -1819,14 +1824,15 @@ def console_overview(
     operations: list[dict[str, Any]],
     server_logs: list[str],
 ) -> dict[str, Any]:
-    queue_total = len(queue_items)
-    running_queue_count = sum(1 for item in queue_items if item.get("queue_state") == "running" or int(item.get("running", 0) or 0) > 0)
-    pending_queue_count = sum(1 for item in queue_items if int(item.get("pending", 0) or 0) > 0)
-    failed_queue_count = sum(1 for item in queue_items if int(item.get("failed", 0) or 0) > 0)
-    waiting_retry_count = sum(int(item.get("waiting", 0) or 0) for item in queue_items)
-    pending_task_count = sum(int(item.get("pending", 0) or 0) for item in queue_items)
-    running_task_count = sum(int(item.get("running", 0) or 0) for item in queue_items)
-    failed_task_count = sum(int(item.get("failed", 0) or 0) for item in queue_items)
+    business_queue_items = [item for item in queue_items if not item.get("system_queue")]
+    queue_total = len(business_queue_items)
+    running_queue_count = sum(1 for item in business_queue_items if item.get("queue_state") == "running" or int(item.get("running", 0) or 0) > 0)
+    pending_queue_count = sum(1 for item in business_queue_items if int(item.get("pending", 0) or 0) > 0)
+    failed_queue_count = sum(1 for item in business_queue_items if int(item.get("failed", 0) or 0) > 0)
+    waiting_retry_count = sum(int(item.get("waiting", 0) or 0) for item in business_queue_items)
+    pending_task_count = sum(int(item.get("pending", 0) or 0) for item in business_queue_items)
+    running_task_count = sum(int(item.get("running", 0) or 0) for item in business_queue_items)
+    failed_task_count = sum(int(item.get("failed", 0) or 0) for item in business_queue_items)
     running_operation_count = sum(1 for item in operations if str(item.get("status", "")) == "running")
     failed_operation_count = sum(1 for item in operations if str(item.get("status", "")) == "failed")
     scheduled_failed_count = sum(1 for item in scheduled_jobs if str(item.get("last_status", "")) == "failed")
@@ -1835,7 +1841,7 @@ def console_overview(
     recent_warn_count = sum(1 for line in server_logs if "[WARN]" in str(line))
     active_queue_names = [
         str(item.get("name", ""))
-        for item in queue_items
+        for item in business_queue_items
         if item.get("queue_state") in {"running", "debouncing", "rerun_pending", "cooldown"}
         or int(item.get("pending", 0) or 0) > 0
         or int(item.get("failed", 0) or 0) > 0

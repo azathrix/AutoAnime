@@ -926,6 +926,7 @@ function queueTag(queue) {
 
 function isQueueActive(queue) {
   if (!queue) return false
+  if (queue.system_queue) return false
   return Number(queue.pending || 0) > 0
     || Number(queue.running || 0) > 0
     || Number(queue.failed || 0) > 0
