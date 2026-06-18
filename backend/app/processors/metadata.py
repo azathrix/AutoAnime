@@ -4,7 +4,7 @@ from ..database import connect
 from ..db import get_settings, now
 from ..metadata import fetch_bangumi_metadata, refresh_entry_metadata
 from ..pipeline_models import ProcessorContext, ProcessorResult
-from ..scanner import candidate_to_parsed_release, enqueue_backfill_task, enqueue_selection_task, task_retry_after, upsert_release
+from ..scanner import candidate_to_parsed_release, task_retry_after, upsert_release
 
 
 async def process_candidate_metadata(context: ProcessorContext, payload: dict) -> ProcessorResult:
@@ -36,15 +36,9 @@ async def process_candidate_metadata(context: ProcessorContext, payload: dict) -
     with connect() as conn:
         ts = now()
         conn.execute(
-            "UPDATE metadata_tasks SET status='completed', retry_after='', last_error='', updated_at=? WHERE candidate_id=?",
-            (ts, candidate_id),
-        )
-        conn.execute(
             "UPDATE rss_candidates SET status='completed', reason='', updated_at=? WHERE id=?",
             (ts, candidate_id),
         )
-        enqueue_selection_task(conn, series_id, entry_id, ts, "元数据完成，等待自动选集")
-        enqueue_backfill_task(conn, series_id, entry_id, settings, ts)
 
     return ProcessorResult.success(
         "候选元数据刷新完成",

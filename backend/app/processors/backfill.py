@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from ..database import connect
-from ..db import now
 from ..pipeline_models import ProcessorContext, ProcessorResult
 
 
@@ -13,14 +12,6 @@ async def process_backfill(context: ProcessorContext, payload: dict) -> Processo
         row = conn.execute("SELECT id, mikan_bangumi_id FROM entries WHERE id=?", (entry_id,)).fetchone()
         if not row:
             return ProcessorResult.terminal(f"条目不存在: {entry_id}")
-        conn.execute(
-            """
-            UPDATE backfill_tasks
-            SET status='completed', retry_after='', last_error='', updated_at=?
-            WHERE entry_id=?
-            """,
-            (now(), entry_id),
-        )
     return ProcessorResult.success(
         "整季补全边界已确认",
         data={"entry_id": entry_id, "mikan_bangumi_id": row["mikan_bangumi_id"] or ""},

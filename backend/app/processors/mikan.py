@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..database import connect
 from ..db import get_settings, log, now
 from ..pipeline_models import ProcessorContext, ProcessorResult
-from ..scanner import enqueue_metadata_task, fetch_mikan_match, task_retry_after
+from ..scanner import fetch_mikan_match, task_retry_after
 
 
 async def process_mikan_match(context: ProcessorContext, payload: dict) -> ProcessorResult:
@@ -19,8 +19,6 @@ async def process_mikan_match(context: ProcessorContext, payload: dict) -> Proce
     existing_bangumi = str(row["bangumi_id"] or "")
     existing_mikan = str(row["mikan_bangumi_id"] or "")
     if existing_bangumi and existing_mikan:
-        with connect() as conn:
-            enqueue_metadata_task(conn, candidate_id, existing_bangumi, now())
         return ProcessorResult.success(
             "Mikan 匹配已存在，跳过页面刷新",
             data={"candidate_id": candidate_id, "bangumi_id": existing_bangumi, "mikan_bangumi_id": existing_mikan},
@@ -65,15 +63,6 @@ async def process_mikan_match(context: ProcessorContext, payload: dict) -> Proce
             """,
             (bangumi_id, mikan_id, ts, candidate_id),
         )
-        conn.execute(
-            """
-            UPDATE mikan_match_tasks
-            SET status='completed', bangumi_id=?, mikan_bangumi_id=?,
-                retry_after='', last_error='', updated_at=?
-            WHERE candidate_id=?
-            """,
-            (bangumi_id, mikan_id, ts, candidate_id),
-        )
         if mikan_id:
             conn.execute(
                 """
@@ -84,7 +73,6 @@ async def process_mikan_match(context: ProcessorContext, payload: dict) -> Proce
                 """,
                 (mikan_id, ts, bangumi_id),
             )
-        enqueue_metadata_task(conn, candidate_id, bangumi_id, ts)
     log(
         "info",
         f"Mikan 匹配完成: candidate_id={candidate_id} bangumi_id={bangumi_id} mikan_id={mikan_id or '-'}",

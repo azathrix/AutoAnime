@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from ..database import connect
-from ..db import get_settings, now
+from ..db import get_settings
 from ..pipeline_models import ProcessorContext, ProcessorResult
-from ..scanner import mark_selected_releases, queue_release, resolve_entry_choice, task_retry_after
+from ..scanner import mark_selected_releases, resolve_entry_choice, task_retry_after
 
 
 async def process_selection(context: ProcessorContext, payload: dict) -> ProcessorResult:
@@ -17,35 +16,11 @@ async def process_selection(context: ProcessorContext, payload: dict) -> Process
     except Exception as exc:
         return ProcessorResult.retryable(str(exc)[:2000], task_retry_after(settings, context.attempts + 1))
 
-    with connect() as conn:
-        ts = now()
-        selection_row = conn.execute("SELECT id FROM selection_tasks WHERE entry_id=?", (entry_id,)).fetchone()
-        if selection_row:
-            if choice.get("reason"):
-                conn.execute(
-                    """
-                    UPDATE selection_tasks
-                    SET status='failed', reason=?, retry_after='', last_error='', updated_at=?
-                    WHERE entry_id=?
-                    """,
-                    (str(choice["reason"])[:500], ts, entry_id),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE selection_tasks
-                    SET status='completed', reason='', retry_after='', last_error='', updated_at=?
-                    WHERE entry_id=?
-                    """,
-                    (ts, entry_id),
-                )
-
     if choice.get("reason"):
         return ProcessorResult.terminal(str(choice["reason"]))
 
     next_tasks = []
     for release_id in release_ids:
-        queue_release(release_id, settings)
         next_tasks.append(
             {
                 "_subject_type": "release",
