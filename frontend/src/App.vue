@@ -83,14 +83,17 @@
         <el-card class="span-4 console-card console-workbench-card">
           <div class="console-workbench">
             <aside class="console-nav">
-              <div class="console-nav-toolbar">
-                <el-segmented v-model="consoleNavMode" :options="['队列', '定时任务']" size="small" />
-                <el-segmented v-if="consoleNavMode === '队列'" v-model="queueVisibilityMode" :options="['活跃', '全部']" size="small" />
+              <div class="console-nav-tabs">
+                <button :class="{ active: consoleNavMode === '队列' }" @click="consoleNavMode = '队列'">队列</button>
+                <button :class="{ active: consoleNavMode === '定时任务' }" @click="consoleNavMode = '定时任务'">定时任务</button>
               </div>
-              <div v-if="consoleNavMode === '队列'" v-for="section in queueConsoleSections" :key="section.key">
-                <div v-if="section.kind === 'group'" class="console-nav-group">{{ section.name }}</div>
+              <div v-if="consoleNavMode === '队列'" class="console-nav-toolbar">
+                <el-segmented v-model="queueVisibilityMode" :options="['活跃', '全部']" size="small" />
+              </div>
+              <div v-if="consoleNavMode === '队列'" class="console-nav-list">
                 <button
-                  v-else
+                  v-for="section in queueListSections"
+                  :key="section.key"
                   class="console-nav-item"
                   :class="{ active: selectedConsoleSection === section.key }"
                   v-show="shouldShowConsoleSection(section)"
@@ -774,9 +777,13 @@ const queueConsoleSections = computed(() => (dashboard.console_sections || []).f
   if (section.kind === 'group') return true
   return section.kind === 'queue' && shouldShowConsoleSection(section)
 }))
+const queueListSections = computed(() => queueConsoleSections.value.filter(section => section.kind === 'queue'))
 const scheduledConsoleSections = computed(() => (dashboard.console_sections || []).filter(section => section.kind === 'scheduled'))
 const visibleConsoleSections = computed(() => (dashboard.console_sections || []).filter(section => shouldShowConsoleSection(section)))
-const selectedSectionMeta = computed(() => (dashboard.console_sections || []).find(item => item.key === selectedConsoleSection.value) || null)
+const selectedSectionMeta = computed(() => {
+  const source = consoleNavMode.value === '定时任务' ? scheduledConsoleSections.value : queueListSections.value
+  return source.find(item => item.key === selectedConsoleSection.value) || null
+})
 const selectedQueue = computed(() => {
   const section = selectedSectionMeta.value
   if (!section || section.kind !== 'queue') return null
@@ -1309,8 +1316,8 @@ watch(selectedConsoleSection, () => {
   selectedQueueDomainFilter.value = '全部'
 })
 watch(queueVisibilityMode, () => {
-  if (!queueConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
-    const fallback = queueConsoleSections.value.find(item => item.kind !== 'group')
+  if (!queueListSections.value.some(item => item.key === selectedConsoleSection.value)) {
+    const fallback = queueListSections.value[0]
     selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
   }
 })
@@ -1319,8 +1326,8 @@ watch(consoleNavMode, value => {
     selectedConsoleSection.value = scheduledConsoleSections.value[0]?.key || selectedConsoleSection.value
     return
   }
-  if (!queueConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
-    const fallback = queueConsoleSections.value.find(item => item.kind !== 'group')
+  if (!queueListSections.value.some(item => item.key === selectedConsoleSection.value)) {
+    const fallback = queueListSections.value[0]
     selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
   }
 })
