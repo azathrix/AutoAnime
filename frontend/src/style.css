@@ -228,6 +228,69 @@ h1 {
   min-height: 720px;
 }
 
+.dashboard-bottom-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.2fr);
+}
+
+.scheduled-card,
+.utility-card {
+  min-height: 360px;
+}
+
+.scheduled-job-list {
+  display: grid;
+  gap: 10px;
+  max-height: 430px;
+  overflow: auto;
+}
+
+.scheduled-job-row {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.scheduled-job-row div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.scheduled-job-row strong,
+.scheduled-job-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduled-job-row span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.scheduled-job-meta {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.compact-log-console {
+  height: 430px;
+}
+
+.compact-maintenance-pane {
+  max-height: 430px;
+  min-height: 300px;
+}
+
 .console-overview-grid {
   margin-bottom: 14px;
 }

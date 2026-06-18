@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -9,7 +10,7 @@ from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -2504,6 +2505,17 @@ def dashboard_data() -> dict[str, Any]:
 @app.get("/api/dashboard")
 async def api_dashboard() -> dict[str, Any]:
     return dashboard_data()
+
+
+@app.get("/api/dashboard/stream")
+async def api_dashboard_stream() -> StreamingResponse:
+    async def event_stream():
+        while True:
+            data = dashboard_data()
+            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/pipelines")

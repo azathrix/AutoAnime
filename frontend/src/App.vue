@@ -27,9 +27,10 @@
           <el-switch
             v-model="autoRefresh"
             inline-prompt
-            active-text="自动"
+            active-text="实时"
             inactive-text="手动"
           />
+          <el-tag :type="liveConnected ? 'success' : 'info'">{{ liveConnected ? '动态连接' : '轮询刷新' }}</el-tag>
           <el-select v-model="refreshInterval" class="refresh-select" :disabled="!autoRefresh">
             <el-option label="3 秒" :value="3000" />
             <el-option label="5 秒" :value="5000" />
@@ -75,7 +76,7 @@
               <div class="console-nav-toolbar">
                 <el-segmented v-model="queueVisibilityMode" :options="['活跃', '全部']" size="small" />
               </div>
-              <div v-for="section in dashboard.console_sections || []" :key="section.key">
+              <div v-for="section in queueConsoleSections" :key="section.key">
                 <div v-if="section.kind === 'group'" class="console-nav-group">{{ section.name }}</div>
                 <button
                   v-else
@@ -272,6 +273,51 @@
             </section>
           </div>
         </el-card>
+
+        <div class="span-4 dashboard-bottom-grid">
+          <el-card class="console-card scheduled-card">
+            <template #header>定时器</template>
+            <div class="scheduled-job-list">
+              <div v-for="job in dashboard.scheduled_jobs || []" :key="job.job_key" class="scheduled-job-row">
+                <div>
+                  <strong>{{ job.job_key }}</strong>
+                  <span>{{ job.latest_run?.message || job.last_error || '等待调度' }}</span>
+                </div>
+                <div class="scheduled-job-meta">
+                  <el-tag size="small" :type="taskTag(job.last_status || 'idle')">{{ job.last_status || 'idle' }}</el-tag>
+                  <span>{{ job.interval_minutes || 0 }} 分</span>
+                </div>
+              </div>
+            </div>
+          </el-card>
+
+          <el-card class="console-card utility-card">
+            <el-tabs v-model="utilityTab">
+              <el-tab-pane label="日志" name="logs">
+                <div class="log-console compact-log-console">
+                  <div class="log-toolbar">
+                    <el-input v-model="logKeyword" clearable placeholder="搜索日志" />
+                    <el-button plain @click="runAction('/logs/clear')">清空日志</el-button>
+                  </div>
+                  <pre class="server-log">{{ filteredServerLogText }}</pre>
+                </div>
+              </el-tab-pane>
+              <el-tab-pane label="维护" name="maintenance">
+                <div class="maintenance-actions maintenance-pane compact-maintenance-pane">
+                  <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
+                  <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理云盘队列</el-button>
+                  <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新 PikPak 状态</el-button>
+                  <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
+                  <el-popconfirm title="会清空番剧、候选、任务、云盘资源、本地同步记录和日志。确定？" @confirm="runAction('/system/clear-data')">
+                    <template #reference>
+                      <el-button type="danger" plain>清除所有数据</el-button>
+                    </template>
+                  </el-popconfirm>
+                </div>
+              </el-tab-pane>
+            </el-tabs>
+          </el-card>
+        </div>
       </section>
 
       <section v-if="view === 'calendar'" class="calendar-page">
@@ -605,10 +651,14 @@ const loading = ref(false)
 const savingSettings = ref(false)
 const autoRefresh = ref(true)
 const refreshInterval = ref(5000)
+const liveConnected = ref(false)
 const selectedQueueDomainFilter = ref('全部')
 const queueVisibilityMode = ref('活跃')
+const utilityTab = ref('logs')
 const calendarWeek = ref('')
 let refreshTimer = null
+let dashboardStream = null
+let streamRetryTimer = null
 const keyword = ref('')
 const seriesFilter = ref('全部')
 const entryDrawerOpen = ref(false)
@@ -662,6 +712,10 @@ const weekDays = computed(() => {
 })
 const scanOperation = computed(() => dashboard.operations.find(op => op.name === '扫描全部' && op.status === 'running'))
 const queueMap = computed(() => Object.fromEntries((dashboard.queue_summary || []).map(item => [item.key, item])))
+const queueConsoleSections = computed(() => (dashboard.console_sections || []).filter(section => {
+  if (section.kind === 'group') return true
+  return section.kind === 'queue' && shouldShowConsoleSection(section)
+}))
 const visibleConsoleSections = computed(() => (dashboard.console_sections || []).filter(section => shouldShowConsoleSection(section)))
 const selectedSectionMeta = computed(() => (dashboard.console_sections || []).find(item => item.key === selectedConsoleSection.value) || null)
 const selectedQueue = computed(() => {
@@ -940,16 +994,20 @@ function shiftCalendarWeek(delta) {
   calendarWeek.value = formatDateKey(addDays(weekStart.value, delta * 7))
 }
 
+function applyDashboard(nextDashboard) {
+  Object.assign(dashboard, nextDashboard || {})
+  if (!queueConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
+    const fallback = queueConsoleSections.value.find(item => item.kind !== 'group')
+    selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
+  }
+}
+
 async function reload() {
   if (loading.value) return
   loading.value = true
   try {
-    Object.assign(dashboard, await getDashboard())
+    applyDashboard(await getDashboard())
     Object.assign(settings, await getSettings())
-    if (!visibleConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
-      const fallback = visibleConsoleSections.value.find(item => item.kind !== 'group')
-      selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
-    }
     if (view.value === 'settings') await reloadDiagnostics()
   } finally {
     loading.value = false
@@ -967,9 +1025,46 @@ function stopAutoRefresh() {
   }
 }
 
+function stopDashboardStream() {
+  if (dashboardStream) {
+    dashboardStream.close()
+    dashboardStream = null
+  }
+  if (streamRetryTimer) {
+    window.clearTimeout(streamRetryTimer)
+    streamRetryTimer = null
+  }
+  liveConnected.value = false
+}
+
+function startDashboardStream() {
+  stopDashboardStream()
+  if (!autoRefresh.value || !window.EventSource) {
+    startAutoRefresh()
+    return
+  }
+  dashboardStream = new EventSource('/api/dashboard/stream')
+  dashboardStream.onopen = () => {
+    liveConnected.value = true
+    stopAutoRefresh()
+  }
+  dashboardStream.onmessage = event => {
+    try {
+      applyDashboard(JSON.parse(event.data))
+    } catch {
+      liveConnected.value = false
+    }
+  }
+  dashboardStream.onerror = () => {
+    stopDashboardStream()
+    startAutoRefresh()
+    streamRetryTimer = window.setTimeout(startDashboardStream, 5000)
+  }
+}
+
 function startAutoRefresh() {
   stopAutoRefresh()
-  if (!autoRefresh.value) return
+  if (!autoRefresh.value || liveConnected.value) return
   refreshTimer = window.setInterval(() => {
     if (view.value === 'settings' || entryDrawerOpen.value) return
     reload()
@@ -1122,14 +1217,21 @@ const PriorityList = {
   `
 }
 
-watch([autoRefresh, refreshInterval], startAutoRefresh)
+watch([autoRefresh, refreshInterval], () => {
+  if (autoRefresh.value) {
+    startDashboardStream()
+  } else {
+    stopDashboardStream()
+    stopAutoRefresh()
+  }
+})
 watch(entryDrawerOpen, startAutoRefresh)
 watch(selectedConsoleSection, () => {
   selectedQueueDomainFilter.value = '全部'
 })
 watch(queueVisibilityMode, () => {
-  if (!visibleConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
-    const fallback = visibleConsoleSections.value.find(item => item.kind !== 'group')
+  if (!queueConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
+    const fallback = queueConsoleSections.value.find(item => item.kind !== 'group')
     selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
   }
 })
@@ -1140,8 +1242,11 @@ watch(view, value => {
 onMounted(async () => {
   setCalendarThisWeek()
   await reload()
-  startAutoRefresh()
+  startDashboardStream()
 })
 
-onUnmounted(stopAutoRefresh)
+onUnmounted(() => {
+  stopDashboardStream()
+  stopAutoRefresh()
+})
 </script>
