@@ -285,24 +285,22 @@
         </el-card>
 
         <div class="span-4 dashboard-bottom-grid">
-          <el-card class="console-card scheduled-card">
-            <template #header>定时器</template>
-            <div class="scheduled-job-list">
-              <div v-for="job in dashboard.scheduled_jobs || []" :key="job.job_key" class="scheduled-job-row">
-                <div>
-                  <strong>{{ job.job_key }}</strong>
-                  <span>{{ job.latest_run?.message || job.last_error || '等待调度' }}</span>
-                </div>
-                <div class="scheduled-job-meta">
-                  <el-tag size="small" :type="taskTag(job.last_status || 'idle')">{{ job.last_status || 'idle' }}</el-tag>
-                  <span>{{ job.interval_minutes || 0 }} 分</span>
-                </div>
-              </div>
-            </div>
-          </el-card>
-
           <el-card class="console-card utility-card">
             <el-tabs v-model="utilityTab">
+              <el-tab-pane label="定时器" name="scheduled">
+                <div class="scheduled-job-list">
+                  <div v-for="job in dashboard.scheduled_jobs || []" :key="job.job_key" class="scheduled-job-row">
+                    <div>
+                      <strong>{{ job.job_key }}</strong>
+                      <span>{{ job.latest_run?.message || job.last_error || '等待调度' }}</span>
+                    </div>
+                    <div class="scheduled-job-meta">
+                      <el-tag size="small" :type="taskTag(job.last_status || 'idle')">{{ job.last_status || 'idle' }}</el-tag>
+                      <span>{{ job.interval_minutes || 0 }} 分</span>
+                    </div>
+                  </div>
+                </div>
+              </el-tab-pane>
               <el-tab-pane label="日志" name="logs">
                 <div class="log-console compact-log-console">
                   <div class="log-toolbar">
@@ -708,7 +706,7 @@ const refreshInterval = ref(5000)
 const liveConnected = ref(false)
 const selectedQueueDomainFilter = ref('全部')
 const queueVisibilityMode = ref('活跃')
-const utilityTab = ref('logs')
+const utilityTab = ref('scheduled')
 const calendarWeek = ref('')
 const expandedWorkKeys = ref(new Set())
 let refreshTimer = null

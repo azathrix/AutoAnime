@@ -101,11 +101,28 @@ def enqueue_processor_task(
               subject_id=excluded.subject_id,
               payload_json=excluded.payload_json,
               status=CASE
-                WHEN processor_tasks.status IN ('completed', 'running') THEN processor_tasks.status
+                WHEN processor_tasks.run_id=excluded.run_id AND processor_tasks.status IN ('completed', 'running') THEN processor_tasks.status
                 ELSE 'pending'
+              END,
+              attempts=CASE
+                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.attempts
+                ELSE 0
+              END,
+              result_json=CASE
+                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.result_json
+                ELSE ''
+              END,
+              progress=CASE
+                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.progress
+                ELSE 0
+              END,
+              progress_text=CASE
+                WHEN processor_tasks.run_id=excluded.run_id THEN processor_tasks.progress_text
+                ELSE ''
               END,
               retry_after='',
               last_error='',
+              locked_at='',
               updated_at=excluded.updated_at
             """,
             (

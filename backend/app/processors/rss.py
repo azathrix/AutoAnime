@@ -46,7 +46,7 @@ def release_from_payload(payload: dict[str, Any]) -> ParsedRelease:
     )
 
 
-async def process_rss_fetch(_context: ProcessorContext, payload: dict) -> ProcessorResult:
+async def process_rss_fetch(context: ProcessorContext, payload: dict) -> ProcessorResult:
     settings = get_settings()
     rss_url = str(payload.get("rss_url") or settings.get("rss_url") or "").strip()
     if not rss_url:
@@ -60,7 +60,7 @@ async def process_rss_fetch(_context: ProcessorContext, payload: dict) -> Proces
         item_payload = release_to_payload(item)
         item_payload["_subject_type"] = "rss_candidate"
         item_payload["_subject_id"] = 0
-        item_payload["_dedupe_key"] = f"rss-candidate:{item.guid}"
+        item_payload["_dedupe_key"] = f"{context.run_id}:rss-candidate:{item.guid}"
         next_tasks.append(item_payload)
     return ProcessorResult.success(
         f"RSS 拉取完成: {len(entries)} 条",

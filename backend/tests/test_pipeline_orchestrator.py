@@ -352,6 +352,69 @@ class PipelineOrchestratorTest(unittest.IsolatedAsyncioTestCase):
             ).fetchone()["count"]
             self.assertEqual(download_enqueue_count, 0)
 
+    async def test_new_run_requeues_rss_candidates_with_same_guid(self) -> None:
+        from app.database import connect
+        from app.parser import ParsedRelease
+        from app.pipeline_orchestrator import run_ready_tasks, start_pipeline
+        from app.processors import register_builtin_processors
+
+        register_builtin_processors()
+        release = ParsedRelease(
+            guid="repeat-guid",
+            title="[GroupA] Repeat Anime - 01 [1080p][简体]",
+            series_title="Repeat Anime",
+            episode_number=1,
+            subtitle_group="GroupA",
+            resolution="1080p",
+            language="简体",
+            bangumi_id="",
+            year=2026,
+            torrent_url="https://example.test/repeat.torrent",
+            magnet="magnet:?xt=urn:btih:repeat",
+            page_url="https://mikanani.me/Home/Episode/repeat",
+            mikan_bangumi_id="",
+            published_at="2026-06-18 11:00",
+        )
+
+        with (
+            patch("app.processors.rss.fetch_entries", return_value=[release]),
+            patch("app.processors.mikan.fetch_mikan_match", return_value=("321", "654")),
+            patch("app.processors.metadata.fetch_bangumi_metadata", return_value={"title_cn": "重复动画", "year": 2026}),
+        ):
+            first_run = start_pipeline(
+                "seasonal_mikan_tracking",
+                trigger_source="test",
+                first_step_key="rss_fetch",
+                subject_type="rss_source",
+                subject_id=1,
+                payload={"rss_url": "https://example.test/rss.xml"},
+            )
+            first_processed = await run_ready_tasks(limit=8)
+            second_run = start_pipeline(
+                "seasonal_mikan_tracking",
+                trigger_source="test",
+                first_step_key="rss_fetch",
+                subject_type="rss_source",
+                subject_id=1,
+                payload={"rss_url": "https://example.test/rss.xml"},
+            )
+            second_processed = await run_ready_tasks(limit=8)
+
+        self.assertGreaterEqual(first_processed, 4)
+        self.assertGreaterEqual(second_processed, 4)
+        with connect() as conn:
+            first_tasks = conn.execute(
+                "SELECT processor_key, status FROM processor_tasks WHERE run_id=? ORDER BY id",
+                (first_run,),
+            ).fetchall()
+            second_tasks = conn.execute(
+                "SELECT processor_key, status FROM processor_tasks WHERE run_id=? ORDER BY id",
+                (second_run,),
+            ).fetchall()
+            self.assertIn("rss_candidate_persist", [row["processor_key"] for row in first_tasks])
+            self.assertIn("rss_candidate_persist", [row["processor_key"] for row in second_tasks])
+            self.assertTrue(all(row["status"] == "completed" for row in second_tasks[:4]))
+
 
 if __name__ == "__main__":
     unittest.main()

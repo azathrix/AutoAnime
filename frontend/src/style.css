@@ -294,10 +294,9 @@ h1 {
 .dashboard-bottom-grid {
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.2fr);
+  grid-template-columns: 1fr;
 }
 
-.scheduled-card,
 .utility-card {
   min-height: 360px;
 }
@@ -305,7 +304,7 @@ h1 {
 .scheduled-job-list {
   display: grid;
   gap: 10px;
-  max-height: 430px;
+  max-height: 460px;
   overflow: auto;
 }
 
@@ -346,7 +345,7 @@ h1 {
 }
 
 .compact-log-console {
-  height: 430px;
+  height: 460px;
 }
 
 .compact-maintenance-pane {
