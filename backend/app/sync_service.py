@@ -10,7 +10,7 @@ import httpx
 
 from .database import connect
 from .db import log, now
-from .library import render_episode_name, render_season_dir, render_series_dir, target_dir
+from .library import local_library_root, render_episode_name, render_season_dir, render_series_dir, target_dir
 from .parser import normalize_title_key, parse_episode
 from .pikpak_service import get_cloud_download_url, list_cloud_files
 from . import rclone_service
@@ -79,7 +79,7 @@ def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | No
 
 
 def local_episode_path(cloud_asset: dict, entry: dict, settings: dict[str, str]) -> str:
-    root = Path(settings.get("local_library_root") or "/media/pikpak-anime")
+    root = Path(local_library_root(entry, settings))
     series_dir = render_series_dir(entry, settings)
     season_dir = render_season_dir(int(entry.get("season_number") or 1), settings)
     suffix = Path(cloud_asset.get("cloud_name") or "").suffix
@@ -195,19 +195,28 @@ def ensure_library_entry_for_reference(
         ),
     )
     work_id = int(conn.execute("SELECT id FROM works WHERE root_key=?", (work_key,)).fetchone()["id"])
+    target_library = conn.execute("SELECT id FROM media_libraries WHERE key='anime_library'").fetchone()
+    target_library_id = int(target_library["id"] or 0) if target_library else 0
     fingerprint_key = f"cloud-library:{entry_row.get('bangumi_id') or ''}:{normalize_title_key(display_title)}"
     conn.execute(
         """
         INSERT INTO entries
-          (work_id, fingerprint, domain_kind, entry_kind, display_title, title_root,
+          (work_id, fingerprint, domain_kind, media_type, region, source_provider, metadata_provider,
+           external_id, target_library_id, entry_kind, display_title, title_root,
            season_label, arc_label, part_label, special_label,
            title_raw, title_cn, bangumi_id, mikan_bangumi_id, tmdb_id, year, season_number,
            poster_url, summary, metadata_source, hidden, auto_download, selected_group, selected_resolution,
            backfill_mode, created_at, updated_at)
-        VALUES (?, ?, 'library', 'season', ?, ?, '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cloud_import', 0, 'inherit', '', '', 'inherit', ?, ?)
+        VALUES (?, ?, 'library', 'anime', 'jp', 'cloud_import', ?, ?, ?, 'season', ?, ?, '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cloud_import', 0, 'inherit', '', '', 'inherit', ?, ?)
         ON CONFLICT(fingerprint) DO UPDATE SET
           work_id=excluded.work_id,
           domain_kind='library',
+          media_type=excluded.media_type,
+          region=excluded.region,
+          source_provider=excluded.source_provider,
+          metadata_provider=excluded.metadata_provider,
+          external_id=CASE WHEN excluded.external_id!='' THEN excluded.external_id ELSE entries.external_id END,
+          target_library_id=CASE WHEN entries.target_library_id=0 THEN excluded.target_library_id ELSE entries.target_library_id END,
           display_title=excluded.display_title,
           title_root=excluded.title_root,
           title_raw=excluded.title_raw,
@@ -223,6 +232,9 @@ def ensure_library_entry_for_reference(
         (
             work_id,
             fingerprint_key,
+            "bangumi" if str(entry_row.get("bangumi_id") or "") else ("tmdb" if str(entry_row.get("tmdb_id") or "") else "source"),
+            str(entry_row.get("bangumi_id") or entry_row.get("tmdb_id") or ""),
+            target_library_id,
             display_title,
             str(entry_row.get("title_cn") or entry_row.get("title_raw") or display_title or "Unknown"),
             str(entry_row.get("title_raw") or display_title or "Unknown"),

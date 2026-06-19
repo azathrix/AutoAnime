@@ -213,11 +213,26 @@ def enrich_catalog_entry(item: dict[str, Any]) -> dict[str, Any]:
     result = dict(item)
     work_display_title = str(result.get("work_title") or result.get("title_root") or result.get("display_title") or result.get("title_cn") or "").strip()
     scope_label = entry_scope_label(result)
+    local_count = int(result.get("local_asset_count") or 0)
+    release_count = int(result.get("release_count") or 0)
+    cloud_count = int(result.get("cloud_asset_count") or 0)
     result["work_display_title"] = work_display_title
     result["entry_scope_label"] = scope_label
     result["entry_badge_text"] = entry_badge_text(result)
     result["entry_display_title"] = str(result.get("display_title") or result.get("title_cn") or work_display_title).strip()
     result["entry_secondary_title"] = scope_label or work_display_title
+    if local_count > 0:
+        result["watch_status"] = "ready"
+        result["watch_status_label"] = f"可观看 {local_count} 集"
+    elif result.get("has_failed_task"):
+        result["watch_status"] = "warning"
+        result["watch_status_label"] = "需要处理"
+    elif release_count > 0 or cloud_count > 0:
+        result["watch_status"] = "processing"
+        result["watch_status_label"] = "处理中"
+    else:
+        result["watch_status"] = "unavailable"
+        result["watch_status_label"] = "未缓存"
     return result
 
 
@@ -1214,6 +1229,14 @@ def dashboard_data() -> dict[str, Any]:
             """
             SELECT e.id,
               e.work_id,
+              e.media_type,
+              e.region,
+              e.source_provider,
+              e.metadata_provider,
+              e.external_id,
+              e.target_library_id,
+              e.genres_json,
+              e.tags_json,
               e.display_title,
               e.title_root,
               e.poster_url,
@@ -1262,6 +1285,14 @@ def dashboard_data() -> dict[str, Any]:
             """
             SELECT e.id,
               e.work_id,
+              e.media_type,
+              e.region,
+              e.source_provider,
+              e.metadata_provider,
+              e.external_id,
+              e.target_library_id,
+              e.genres_json,
+              e.tags_json,
               e.display_title,
               e.title_root,
               e.poster_url,
@@ -1308,6 +1339,22 @@ def dashboard_data() -> dict[str, Any]:
             """
         ).fetchone()
         library_failed_row = {"failed_entry_count": 0}
+        media_libraries = conn.execute(
+            """
+            SELECT *
+            FROM media_libraries
+            WHERE enabled=1
+            ORDER BY
+              CASE key
+                WHEN 'seasonal_anime' THEN 0
+                WHEN 'anime_library' THEN 1
+                WHEN 'movies' THEN 2
+                WHEN 'tv' THEN 3
+                ELSE 9
+              END,
+              id ASC
+            """
+        ).fetchall()
         sync_rules = conn.execute(
             """
             SELECT sr.*, e.display_title AS title_cn
@@ -1434,6 +1481,7 @@ def dashboard_data() -> dict[str, Any]:
     return {
         "seasonal_items": seasonal_rows,
         "library_items": library_rows,
+        "media_libraries": rows_to_dicts(media_libraries),
         "library_summary": {
             "work_count": int((library_summary_row["work_count"] if library_summary_row else 0) or 0),
             "entry_count": int((library_summary_row["entry_count"] if library_summary_row else 0) or 0),

@@ -424,18 +424,27 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
             ),
         )
         series_id = conn.execute("SELECT id FROM series WHERE fingerprint=?", (fp,)).fetchone()["id"]
+        target_library = conn.execute("SELECT id FROM media_libraries WHERE key='seasonal_anime'").fetchone()
+        target_library_id = int(target_library["id"] or 0) if target_library else 0
         conn.execute(
             """
             INSERT INTO entries
-              (work_id, fingerprint, domain_kind, entry_kind, display_title, title_root,
+              (work_id, fingerprint, domain_kind, media_type, region, source_provider, metadata_provider,
+               external_id, target_library_id, entry_kind, display_title, title_root,
                season_label, arc_label, part_label, special_label,
                title_raw, title_cn, bangumi_id, mikan_bangumi_id, tmdb_id, year, season_number,
                poster_url, summary, metadata_source, hidden, auto_download, selected_group, selected_resolution,
                backfill_mode, created_at, updated_at)
-            VALUES (?, ?, 'seasonal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'bangumi', 0, 'inherit', '', '', 'inherit', ?, ?)
+            VALUES (?, ?, 'seasonal', 'anime', 'jp', 'mikan', 'bangumi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'bangumi', 0, 'inherit', '', '', 'inherit', ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               work_id=excluded.work_id,
               domain_kind='seasonal',
+              media_type=excluded.media_type,
+              region=excluded.region,
+              source_provider=excluded.source_provider,
+              metadata_provider=excluded.metadata_provider,
+              external_id=CASE WHEN excluded.external_id!='' THEN excluded.external_id ELSE entries.external_id END,
+              target_library_id=CASE WHEN entries.target_library_id=0 THEN excluded.target_library_id ELSE entries.target_library_id END,
               entry_kind=excluded.entry_kind,
               display_title=excluded.display_title,
               title_root=excluded.title_root,
@@ -458,6 +467,8 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
             (
                 work_id,
                 fp,
+                str(item.bangumi_id or item.mikan_bangumi_id or ""),
+                target_library_id,
                 labels["entry_kind"],
                 metadata.get("title_cn") or item.series_title,
                 root_title,

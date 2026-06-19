@@ -835,6 +835,44 @@ h1 {
   margin-top: 5px;
 }
 
+.media-library-settings {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+.media-library-setting-row {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dfe7f3;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
+  padding: 10px 12px;
+}
+
+.media-library-setting-row div {
+  display: grid;
+  gap: 2px;
+}
+
+.media-library-setting-row span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.media-library-setting-row code {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #334155;
+  overflow: hidden;
+  padding: 6px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .log-message {
   margin-left: 8px;
 }

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+from .database import connect
 from .parser import clean_name
 
 
@@ -155,6 +157,23 @@ def render_episode_name(series: dict, episode_number: int, episode_title: str, s
         episode=int(episode_number or 0),
         episode_title=clean_name(episode_title or f"第{int(episode_number or 0):02d}话"),
     )
+
+
+def local_library_root(entry: dict, settings: dict[str, str]) -> str:
+    library_id = int(entry.get("target_library_id") or 0)
+    if library_id > 0:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT root_path FROM media_libraries WHERE id=? AND enabled=1",
+                (library_id,),
+            ).fetchone()
+        if row and str(row["root_path"] or "").strip():
+            return str(row["root_path"]).strip()
+    return settings.get("local_library_root") or "/media/pikpak-anime"
+
+
+def local_series_path(entry: dict, settings: dict[str, str]) -> Path:
+    return Path(local_library_root(entry, settings)) / render_series_dir(entry, settings)
 
 
 def target_dir(series: dict, settings: dict[str, str]) -> str:

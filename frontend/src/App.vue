@@ -338,7 +338,7 @@
       <section v-if="view === 'seasonal'" class="library seasonal-page">
         <div class="toolbar">
           <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
-          <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
+          <el-segmented v-model="seriesFilter" :options="['全部', '可观看', '处理中', '需处理', '未缓存']" />
         </div>
         <div class="anime-grid catalog-card-grid">
           <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'seasonal')">
@@ -350,8 +350,8 @@
               <h3>{{ item.work_display_title || item.entry_display_title || item.display_title || item.title_cn }}</h3>
               <p>{{ item.entry_scope_label || item.entry_secondary_title || item.bangumi_id || 'Season 01' }}</p>
               <div class="tagline">
+                <el-tag size="small" :type="watchStatusTag(item)">{{ item.watch_status_label || '未缓存' }}</el-tag>
                 <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
-                <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
                 <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
                 <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
               </div>
@@ -410,7 +410,7 @@
       <section v-if="view === 'library'" class="library">
         <div class="toolbar library-toolbar">
           <el-input v-model="keyword" clearable placeholder="搜索番剧库条目、Bangumi ID、标题" />
-          <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
+          <el-segmented v-model="seriesFilter" :options="['全部', '可观看', '处理中', '需处理', '未缓存']" />
           <el-select v-model="libraryYearFilter" clearable placeholder="年份" class="compact-select">
             <el-option v-for="year in libraryYearOptions" :key="year" :label="`${year} 年`" :value="year" />
           </el-select>
@@ -448,8 +448,8 @@
                 <h3>{{ work.work_title || '未命名作品' }}</h3>
                 <p>{{ work.entry_count }} 个条目 · {{ work.year_label || '年份未知' }}</p>
                 <div class="tagline">
+                  <el-tag size="small" :type="watchStatusTag(work)">{{ work.watch_status_label || '未缓存' }}</el-tag>
                   <el-tag size="small" type="info">{{ work.release_count }} 发布</el-tag>
-                  <el-tag size="small" type="warning">云盘 {{ work.cloud_asset_count }}</el-tag>
                   <el-tag size="small" type="success">本地 {{ work.local_asset_count }}</el-tag>
                   <el-tag v-if="work.entry_count > 1" size="small">{{ isWorkExpanded(work.key) ? '收起合集' : '展开合集' }}</el-tag>
                 </div>
@@ -466,8 +466,8 @@
                   <h3>{{ item.work_display_title || item.entry_display_title || item.display_title || item.title_cn }}</h3>
                   <p>{{ item.entry_scope_label || item.entry_secondary_title || 'Season 01' }} · Bangumi: {{ item.bangumi_id || '未关联' }}</p>
                   <div class="tagline">
+                    <el-tag size="small" :type="watchStatusTag(item)">{{ item.watch_status_label || '未缓存' }}</el-tag>
                     <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
-                    <el-tag size="small" type="warning">云盘 {{ item.cloud_asset_count || 0 }}</el-tag>
                     <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
                     <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
                   </div>
@@ -556,9 +556,18 @@
                 />
                 <div class="form-row">
                   <el-form-item label="云盘库根目录"><el-input v-model="settings.library_root" /></el-form-item>
-                <el-form-item label="本地同步目录"><el-input v-model="settings.local_library_root" placeholder="/media/pikpak-anime" /></el-form-item>
+                <el-form-item label="默认本地媒体根目录"><el-input v-model="settings.local_library_root" placeholder="/media/pikpak-anime" /></el-form-item>
                 </div>
-                <el-form-item label="追更自动同步"><el-switch v-model="settings.auto_sync_following" /></el-form-item>
+                <div class="media-library-settings">
+                  <div v-for="library in dashboard.media_libraries" :key="library.id" class="media-library-setting-row">
+                    <div>
+                      <strong>{{ library.name }}</strong>
+                      <span>{{ library.media_type }} · {{ library.download_strategy }}</span>
+                    </div>
+                    <code>{{ library.root_path }}</code>
+                  </div>
+                </div>
+                <el-form-item label="追更自动下载到本地"><el-switch v-model="settings.auto_sync_following" /></el-form-item>
                 <el-form-item label="NFO 输出目录"><el-input v-model="settings.nfo_output_root" placeholder="留空；同步后默认写入本地媒体库" /></el-form-item>
                 <el-form-item label="作品目录模板"><el-input v-model="settings.work_dir_template" /></el-form-item>
                 <el-form-item label="季目录模板"><el-input v-model="settings.season_dir_template" /></el-form-item>
@@ -736,6 +745,7 @@ const selectedEntryDomain = ref('seasonal')
 const dashboard = reactive({
   seasonal_items: [],
   library_items: [],
+  media_libraries: [],
   library_summary: {},
   seasonal_sync_calendar: [],
   seasonal_update_calendar: [],
@@ -890,10 +900,10 @@ const selectedSyncRule = computed(() => {
 const syncWanted = computed(() => Boolean(selectedSyncRule.value.sync_enabled))
 const syncSummary = computed(() => {
   const stats = selectedEntryStats.value
-  if (Number(stats.local_asset_count || 0) > 0) return `已同步 ${stats.local_asset_count} 集到本地`
-  if (syncWanted.value && Number(stats.cloud_asset_count || 0) > 0) return '已开启，正在等待或处理本地同步'
-  if (syncWanted.value) return '已开启，云盘资源入库后会自动同步'
-  return '关闭后只保留云盘资源，本地文件会被清理'
+  if (Number(stats.local_asset_count || 0) > 0) return `本地可观看 ${stats.local_asset_count} 集`
+  if (syncWanted.value && Number(stats.cloud_asset_count || 0) > 0) return '已加入本地下载整理队列'
+  if (syncWanted.value) return '已开启，下载完成后会整理到本地媒体库'
+  return '关闭后不会自动整理到本地媒体库'
 })
 
 const filteredSeries = computed(() => {
@@ -906,13 +916,10 @@ const filteredSeries = computed(() => {
       if (libraryYearFilter.value && Number(item.year || 0) !== Number(libraryYearFilter.value)) return false
       if (libraryScopeFilter.value && String(item.entry_scope_label || item.entry_badge_text || '') !== String(libraryScopeFilter.value)) return false
     }
-    if (seriesFilter.value === '待配置') {
-      if (view.value === 'library') return !item.bangumi_id
-      return !item.bangumi_id || !item.group_count || !item.resolution_count
-    }
-    if (seriesFilter.value === '已入云盘') return Number(item.cloud_asset_count || 0) > 0
-    if (seriesFilter.value === '已同步') return Number(item.local_asset_count || 0) > 0
-    if (seriesFilter.value === '失败') return Boolean(item.has_failed_task)
+    if (seriesFilter.value === '可观看') return item.watch_status === 'ready' || Number(item.local_asset_count || 0) > 0
+    if (seriesFilter.value === '处理中') return item.watch_status === 'processing'
+    if (seriesFilter.value === '需处理') return item.watch_status === 'warning' || !item.bangumi_id || Boolean(item.has_failed_task)
+    if (seriesFilter.value === '未缓存') return item.watch_status === 'unavailable' || Number(item.local_asset_count || 0) <= 0
     return true
   })
 })
@@ -932,6 +939,8 @@ const libraryWorks = computed(() => {
         release_count: 0,
         cloud_asset_count: 0,
         local_asset_count: 0,
+        watch_status: 'unavailable',
+        watch_status_label: '未缓存',
         entries: []
       })
     }
@@ -940,6 +949,13 @@ const libraryWorks = computed(() => {
     group.release_count += Number(item.release_count || 0)
     group.cloud_asset_count += Number(item.cloud_asset_count || 0)
     group.local_asset_count += Number(item.local_asset_count || 0)
+    if (group.local_asset_count > 0) {
+      group.watch_status = 'ready'
+      group.watch_status_label = `可观看 ${group.local_asset_count} 集`
+    } else if (group.cloud_asset_count > 0 || group.release_count > 0) {
+      group.watch_status = 'processing'
+      group.watch_status_label = '处理中'
+    }
     if (!group.poster_url && item.poster_url) group.poster_url = item.poster_url
     if (!group.year_label && item.year) group.year_label = `${item.year}`
     group.entries.push(item)
@@ -965,6 +981,14 @@ function queueTag(queue) {
   if (queue.queue_state === 'debouncing' || queue.queue_state === 'cooldown' || Number(queue.waiting || 0) > 0) return 'info'
   if (Number(queue.pending || 0) > 0) return 'primary'
   return 'success'
+}
+
+function watchStatusTag(item) {
+  const status = String(item?.watch_status || '')
+  if (status === 'ready') return 'success'
+  if (status === 'warning') return 'danger'
+  if (status === 'processing') return 'warning'
+  return 'info'
 }
 
 function isQueueActive(queue) {

@@ -266,11 +266,34 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS media_libraries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                media_type TEXT NOT NULL DEFAULT 'anime',
+                root_path TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                download_strategy TEXT NOT NULL DEFAULT 'pikpak',
+                metadata_provider_priority TEXT NOT NULL DEFAULT 'bangumi,tmdb,manual',
+                naming_template TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 work_id INTEGER NOT NULL,
                 fingerprint TEXT NOT NULL UNIQUE,
                 domain_kind TEXT NOT NULL DEFAULT 'seasonal',
+                media_type TEXT NOT NULL DEFAULT 'anime',
+                region TEXT NOT NULL DEFAULT 'jp',
+                source_provider TEXT NOT NULL DEFAULT '',
+                metadata_provider TEXT NOT NULL DEFAULT '',
+                external_id TEXT NOT NULL DEFAULT '',
+                target_library_id INTEGER NOT NULL DEFAULT 0,
+                genres_json TEXT NOT NULL DEFAULT '[]',
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                watch_status TEXT NOT NULL DEFAULT '',
                 entry_kind TEXT NOT NULL DEFAULT 'season',
                 display_title TEXT NOT NULL,
                 title_root TEXT NOT NULL,
@@ -317,6 +340,7 @@ def init_db() -> None:
                 entry_id INTEGER NOT NULL UNIQUE,
                 source_type TEXT NOT NULL DEFAULT '',
                 source_ref TEXT NOT NULL DEFAULT '',
+                wanted INTEGER NOT NULL DEFAULT 1,
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -448,7 +472,33 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, value),
             )
+        ensure_media_libraries(conn)
         migrate(conn)
+
+
+def ensure_media_libraries(conn: sqlite3.Connection) -> None:
+    ts = now()
+    local_root = DEFAULT_SETTINGS.get("local_library_root", "/media/pikpak-anime").rstrip("/")
+    libraries = [
+        ("seasonal_anime", "新番库", "anime", f"{local_root}/Seasonal", "pikpak"),
+        ("anime_library", "番剧库", "anime", f"{local_root}/Library", "pikpak"),
+        ("movies", "电影库", "movie", "/media/movies", "pikpak"),
+        ("tv", "剧集库", "tv", "/media/tv", "pikpak"),
+    ]
+    for key, name, media_type, root_path, download_strategy in libraries:
+        conn.execute(
+            """
+            INSERT INTO media_libraries
+              (key, name, media_type, root_path, enabled, download_strategy, metadata_provider_priority,
+               naming_template, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, 'bangumi,tmdb,manual', '', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              name=excluded.name,
+              media_type=excluded.media_type,
+              updated_at=excluded.updated_at
+            """,
+            (key, name, media_type, root_path, download_strategy, ts, ts),
+        )
 
 
 def migrate(conn: sqlite3.Connection) -> None:
@@ -469,11 +519,38 @@ def migrate(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS media_libraries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            media_type TEXT NOT NULL DEFAULT 'anime',
+            root_path TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            download_strategy TEXT NOT NULL DEFAULT 'pikpak',
+            metadata_provider_priority TEXT NOT NULL DEFAULT 'bangumi,tmdb,manual',
+            naming_template TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    ensure_media_libraries(conn)
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             work_id INTEGER NOT NULL,
             fingerprint TEXT NOT NULL UNIQUE,
             domain_kind TEXT NOT NULL DEFAULT 'seasonal',
+            media_type TEXT NOT NULL DEFAULT 'anime',
+            region TEXT NOT NULL DEFAULT 'jp',
+            source_provider TEXT NOT NULL DEFAULT '',
+            metadata_provider TEXT NOT NULL DEFAULT '',
+            external_id TEXT NOT NULL DEFAULT '',
+            target_library_id INTEGER NOT NULL DEFAULT 0,
+            genres_json TEXT NOT NULL DEFAULT '[]',
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            watch_status TEXT NOT NULL DEFAULT '',
             entry_kind TEXT NOT NULL DEFAULT 'season',
             display_title TEXT NOT NULL,
             title_root TEXT NOT NULL,
@@ -526,12 +603,14 @@ def migrate(conn: sqlite3.Connection) -> None:
             entry_id INTEGER NOT NULL UNIQUE,
             source_type TEXT NOT NULL DEFAULT '',
             source_ref TEXT NOT NULL DEFAULT '',
+            wanted INTEGER NOT NULL DEFAULT 1,
             archived INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+    ensure_column(conn, "library_entries", "wanted", "INTEGER NOT NULL DEFAULT 1")
     series_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(series)").fetchall()
@@ -558,6 +637,50 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in release_additions.items():
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
+    entry_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(entries)").fetchall()
+    }
+    entry_additions = {
+        "media_type": "TEXT NOT NULL DEFAULT 'anime'",
+        "region": "TEXT NOT NULL DEFAULT 'jp'",
+        "source_provider": "TEXT NOT NULL DEFAULT ''",
+        "metadata_provider": "TEXT NOT NULL DEFAULT ''",
+        "external_id": "TEXT NOT NULL DEFAULT ''",
+        "target_library_id": "INTEGER NOT NULL DEFAULT 0",
+        "genres_json": "TEXT NOT NULL DEFAULT '[]'",
+        "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+        "watch_status": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in entry_additions.items():
+        if column not in entry_columns:
+            conn.execute(f"ALTER TABLE entries ADD COLUMN {column} {ddl}")
+    seasonal_library = conn.execute("SELECT id FROM media_libraries WHERE key='seasonal_anime'").fetchone()
+    archive_library = conn.execute("SELECT id FROM media_libraries WHERE key='anime_library'").fetchone()
+    if seasonal_library:
+        conn.execute(
+            """
+            UPDATE entries
+            SET target_library_id=?,
+                media_type=CASE WHEN media_type='' THEN 'anime' ELSE media_type END,
+                region=CASE WHEN region='' THEN 'jp' ELSE region END,
+                source_provider=CASE WHEN source_provider='' THEN 'mikan' ELSE source_provider END
+            WHERE domain_kind='seasonal' AND COALESCE(target_library_id, 0)=0
+            """,
+            (int(seasonal_library["id"]),),
+        )
+    if archive_library:
+        conn.execute(
+            """
+            UPDATE entries
+            SET target_library_id=?,
+                media_type=CASE WHEN media_type='' THEN 'anime' ELSE media_type END,
+                region=CASE WHEN region='' THEN 'jp' ELSE region END,
+                source_provider=CASE WHEN source_provider='' THEN 'manual' ELSE source_provider END
+            WHERE domain_kind='library' AND COALESCE(target_library_id, 0)=0
+            """,
+            (int(archive_library["id"]),),
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS cloud_submissions (
@@ -831,6 +954,7 @@ def diagnostics() -> dict[str, Any]:
             "pipelines",
             "pipeline_steps",
             "pipeline_transitions",
+            "media_libraries",
             "works",
             "entries",
             "seasonal_entries",

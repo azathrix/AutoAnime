@@ -27,7 +27,8 @@ async def process_local_sync(context: ProcessorContext, payload: dict) -> Proces
     with connect() as conn:
         row = conn.execute(
             """
-            SELECT ca.*, e.display_title, e.title_cn, e.title_raw, e.season_number, e.year, e.bangumi_id
+            SELECT ca.*, e.display_title, e.title_cn, e.title_raw, e.season_number, e.year,
+              e.bangumi_id, e.target_library_id
             FROM cloud_assets ca
             JOIN entries e ON e.id=ca.entry_id
             WHERE ca.id=? AND ca.status='available'

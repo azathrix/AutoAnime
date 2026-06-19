@@ -19,7 +19,8 @@ async def process_sync_plan(context: ProcessorContext, payload: dict) -> Process
             return ProcessorResult.skipped("本地同步未开启，跳过同步计划", data={"entry_id": entry_id})
         rows = conn.execute(
             """
-            SELECT ca.*, e.display_title, e.title_cn, e.title_raw, e.season_number, e.year, e.bangumi_id
+            SELECT ca.*, e.display_title, e.title_cn, e.title_raw, e.season_number, e.year,
+              e.bangumi_id, e.target_library_id
             FROM cloud_assets ca
             JOIN entries e ON e.id=ca.entry_id
             WHERE ca.entry_id=? AND ca.status='available'
