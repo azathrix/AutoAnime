@@ -408,9 +408,15 @@
       </section>
 
       <section v-if="view === 'library'" class="library">
-        <div class="toolbar">
+        <div class="toolbar library-toolbar">
           <el-input v-model="keyword" clearable placeholder="搜索番剧库条目、Bangumi ID、标题" />
           <el-segmented v-model="seriesFilter" :options="['全部', '待配置', '已入云盘', '已同步', '失败']" />
+          <el-select v-model="libraryYearFilter" clearable placeholder="年份" class="compact-select">
+            <el-option v-for="year in libraryYearOptions" :key="year" :label="`${year} 年`" :value="year" />
+          </el-select>
+          <el-select v-model="libraryScopeFilter" clearable placeholder="季度 / 篇章" class="scope-select">
+            <el-option v-for="scope in libraryScopeOptions" :key="scope" :label="scope" :value="scope" />
+          </el-select>
           <el-button plain @click="runAction('/library/import')">导入云盘到番剧库</el-button>
         </div>
         <div class="library-summary-grid">
@@ -431,21 +437,27 @@
             <strong>{{ dashboard.library_summary?.failed_entry_count || 0 }}</strong>
           </div>
         </div>
-        <div class="library-work-grid">
+        <div class="library-work-grid library-catalog-grid">
           <section v-for="work in libraryWorks" :key="work.key" class="library-work-card">
-            <header class="library-work-header" @click="toggleWorkExpanded(work.key)">
+            <header class="library-work-header anime-card catalog-card" @click="toggleWorkExpanded(work.key)">
               <div class="cover work-cover">
                 <img v-if="work.poster_url" :src="work.poster_url" />
                 <span v-else>{{ work.work_title?.slice(0, 2) || 'AN' }}</span>
               </div>
-              <div>
+              <div class="anime-body">
                 <h3>{{ work.work_title || '未命名作品' }}</h3>
-                <p>{{ work.entry_count }} 个条目 · 云盘 {{ work.cloud_asset_count }} · 本地 {{ work.local_asset_count }}</p>
+                <p>{{ work.entry_count }} 个条目 · {{ work.year_label || '年份未知' }}</p>
+                <div class="tagline">
+                  <el-tag size="small" type="info">{{ work.release_count }} 发布</el-tag>
+                  <el-tag size="small" type="warning">云盘 {{ work.cloud_asset_count }}</el-tag>
+                  <el-tag size="small" type="success">本地 {{ work.local_asset_count }}</el-tag>
+                  <el-tag v-if="work.entry_count > 1" size="small">{{ isWorkExpanded(work.key) ? '收起合集' : '展开合集' }}</el-tag>
+                </div>
+                <el-progress :percentage="libraryProgressOf(work)" :show-text="false" />
               </div>
-              <el-tag size="small">{{ isWorkExpanded(work.key) ? '收起' : '展开' }}</el-tag>
             </header>
-            <div v-show="isWorkExpanded(work.key)" class="library-entry-list library-entry-card-grid">
-              <article v-for="item in work.entries" :key="item.id" class="library-entry-row library-entry-card" @click="openEntry(item.id, 'library')">
+            <div v-show="isWorkExpanded(work.key)" class="library-entry-list catalog-card-grid">
+              <article v-for="item in work.entries" :key="item.id" class="anime-card catalog-card library-entry-card" @click.stop="openEntry(item.id, 'library')">
                 <div class="cover poster-cover">
                   <img v-if="item.poster_url" :src="item.poster_url" />
                   <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
@@ -716,6 +728,8 @@ let dashboardStream = null
 let streamRetryTimer = null
 const keyword = ref('')
 const seriesFilter = ref('全部')
+const libraryYearFilter = ref('')
+const libraryScopeFilter = ref('')
 const entryDrawerOpen = ref(false)
 const selectedEntryDetail = ref(null)
 const selectedEntryDomain = ref('seasonal')
@@ -748,6 +762,22 @@ const pageTitle = computed(() => ({
 
 const seasonalRows = computed(() => dashboard.seasonal_items || [])
 const libraryRows = computed(() => dashboard.library_items || [])
+const libraryYearOptions = computed(() => {
+  const values = new Set()
+  for (const item of libraryRows.value) {
+    const year = Number(item.year || 0)
+    if (year > 0) values.add(year)
+  }
+  return Array.from(values).sort((a, b) => b - a)
+})
+const libraryScopeOptions = computed(() => {
+  const values = new Set()
+  for (const item of libraryRows.value) {
+    const scope = item.entry_scope_label || item.entry_badge_text || ''
+    if (scope) values.add(scope)
+  }
+  return Array.from(values).sort((a, b) => String(a).localeCompare(String(b)))
+})
 const activeDetailRows = computed(() => selectedEntryDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
 const cloudAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.cloud_asset_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
@@ -872,6 +902,10 @@ const filteredSeries = computed(() => {
   return source.filter(item => {
     const matched = !text || `${item.entry_display_title || item.display_title || item.title_cn} ${item.work_display_title || item.work_title || item.title_root || ''} ${item.entry_scope_label || ''} ${item.bangumi_id}`.toLowerCase().includes(text)
     if (!matched) return false
+    if (view.value === 'library') {
+      if (libraryYearFilter.value && Number(item.year || 0) !== Number(libraryYearFilter.value)) return false
+      if (libraryScopeFilter.value && String(item.entry_scope_label || item.entry_badge_text || '') !== String(libraryScopeFilter.value)) return false
+    }
     if (seriesFilter.value === '待配置') {
       if (view.value === 'library') return !item.bangumi_id
       return !item.bangumi_id || !item.group_count || !item.resolution_count
@@ -893,7 +927,9 @@ const libraryWorks = computed(() => {
         work_id: item.work_id || 0,
         work_title: item.work_display_title || item.work_title || item.title_root || item.display_title || item.title_cn || '未命名作品',
         poster_url: item.poster_url || '',
+        year_label: item.year ? `${item.year}` : '',
         entry_count: 0,
+        release_count: 0,
         cloud_asset_count: 0,
         local_asset_count: 0,
         entries: []
@@ -901,9 +937,11 @@ const libraryWorks = computed(() => {
     }
     const group = groups.get(key)
     group.entry_count += 1
+    group.release_count += Number(item.release_count || 0)
     group.cloud_asset_count += Number(item.cloud_asset_count || 0)
     group.local_asset_count += Number(item.local_asset_count || 0)
     if (!group.poster_url && item.poster_url) group.poster_url = item.poster_url
+    if (!group.year_label && item.year) group.year_label = `${item.year}`
     group.entries.push(item)
   }
   return Array.from(groups.values()).map(group => ({

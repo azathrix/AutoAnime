@@ -849,6 +849,9 @@ h1 {
   background: #fff;
   border: 1px solid #dfe7f3;
   border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   padding: 12px;
 }
 
@@ -866,26 +869,34 @@ h1 {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 }
 
+.compact-select {
+  max-width: 132px;
+}
+
+.scope-select {
+  max-width: 180px;
+}
+
 .library-work-grid {
   display: grid;
   gap: 16px;
 }
 
+.library-catalog-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
 .library-work-card {
-  background: #fff;
-  border: 1px solid #dfe7f3;
+  background: transparent;
+  border: 0;
   border-radius: 8px;
-  overflow: hidden;
+  min-width: 0;
   padding: 0;
 }
 
 .library-work-header {
-  align-items: center;
   cursor: pointer;
-  display: flex;
-  gap: 14px;
-  justify-content: space-between;
-  padding: 14px;
+  margin: 0;
 }
 
 .library-work-header h3 {
@@ -901,26 +912,17 @@ h1 {
 .library-entry-list {
   display: grid;
   gap: 10px;
-  padding: 0 14px 14px;
+  margin-top: 10px;
+  padding: 0;
 }
 
 .library-entry-card-grid {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 }
 
-.library-entry-row {
-  background: #f8fafc;
-  border: 1px solid #dbe4ef;
-  border-radius: 8px;
-  cursor: pointer;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 88px minmax(0, 1fr);
-  padding: 12px;
-}
-
 .library-entry-card {
   align-items: start;
+  background: #f8fafc;
 }
 
 .anime-card {

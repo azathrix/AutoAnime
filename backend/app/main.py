@@ -995,7 +995,126 @@ def queue_detail_map() -> dict[str, dict[str, Any]]:
             details[alias] = details[canonical]
     details.setdefault("rss", {"items": []})
     details.setdefault("processor", {"items": []})
+    hydrate_queue_item_titles(details)
     return details
+
+
+def hydrate_queue_item_titles(details: dict[str, dict[str, Any]]) -> None:
+    items: list[dict[str, Any]] = []
+    for detail in details.values():
+        for item in detail.get("items", []):
+            if isinstance(item, dict):
+                items.append(item)
+    if not items:
+        return
+
+    entry_ids = {int(item.get("entry_id") or 0) for item in items if int(item.get("entry_id") or 0) > 0}
+    release_ids = {int(item.get("release_id") or 0) for item in items if int(item.get("release_id") or 0) > 0}
+    candidate_ids = {int(item.get("candidate_id") or 0) for item in items if int(item.get("candidate_id") or 0) > 0}
+    cloud_asset_ids = {
+        int(item.get("cloud_asset_id") or item.get("subject_id") or 0)
+        for item in items
+        if item.get("subject_type") == "cloud_asset" and int(item.get("cloud_asset_id") or item.get("subject_id") or 0) > 0
+    }
+    local_asset_ids = {
+        int(item.get("local_asset_id") or item.get("subject_id") or 0)
+        for item in items
+        if item.get("subject_type") == "local_asset" and int(item.get("local_asset_id") or item.get("subject_id") or 0) > 0
+    }
+
+    entry_titles: dict[int, dict[str, Any]] = {}
+    release_titles: dict[int, dict[str, Any]] = {}
+    candidate_titles: dict[int, dict[str, Any]] = {}
+    cloud_asset_titles: dict[int, dict[str, Any]] = {}
+    local_asset_titles: dict[int, dict[str, Any]] = {}
+
+    def placeholders(values: set[int]) -> str:
+        return ",".join("?" for _ in values)
+
+    with connect() as conn:
+        if entry_ids:
+            rows = conn.execute(
+                f"""
+                SELECT id, display_title, title_cn, title_root, domain_kind
+                FROM entries
+                WHERE id IN ({placeholders(entry_ids)})
+                """,
+                tuple(entry_ids),
+            ).fetchall()
+            entry_titles = {int(row["id"]): dict(row) for row in rows}
+        if release_ids:
+            rows = conn.execute(
+                f"""
+                SELECT r.id, r.entry_id, r.release_title, r.episode_number,
+                  e.display_title, e.title_cn, e.title_root, e.domain_kind
+                FROM releases r
+                JOIN entries e ON e.id=r.entry_id
+                WHERE r.id IN ({placeholders(release_ids)})
+                """,
+                tuple(release_ids),
+            ).fetchall()
+            release_titles = {int(row["id"]): dict(row) for row in rows}
+        if candidate_ids:
+            rows = conn.execute(
+                f"""
+                SELECT id, title, series_title, episode_number, status
+                FROM rss_candidates
+                WHERE id IN ({placeholders(candidate_ids)})
+                """,
+                tuple(candidate_ids),
+            ).fetchall()
+            candidate_titles = {int(row["id"]): dict(row) for row in rows}
+        if cloud_asset_ids:
+            rows = conn.execute(
+                f"""
+                SELECT ca.id, ca.release_id, ca.entry_id, ca.cloud_name, ca.episode_number,
+                  e.display_title, e.title_cn, e.title_root, e.domain_kind
+                FROM cloud_assets ca
+                JOIN entries e ON e.id=ca.entry_id
+                WHERE ca.id IN ({placeholders(cloud_asset_ids)})
+                """,
+                tuple(cloud_asset_ids),
+            ).fetchall()
+            cloud_asset_titles = {int(row["id"]): dict(row) for row in rows}
+        if local_asset_ids:
+            rows = conn.execute(
+                f"""
+                SELECT la.id, la.release_id, la.entry_id, la.local_path, la.episode_number,
+                  e.display_title, e.title_cn, e.title_root, e.domain_kind
+                FROM local_assets la
+                JOIN entries e ON e.id=la.entry_id
+                WHERE la.id IN ({placeholders(local_asset_ids)})
+                """,
+                tuple(local_asset_ids),
+            ).fetchall()
+            local_asset_titles = {int(row["id"]): dict(row) for row in rows}
+
+    for item in items:
+        subject_type = str(item.get("subject_type") or "")
+        entry_id = int(item.get("entry_id") or 0)
+        release_id = int(item.get("release_id") or 0)
+        candidate_id = int(item.get("candidate_id") or 0)
+        row: dict[str, Any] = {}
+        if release_id and release_id in release_titles:
+            row = release_titles[release_id]
+        elif entry_id and entry_id in entry_titles:
+            row = entry_titles[entry_id]
+        elif candidate_id and candidate_id in candidate_titles:
+            row = candidate_titles[candidate_id]
+        elif subject_type == "cloud_asset":
+            row = cloud_asset_titles.get(int(item.get("cloud_asset_id") or item.get("subject_id") or 0), {})
+        elif subject_type == "local_asset":
+            row = local_asset_titles.get(int(item.get("local_asset_id") or item.get("subject_id") or 0), {})
+        if not row:
+            continue
+        title = str(row.get("display_title") or row.get("title_cn") or row.get("series_title") or row.get("title_root") or row.get("title") or "").strip()
+        release_title = str(row.get("release_title") or row.get("cloud_name") or row.get("local_path") or row.get("title") or title).strip()
+        item["display_title"] = title or item.get("display_title") or ""
+        item["title_cn"] = title or item.get("title_cn") or ""
+        item["release_title"] = release_title or item.get("release_title") or ""
+        item["entry_id"] = int(row.get("entry_id") or entry_id or 0)
+        item["episode_number"] = item.get("episode_number") or row.get("episode_number") or ""
+        item["domain_kind"] = row.get("domain_kind") or item.get("domain_kind") or ""
 
 
 def console_sections() -> list[dict[str, Any]]:
