@@ -67,7 +67,6 @@ class SettingsPayload(BaseModel):
     language_priority: list[str] = []
     secondary_language_priority: list[str] = []
     download_backend: str = "rclone"
-    cloud_transfer_backend: str = ""
     rclone_command: str = "rclone"
     rclone_config_path: str = "/data/rclone/rclone.conf"
     rclone_remote: str = "pikpak"
@@ -449,7 +448,6 @@ def settings_response() -> dict[str, Any]:
     result["language_priority"] = split_setting(settings.get("language_priority", ""))
     result["secondary_language_priority"] = split_setting(settings.get("secondary_language_priority", ""))
     result["work_dir_template"] = settings.get("series_dir_template", "")
-    result["cloud_transfer_backend"] = settings.get("download_backend", "rclone")
     return result
 
 
@@ -1601,7 +1599,6 @@ async def api_system_diagnostics() -> dict[str, Any]:
 @app.put("/api/settings")
 async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
     previous = get_settings()
-    download_backend = (payload.download_backend or payload.cloud_transfer_backend or "rclone").strip() or "rclone"
     save_settings(
         {
             "rss_url": payload.rss_url.strip(),
@@ -1615,7 +1612,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "resolution_priority": "\n".join(payload.resolution_priority),
             "language_priority": "\n".join(payload.language_priority),
             "secondary_language_priority": "\n".join(payload.secondary_language_priority),
-            "download_backend": download_backend,
+            "download_backend": payload.download_backend,
             "rclone_command": payload.rclone_command.strip() or "rclone",
             "rclone_config_path": payload.rclone_config_path.strip(),
             "rclone_remote": payload.rclone_remote.strip() or "pikpak",
