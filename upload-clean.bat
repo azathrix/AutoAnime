@@ -3,14 +3,18 @@ setlocal
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
-set "SOURCE=%ROOT%\build\AutoAnime-clean"
 set "TARGET=%AUTOANIME_UPLOAD_TARGET%"
 if "%TARGET%"=="" set "TARGET=\\InputName\docker\autoanime"
 
-call "%ROOT%\package-clean.bat"
-if errorlevel 1 (
-  echo Clean package failed.
-  exit /b 1
+if exist "%ROOT%\package-clean.bat" if exist "%ROOT%\frontend\node_modules\.bin\vite.cmd" (
+  call "%ROOT%\package-clean.bat"
+  if errorlevel 1 (
+    echo Clean package failed.
+    exit /b 1
+  )
+  set "SOURCE=%ROOT%\build\AutoAnime-clean"
+) else (
+  set "SOURCE=%ROOT%"
 )
 
 if not exist "%TARGET%" mkdir "%TARGET%"

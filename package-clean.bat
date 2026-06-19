@@ -32,8 +32,7 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 set "TARGET=%BUILD_DIR%\AutoAnime-clean"
 
-if exist "%TARGET%" rmdir /s /q "%TARGET%"
-mkdir "%TARGET%"
+if not exist "%TARGET%" mkdir "%TARGET%"
 
 robocopy "%ROOT%" "%TARGET%" ^
   /MIR ^
