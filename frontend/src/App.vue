@@ -293,7 +293,7 @@
                   <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理下载队列</el-button>
                   <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载状态</el-button>
                   <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
-                  <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地同步记录和日志。确定？" @confirm="runAction('/system/clear-data')">
+                  <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地整理记录和日志。确定？" @confirm="runAction('/system/clear-data')">
                     <template #reference>
                       <el-button type="danger" plain>清除所有数据</el-button>
                     </template>
@@ -323,7 +323,7 @@
                   <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理下载队列</el-button>
                   <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载状态</el-button>
                   <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
-                  <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地同步记录和日志。确定？" @confirm="runAction('/system/clear-data')">
+                  <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地整理记录和日志。确定？" @confirm="runAction('/system/clear-data')">
                     <template #reference>
                       <el-button type="danger" plain>清除所有数据</el-button>
                     </template>
@@ -650,7 +650,7 @@
         </el-form>
         <div class="sync-panel">
           <div>
-            <strong>本地同步</strong>
+            <strong>本地整理</strong>
             <span>{{ syncSummary }}</span>
           </div>
           <el-switch :model-value="syncWanted" @change="toggleEntrySync" />
@@ -1077,8 +1077,7 @@ function queueState(queue) {
 function queuePendingHint(queue) {
   const key = String(queue?.key || '')
   if (key === 'rss') return '这里只显示最近的 RSS 候选；后续 Mikan、元数据、选集、下载器和本地整理都由任务链自动推进。'
-  if (key === 'download_artifact_register') return '待处理表示已发现完成的下载任务，等待登记成正式下载产物。'
-  if (key === 'local_sync') return '待处理表示下载产物已就绪，等待进入本地同步。'
+  if (key === 'local_sync') return '待处理表示下载器已完成，等待整理到本地媒体库。'
   if (key === 'selection') return '待处理表示元数据已完成，等待按规则自动选择发布。'
   if (key === 'processor') return '这里显示流水线统一处理器任务，扫描后可直接看每条数据卡在 RSS、匹配、元数据、整合、下载器还是本地整理。'
   if (key === 'backfill') return '待处理表示番剧已入库，等待去 Mikan 番组页补抓历史条目。'

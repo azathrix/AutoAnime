@@ -167,6 +167,11 @@ async def process_download_presence(context: ProcessorContext, payload: dict) ->
 
     if existing_remote:
         asset_id = upsert_download_artifact_for_release(release_id, existing_remote, settings) or 0
+        if asset_id <= 0:
+            return ProcessorResult.retryable(
+                "下载器已有完成文件，但下载产物暂未登记成功，等待后重试",
+                task_retry_after(settings, context.attempts + 1),
+            )
         _upsert_submission(
             release=release,
             status="completed",
@@ -249,6 +254,11 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
         )
     if existing_remote:
         asset_id = upsert_download_artifact_for_release(release_id, existing_remote, settings) or 0
+        if asset_id <= 0:
+            return ProcessorResult.retryable(
+                "下载器已有完成文件，但下载产物暂未登记成功，等待后重试",
+                task_retry_after(settings, context.attempts + 1),
+            )
         _upsert_submission(
             release=release,
             status="completed",
@@ -415,6 +425,11 @@ async def process_download_poll(context: ProcessorContext, payload: dict) -> Pro
 
     item = matched or _asset_item(remote_target, remote_name, file_id)
     asset_id = upsert_download_artifact_for_release(release_id, item, settings) or 0
+    if asset_id <= 0:
+        return ProcessorResult.retryable(
+            "下载任务已完成，但下载产物暂未登记成功，等待后重试",
+            task_retry_after(settings, context.attempts + 1),
+        )
     actual_name = str(item.get("name") or remote_name)
     _upsert_submission(
         release=release,

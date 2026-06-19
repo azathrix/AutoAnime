@@ -22,7 +22,7 @@ def _download_artifact_id(context: ProcessorContext, payload: dict) -> int:
 async def process_local_sync(context: ProcessorContext, payload: dict) -> ProcessorResult:
     download_artifact_id = _download_artifact_id(context, payload)
     if download_artifact_id <= 0:
-        return ProcessorResult.terminal("本地同步处理器缺少 download_artifact_id")
+        return ProcessorResult.terminal("本地整理处理器缺少 download_artifact_id")
     settings = get_settings()
     with connect() as conn:
         row = conn.execute(
@@ -48,12 +48,12 @@ async def process_local_sync(context: ProcessorContext, payload: dict) -> Proces
         if target_file.exists() and target_file.stat().st_size > 0:
             log(
                 "info",
-                f"本地同步跳过下载: download_artifact_id={download_artifact_id} reason=本地文件已存在 target={target}",
+                f"本地整理跳过下载: download_artifact_id={download_artifact_id} reason=本地文件已存在 target={target}",
             )
         else:
             log(
                 "info",
-                f"本地同步下载: download_artifact_id={download_artifact_id} entry_id={row['entry_id']} "
+                f"本地整理下载: download_artifact_id={download_artifact_id} entry_id={row['entry_id']} "
                 f"episode={row['episode_number']} source={row['remote_path']} target={target}",
             )
             await download_remote_file_to_local(
@@ -100,10 +100,10 @@ async def process_local_sync(context: ProcessorContext, payload: dict) -> Proces
     local_asset_id = int(local_asset["id"] or 0) if local_asset else 0
     log(
         "info",
-        f"本地同步完成: download_artifact_id={download_artifact_id} local_asset_id={local_asset_id} target={target}",
+        f"本地整理完成: download_artifact_id={download_artifact_id} local_asset_id={local_asset_id} target={target}",
     )
     return ProcessorResult.success(
-        "本地同步完成",
+        "本地整理完成",
         data={
             "download_artifact_id": download_artifact_id,
             "local_asset_id": local_asset_id,

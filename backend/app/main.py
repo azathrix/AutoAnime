@@ -28,7 +28,7 @@ from .pipeline_orchestrator import run_ready_tasks, start_pipeline
 from .pipeline_runtime import finish_pipeline_run, pipeline_overview, start_pipeline_run, update_pipeline_run
 from .processors import register_builtin_processors
 from .scanner import language_tokens, mark_selected_releases, priority_match, priority_pick, resolve_entry_choice
-from .sync_service import cancel_sync_for_entry, ensure_sync_rule, scan_remote_library
+from .sync_service import cancel_sync_for_entry, scan_remote_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -291,11 +291,8 @@ SEASONAL_STATUS_QUEUE_ORDER = [
     "metadata",
     "selection",
     "backfill",
-    "download_presence",
     "download_submit",
     "download_poll",
-    "download_artifact_register",
-    "sync_plan",
     "local_sync",
     "nfo",
     "local_presence",
@@ -306,12 +303,9 @@ SEASONAL_STATUS_QUEUE_NAMES = {
     "metadata": "元数据",
     "selection": "自动选集",
     "backfill": "整季补全",
-    "download_presence": "下载产物检查",
     "download_submit": "提交下载器",
     "download_poll": "下载状态",
-    "download_artifact_register": "下载产物登记",
-    "sync_plan": "同步计划",
-    "local_sync": "本地同步",
+    "local_sync": "本地整理",
     "nfo": "NFO",
     "local_presence": "本地存在性检查",
 }
@@ -405,19 +399,13 @@ def summarize_seasonal_entry(
     if int(result.get("local_asset_count") or 0) > 0:
         result["status_category"] = "ready_local"
         result["status_level"] = "success"
-        result["status_summary"] = "本地同步已就绪"
-        return result
-
-    if int(result.get("sync_enabled") or 0) > 0 and int(result.get("download_artifact_count") or 0) > 0:
-        result["status_category"] = "ready_download"
-        result["status_level"] = "success"
-        result["status_summary"] = "已开启同步，等待或处理本地同步"
+        result["status_summary"] = "本地文件已就绪"
         return result
 
     if int(result.get("download_artifact_count") or 0) > 0:
         result["status_category"] = "ready_download"
         result["status_level"] = "success"
-        result["status_summary"] = "下载产物已就绪"
+        result["status_summary"] = "下载完成，等待本地整理"
         return result
 
     if int(result.get("downloaded_count") or 0) > 0:
@@ -622,7 +610,7 @@ def queue_entry_download(entry_id: int) -> dict[str, str]:
         run_id = start_pipeline(
             pipeline_key,
             trigger_source="manual",
-            first_step_key="download_presence",
+            first_step_key="download_submit",
             subject_type="release",
             subject_id=int(release_id),
             payload={"release_id": int(release_id), "entry_id": entry_id, "domain_kind": entry["domain_kind"]},
@@ -645,25 +633,41 @@ def generate_entry_nfo(entry_id: int) -> dict[str, str]:
 
 
 def queue_entry_sync(entry_id: int) -> dict[str, str]:
-    settings = get_settings()
     with connect() as conn:
         entry = conn.execute("SELECT domain_kind FROM entries WHERE id=?", (entry_id,)).fetchone()
+        artifacts = conn.execute(
+            """
+            SELECT id
+            FROM download_artifacts
+            WHERE entry_id=? AND status='available'
+            ORDER BY episode_number ASC, id ASC
+            """,
+            (entry_id,),
+        ).fetchall()
     if not entry:
         return {"status": "not_found", "message": "条目不存在"}
-    ensure_sync_rule(entry_id, settings, enabled=True)
+    if not artifacts:
+        return {"status": "skipped", "count": "0", "message": "暂无可整理的下载产物"}
     pipeline_key = "seasonal_mikan_tracking" if entry["domain_kind"] == "seasonal" else "library_backfill"
-    run_id = start_pipeline(
-        pipeline_key,
-        trigger_source="manual",
-        first_step_key="sync_plan",
-        subject_type="entry",
-        subject_id=entry_id,
-        payload={"entry_id": entry_id, "domain_kind": entry["domain_kind"]},
-        message="手动本地同步",
-    )
+    run_ids: list[int] = []
+    for artifact in artifacts:
+        run_id = start_pipeline(
+            pipeline_key,
+            trigger_source="manual",
+            first_step_key="local_sync",
+            subject_type="download_artifact",
+            subject_id=int(artifact["id"]),
+            payload={
+                "download_artifact_id": int(artifact["id"]),
+                "entry_id": entry_id,
+                "domain_kind": entry["domain_kind"],
+            },
+            message="手动本地整理",
+        )
+        run_ids.append(run_id)
     trigger_queue("processor", delay=0)
-    log("info", f"手动本地同步已开启规则并启动流水线: entry_id={entry_id} run_id={run_id}")
-    return {"status": "queued", "count": "1", "message": f"已开启本地同步并启动流水线 run_id={run_id}"}
+    log("info", f"手动本地整理已启动: entry_id={entry_id} count={len(run_ids)} run_ids={','.join(str(item) for item in run_ids)}")
+    return {"status": "queued", "count": str(len(run_ids)), "message": f"已启动本地整理: {len(run_ids)} 条"}
 
 
 def cancel_entry_sync(entry_id: int) -> dict[str, str]:
@@ -945,13 +949,10 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         runtime_item("metadata", "元数据", "刷新 Bangumi/条目元数据"),
         runtime_item("selection", "自动选集", "根据全局优先级选择唯一发布"),
         runtime_item("backfill", "整季补全", "补抓当季历史条目"),
-        runtime_item("download_presence", "下载产物检查", "先查同集下载产物，避免重复提交"),
         runtime_item("download_submit", "提交下载器", "提交磁链/种子到下载器"),
         runtime_item("download_poll", "下载状态", "轮询下载器完成状态"),
-        runtime_item("download_artifact_register", "下载产物登记", "完成后登记下载产物"),
-        runtime_item("sync_plan", "整理计划", "从下载产物生成本地整理任务"),
         runtime_item("local_sync", "本地整理", "整理到本地媒体库并写 local_assets"),
-        runtime_item("nfo", "NFO", "本地同步完成后生成 NFO"),
+        runtime_item("nfo", "NFO", "本地整理完成后生成 NFO"),
         runtime_item("local_presence", "本地存在性检查", "检查本地最终文件状态"),
     ]
 
@@ -1161,11 +1162,8 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:metadata", "name": "元数据", "kind": "queue", "queue_key": "metadata"},
         {"key": "queue:selection", "name": "自动选集", "kind": "queue", "queue_key": "selection"},
         {"key": "queue:backfill", "name": "整季补全", "kind": "queue", "queue_key": "backfill"},
-        {"key": "queue:download_presence", "name": "下载产物检查", "kind": "queue", "queue_key": "download_presence"},
         {"key": "queue:download_submit", "name": "提交下载器", "kind": "queue", "queue_key": "download_submit"},
         {"key": "queue:download_poll", "name": "下载状态", "kind": "queue", "queue_key": "download_poll"},
-        {"key": "queue:download_artifact_register", "name": "下载产物登记", "kind": "queue", "queue_key": "download_artifact_register"},
-        {"key": "queue:sync_plan", "name": "整理计划", "kind": "queue", "queue_key": "sync_plan"},
         {"key": "queue:local_sync", "name": "本地整理", "kind": "queue", "queue_key": "local_sync"},
         {"key": "queue:nfo", "name": "NFO", "kind": "queue", "queue_key": "nfo"},
         {"key": "queue:local_presence", "name": "本地存在性检查", "kind": "queue", "queue_key": "local_presence"},
@@ -1900,20 +1898,18 @@ async def api_process_runtime_sync() -> dict[str, str]:
                     SELECT DISTINCT ca.entry_id
                     FROM download_artifacts ca
                     JOIN entries e ON e.id=ca.entry_id
-                    LEFT JOIN sync_rules sr ON sr.entry_id=ca.entry_id
                     WHERE ca.status='available'
                       AND COALESCE(e.hidden, 0)=0
                       AND e.bangumi_id != ''
-                      AND COALESCE(sr.sync_enabled, 0)=1
                     """,
                 ).fetchall()
             ]
         for entry_id in entry_ids:
             queue_entry_sync(entry_id)
-        return f"已启动同步流水线 {len(entry_ids)} 个；本地同步会按 Runtime 自动推进"
+        return f"已启动本地整理流水线 {len(entry_ids)} 个；整理完成后会自动生成 NFO"
 
     operation_id = run_operation("本地整理", run, "正在把下载产物整理到本地媒体库")
-    return {"status": "started", "operation_id": str(operation_id), "message": "本地同步处理已启动"}
+    return {"status": "started", "operation_id": str(operation_id), "message": "本地整理处理已启动"}
 
 
 @app.post("/api/tasks/retry-failed")
@@ -1983,7 +1979,7 @@ async def api_download_release(release_id: int) -> dict[str, str]:
     run_id = start_pipeline(
         pipeline_key,
         trigger_source="manual",
-        first_step_key="download_presence",
+        first_step_key="download_submit",
         subject_type="release",
         subject_id=release_id,
         payload={"release_id": release_id, "entry_id": int(release["entry_id"]), "domain_kind": release["domain_kind"]},

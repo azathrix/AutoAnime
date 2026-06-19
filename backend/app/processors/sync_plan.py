@@ -3,20 +3,15 @@ from __future__ import annotations
 from ..database import connect
 from ..db import get_settings, log
 from ..pipeline_models import ProcessorContext, ProcessorResult
-from ..sync_service import ensure_sync_rule, local_episode_path, normalize_local_target_path
+from ..sync_service import local_episode_path, normalize_local_target_path
 
 
 async def process_sync_plan(context: ProcessorContext, payload: dict) -> ProcessorResult:
     entry_id = context.subject_id if context.subject_type == "entry" else int(payload.get("entry_id") or 0)
     if entry_id <= 0:
-        return ProcessorResult.terminal("同步计划处理器缺少 entry_id")
+        return ProcessorResult.terminal("本地整理计划处理器缺少 entry_id")
     settings = get_settings()
-    ensure_sync_rule(entry_id, settings)
     with connect() as conn:
-        rule = conn.execute("SELECT sync_enabled FROM sync_rules WHERE entry_id=?", (entry_id,)).fetchone()
-        if not rule or not int(rule["sync_enabled"] or 0):
-            log("info", f"同步计划跳过: entry_id={entry_id} reason=本地同步未开启")
-            return ProcessorResult.skipped("本地同步未开启，跳过同步计划", data={"entry_id": entry_id})
         rows = conn.execute(
             """
             SELECT ca.*, e.display_title, e.title_cn, e.title_raw, e.season_number, e.year,
@@ -29,7 +24,7 @@ async def process_sync_plan(context: ProcessorContext, payload: dict) -> Process
             (entry_id,),
         ).fetchall()
     if not rows:
-        log("info", f"整理计划等待: entry_id={entry_id} reason=暂无可整理下载产物")
+        log("info", f"本地整理计划等待: entry_id={entry_id} reason=暂无可整理下载产物")
         return ProcessorResult.skipped("已开启本地整理；下载完成后会自动整理", data={"entry_id": entry_id})
 
     next_tasks: list[dict] = []
@@ -49,11 +44,11 @@ async def process_sync_plan(context: ProcessorContext, payload: dict) -> Process
         )
         log(
             "info",
-            f"同步计划生成内存任务: entry_id={entry_id} download_artifact_id={row['id']} "
+            f"本地整理计划生成内存任务: entry_id={entry_id} download_artifact_id={row['id']} "
             f"episode={row['episode_number']} target={target}",
         )
     return ProcessorResult.success(
-        f"已生成本地同步内存任务: {len(next_tasks)} 条",
+        f"已生成本地整理内存任务: {len(next_tasks)} 条",
         data={"entry_id": entry_id, "created": len(next_tasks)},
         next_tasks=next_tasks,
     )

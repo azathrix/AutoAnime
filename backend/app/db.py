@@ -138,11 +138,8 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
             ("seasonal_merge", "seasonal_merge"),
             ("season_backfill", "backfill"),
             ("release_selection", "selection"),
-            ("download_presence", "download_presence"),
             ("download_submit", "download_submit"),
             ("download_poll", "download_poll"),
-            ("download_artifact_register", "download_artifact_register"),
-            ("sync_plan", "sync_plan"),
             ("local_sync", "local_sync"),
             ("nfo_generate", "nfo"),
             ("local_presence", "local_presence"),
@@ -153,11 +150,8 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
             ("bangumi_metadata", "metadata"),
             ("library_merge", "library_merge"),
             ("release_selection", "selection"),
-            ("download_presence", "download_presence"),
             ("download_submit", "download_submit"),
             ("download_poll", "download_poll"),
-            ("download_artifact_register", "download_artifact_register"),
-            ("sync_plan", "sync_plan"),
             ("local_sync", "local_sync"),
             ("nfo_generate", "nfo"),
         ],
@@ -166,8 +160,8 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
             ("identity_match", "identity_match"),
             ("bangumi_metadata", "metadata"),
             ("library_merge", "library_merge"),
-            ("download_artifact_register", "download_artifact_register"),
-            ("sync_plan", "sync_plan"),
+            ("local_sync", "local_sync"),
+            ("nfo_generate", "nfo"),
         ],
     }
     processor_concurrency = {
@@ -227,7 +221,8 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
                     (pipeline_id, step_key, next_step, ts, ts),
                 )
         special_transitions = [
-            ("download_presence", "skipped", "sync_plan"),
+            ("download_submit", "skipped", "local_sync"),
+            ("download_poll", "skipped", "local_sync"),
         ]
         for from_step, result_status, to_step in special_transitions:
             step_keys = {step_key for step_key, _ in steps}
