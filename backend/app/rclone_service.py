@@ -222,12 +222,12 @@ async def list_files(settings: dict[str, str], path: str, recursive: bool = True
             continue
         item_path = str(item.get("Path") or item.get("Name") or "")
         name = str(item.get("Name") or Path(item_path).name)
-        remote_path = f"{root}/{item_path}".replace("//", "/") if item_path else f"{root}/{name}"
+        item_remote_path = f"{root}/{item_path}".replace("//", "/") if item_path else f"{root}/{name}"
         result.append(
             {
-                "id": item.get("ID") or item.get("Id") or item.get("id") or remote_path,
+                "id": item.get("ID") or item.get("Id") or item.get("id") or item_remote_path,
                 "name": name,
-                "remote_path": remote_path,
+                "remote_path": item_remote_path,
                 "size": item.get("Size") or 0,
                 "is_dir": bool(item.get("IsDir")),
                 "raw": item,
