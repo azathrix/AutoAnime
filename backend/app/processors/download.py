@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from .. import rclone_service
 from ..database import connect
 from ..db import get_settings, log, now
+from ..downloader_service import list_tasks, needs_poll, provider_key, submit_download
 from ..library import render_episode_name, target_dir
-from ..pikpak_service import list_offline_tasks, submit_offline_download
 from ..pipeline_models import ProcessorContext, ProcessorResult
 from ..scanner import extract_file_id, extract_task_id, is_rate_limited_error, retry_after_time
 from ..sync_service import (
@@ -45,7 +44,7 @@ def _submission_for_release(release_id: int):
             SELECT cs.*
             FROM download_jobs cs
             JOIN releases r ON r.entry_id=cs.entry_id AND r.episode_number=cs.episode_number
-            WHERE r.id=? AND cs.provider='pikpak'
+            WHERE r.id=?
             LIMIT 1
             """,
             (release_id,),
@@ -64,6 +63,7 @@ def _upsert_submission(
     last_error: str = "",
 ) -> None:
     ts = now()
+    provider = provider_key(get_settings())
     with connect() as conn:
         conn.execute(
             """
@@ -71,7 +71,7 @@ def _upsert_submission(
               (series_id, entry_id, episode_number, release_id, provider, download_task_id, status,
                attempts, submission_id, provider_file_id, target_dir, normalized_name,
                retry_after, last_error, created_at, updated_at, last_seen_at)
-            VALUES (?, ?, ?, ?, 'pikpak', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(entry_id, episode_number, provider) DO UPDATE SET
               release_id=excluded.release_id,
               series_id=excluded.series_id,
@@ -91,6 +91,7 @@ def _upsert_submission(
                 int(release["entry_id"] or 0),
                 int(release["episode_number"] or 0),
                 int(release["id"]),
+                provider,
                 synthetic_task_id(f"release:{int(release['id'])}"),
                 status,
                 submission_id,
@@ -131,7 +132,7 @@ async def process_download_presence(context: ProcessorContext, payload: dict) ->
             """
             SELECT id, artifact_name, provider_file_id
             FROM download_artifacts
-            WHERE release_id=? OR (entry_id=? AND episode_number=? AND provider='pikpak')
+            WHERE release_id=? OR (entry_id=? AND episode_number=?)
             ORDER BY id ASC
             LIMIT 1
             """,
@@ -300,7 +301,7 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
         normalized_name=remote_name,
     )
     try:
-        result = await submit_offline_download(settings, source, remote_target, remote_name)
+        result = await submit_download(settings, source, remote_target, remote_name)
         task_id = extract_task_id(result) if isinstance(result, dict) else ""
         file_id = extract_file_id(result) if isinstance(result, dict) else ""
     except Exception as exc:
@@ -320,7 +321,7 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
         )
         return ProcessorResult.retryable(message, retry_after)
 
-    status = "completed" if file_id and not task_id and not rclone_service.enabled(settings) else "submitted"
+    status = "completed" if file_id and not task_id and not needs_poll(settings) else "submitted"
     _upsert_submission(
         release=release,
         status=status,
@@ -366,17 +367,17 @@ async def process_download_poll(context: ProcessorContext, payload: dict) -> Pro
     message = ""
     try:
         if status != "completed":
-            if rclone_service.enabled(settings):
+            if needs_poll(settings):
                 matched = await find_existing_remote_episode(settings, remote_target, remote_name, int(release["episode_number"] or 0))
                 if matched:
                     file_id = download_file_id(matched)
                     status = "completed"
                 else:
-                    message = "rclone 已提交，目标目录暂未发现完成文件"
+                    message = "下载器已提交，目标目录暂未发现完成文件"
             elif file_id and not str(submission["submission_id"] or ""):
                 status = "completed"
             else:
-                remote_tasks = await list_offline_tasks(settings)
+                remote_tasks = await list_tasks(settings)
                 remote = next((item for item in remote_tasks if item.get("id") == submission["submission_id"]), None)
                 if not remote:
                     message = "PikPak 暂未返回该离线任务，等待后重试"

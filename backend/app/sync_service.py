@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import asyncio
-import shutil
 import re
 import zlib
-from pathlib import Path, PurePosixPath
-
-import httpx
+from pathlib import Path
 
 from .database import connect
+from .downloader_service import download_to_local, list_remote_files, provider_key, remote_file_id
 from .db import log, now
-from .library import local_library_root, render_episode_name, render_season_dir, render_series_dir, target_dir
+from .library import local_library_root, render_episode_name, render_season_dir, render_series_dir
 from .parser import normalize_title_key, parse_episode
-from .pikpak_service import get_cloud_download_url, list_cloud_files
-from . import rclone_service
 
 
 
@@ -112,10 +107,8 @@ async def find_existing_remote_episode(
     expected_name: str,
     episode_number: int,
 ) -> dict | None:
-    if not rclone_service.enabled(settings) or not target_directory:
-        return None
     try:
-        files = await rclone_service.list_files(settings, target_directory, recursive=False)
+        files = await list_remote_files(settings, target_directory, recursive=False)
     except Exception as exc:
         if "directory not found" in str(exc).lower():
             return None
@@ -135,7 +128,7 @@ async def find_existing_remote_episode(
 
 
 def download_file_id(item: dict) -> str:
-    return str(item.get("id") or item.get("file_id") or item.get("fileId") or "")
+    return remote_file_id(item)
 
 
 def synthetic_task_id(file_id: str) -> int:
@@ -268,6 +261,7 @@ def ensure_library_entry_for_reference(
 
 
 def upsert_scanned_download_artifact(item: dict, entry: dict, settings: dict[str, str]) -> int | None:
+    provider = provider_key(settings)
     file_id = download_file_id(item)
     name = str(item.get("name") or Path(str(item.get("remote_path") or "")).name)
     path = str(item.get("remote_path") or name)
@@ -333,8 +327,8 @@ def upsert_scanned_download_artifact(item: dict, entry: dict, settings: dict[str
             return None
         ts = now()
         existing = conn.execute(
-            "SELECT id FROM download_artifacts WHERE provider='pikpak' AND provider_file_id=?",
-            (file_id,),
+            "SELECT id FROM download_artifacts WHERE provider=? AND provider_file_id=?",
+            (provider, file_id),
         ).fetchone()
         if existing:
             conn.execute(
@@ -352,7 +346,7 @@ def upsert_scanned_download_artifact(item: dict, entry: dict, settings: dict[str
                 INSERT INTO download_artifacts
                   (task_id, release_id, series_id, entry_id, episode_number, provider, provider_file_id,
                    remote_path, artifact_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?)
                 """,
                 (
                     synthetic_task_id(file_id),
@@ -360,6 +354,7 @@ def upsert_scanned_download_artifact(item: dict, entry: dict, settings: dict[str
                     series_id,
                     entry_id,
                     episode_number,
+                    provider,
                     file_id,
                     path,
                     name,
@@ -372,6 +367,7 @@ def upsert_scanned_download_artifact(item: dict, entry: dict, settings: dict[str
 
 
 def upsert_download_artifact_for_release(release_id: int, item: dict, settings: dict[str, str]) -> int | None:
+    provider = provider_key(settings)
     file_id = download_file_id(item)
     name = str(item.get("name") or Path(str(item.get("remote_path") or "")).name)
     path = str(item.get("remote_path") or name)
@@ -389,18 +385,18 @@ def upsert_download_artifact_for_release(release_id: int, item: dict, settings: 
         provider_file_id = file_id or f"rclone:{path}"
         task_id = synthetic_task_id(provider_file_id)
         existing = conn.execute(
-            "SELECT id FROM download_artifacts WHERE provider='pikpak' AND provider_file_id=?",
-            (provider_file_id,),
+            "SELECT id FROM download_artifacts WHERE provider=? AND provider_file_id=?",
+            (provider, provider_file_id),
         ).fetchone()
         existing_by_episode = conn.execute(
             """
             SELECT id
             FROM download_artifacts
-            WHERE entry_id=? AND episode_number=? AND provider='pikpak'
+            WHERE entry_id=? AND episode_number=? AND provider=?
             ORDER BY id ASC
             LIMIT 1
             """,
-            (release["entry_id"], release["episode_number"]),
+            (release["entry_id"], release["episode_number"], provider),
         ).fetchone()
         existing_asset = existing or existing_by_episode
         if existing_asset:
@@ -437,7 +433,7 @@ def upsert_download_artifact_for_release(release_id: int, item: dict, settings: 
                 INSERT INTO download_artifacts
                   (task_id, release_id, series_id, entry_id, episode_number, provider, provider_file_id,
                    remote_path, artifact_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'pikpak', ?, ?, ?, 'available', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                   release_id=excluded.release_id,
                   series_id=excluded.series_id,
@@ -455,6 +451,7 @@ def upsert_download_artifact_for_release(release_id: int, item: dict, settings: 
                     series_id,
                     release["entry_id"],
                     release["episode_number"],
+                    provider,
                     provider_file_id,
                     path,
                     name,
@@ -472,7 +469,7 @@ def upsert_download_artifact_for_release(release_id: int, item: dict, settings: 
 
 
 async def scan_remote_library(settings: dict[str, str]) -> tuple[int, int]:
-    files = await list_cloud_files(settings, settings.get("library_root") or "/Anime")
+    files = await list_remote_files(settings, settings.get("library_root") or "/Anime")
     with connect() as conn:
         entry_rows = [
             dict(row)
@@ -513,30 +510,7 @@ async def scan_remote_library(settings: dict[str, str]) -> tuple[int, int]:
 
 
 async def download_remote_file_to_local(file_id: str, source: str, target: str, settings: dict[str, str], progress_cb=None) -> None:
-    target_path = Path(target)
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if rclone_service.enabled(settings) and source:
-        await rclone_service.copy_to_local(settings, source, target, progress_cb=progress_cb)
-        return
-
-    if file_id:
-        url = await get_cloud_download_url(settings, file_id)
-        proxy = settings.get("pikpak_proxy") or None
-        async with httpx.AsyncClient(proxy=proxy, timeout=None, follow_redirects=True) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                with target_path.open("wb") as output:
-                    async for chunk in response.aiter_bytes():
-                        if chunk:
-                            output.write(chunk)
-        return
-
-    source_path = Path(source)
-    target_path = Path(target)
-    if not source_path.exists():
-        raise RuntimeError("缺少下载文件 ID，且远端路径不是本机可访问文件")
-    shutil.copy2(source_path, target_path)
+    await download_to_local(settings, file_id, source, target, progress_cb=progress_cb)
 
 
 def cancel_sync_for_entry(entry_id: int) -> tuple[int, str]:
