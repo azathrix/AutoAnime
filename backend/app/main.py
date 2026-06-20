@@ -21,6 +21,7 @@ from .config import APP_DIR
 from .database import connect
 from .db import clear_runtime_data, diagnostics, get_runtime_generation, get_settings, init_db, log, merge_duplicate_series, now, save_settings
 from .episode_jobs import build_episode_jobs
+from .import_service import preview_local_import, preview_torrent_import
 from .queue_bridge import register_queue_trigger
 from .runtime_store import runtime_store
 from .library import bool_setting
@@ -103,6 +104,18 @@ class LibraryImportPayload(BaseModel):
     query: str = ""
     magnet: str = ""
     source_ref: str = ""
+
+
+class LocalImportPreviewPayload(BaseModel):
+    root_path: str
+    limit: int = 200
+
+
+class TorrentImportPreviewPayload(BaseModel):
+    title: str = ""
+    magnet: str = ""
+    torrent_url: str = ""
+    page_url: str = ""
 
 
 class MediaLibraryPayload(BaseModel):
@@ -1540,6 +1553,31 @@ async def api_episode_jobs(domain_kind: str = Query("")) -> list[dict[str, Any]]
     return await run_in_threadpool(
         lambda: build_episode_jobs(runtime_store.snapshot(), domain_kind=domain_kind, limit=500)
     )
+
+
+@app.post("/api/import/local/preview")
+async def api_import_local_preview(payload: LocalImportPreviewPayload) -> dict[str, Any]:
+    try:
+        items = await run_in_threadpool(
+            lambda: preview_local_import(payload.root_path.strip(), limit=payload.limit)
+        )
+    except FileNotFoundError as exc:
+        return {"status": "not_found", "message": str(exc), "items": []}
+    return {"status": "completed", "count": len(items), "items": items}
+
+
+@app.post("/api/import/torrent/preview")
+async def api_import_torrent_preview(payload: TorrentImportPreviewPayload) -> dict[str, Any]:
+    try:
+        item = preview_torrent_import(
+            title=payload.title.strip(),
+            magnet=payload.magnet.strip(),
+            torrent_url=payload.torrent_url.strip(),
+            page_url=payload.page_url.strip(),
+        )
+    except ValueError as exc:
+        return {"status": "invalid", "message": str(exc), "item": {}}
+    return {"status": "completed", "item": item}
 
 
 @app.get("/api/dashboard/stream")

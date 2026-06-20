@@ -14,6 +14,7 @@
         <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon> 新番</button>
         <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
         <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧</button>
+        <button :class="{ active: view === 'import' }" @click="view = 'import'"><el-icon><Search /></el-icon> 导入</button>
         <div class="nav-caption">系统</div>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
@@ -381,13 +382,13 @@
               <h3>{{ item.work_display_title || item.entry_display_title || item.display_title || item.title_cn }}</h3>
               <p>{{ item.entry_scope_label || item.entry_secondary_title || item.bangumi_id || 'Season 01' }}</p>
               <div class="tagline">
-                <el-tag size="small" :type="watchStatusTag(item)">{{ item.watch_status_label || '未缓存' }}</el-tag>
+                <el-tag size="small" :type="runtimeTag(item)">{{ runtimeLabel(item) }}</el-tag>
                 <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
                 <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
                 <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
               </div>
-              <p v-if="seasonalStatusSummary(item)" class="queue-note">{{ seasonalStatusSummary(item) }}</p>
-              <el-progress :percentage="progressOf(item)" :show-text="false" />
+              <p v-if="runtimeSummary(item)" class="queue-note">{{ runtimeSummary(item) }}</p>
+              <el-progress :percentage="runtimeProgress(item)" :show-text="false" />
             </div>
           </article>
         </div>
@@ -497,17 +498,70 @@
                   <h3>{{ item.work_display_title || item.entry_display_title || item.display_title || item.title_cn }}</h3>
                   <p>{{ item.entry_scope_label || item.entry_secondary_title || 'Season 01' }} · Bangumi: {{ item.bangumi_id || '未关联' }}</p>
                   <div class="tagline">
-                    <el-tag size="small" :type="watchStatusTag(item)">{{ item.watch_status_label || '未缓存' }}</el-tag>
+                    <el-tag size="small" :type="runtimeTag(item)">{{ runtimeLabel(item) }}</el-tag>
                     <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
                     <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
                     <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
                   </div>
-                  <el-progress :percentage="libraryProgressOf(item)" :show-text="false" />
+                  <p v-if="runtimeSummary(item)" class="queue-note">{{ runtimeSummary(item) }}</p>
+                  <el-progress :percentage="runtimeProgress(item)" :show-text="false" />
                 </div>
               </article>
             </div>
           </section>
         </div>
+      </section>
+
+      <section v-if="view === 'import'" class="import-page">
+        <el-card class="import-panel">
+          <template #header>
+            <div class="card-header-row">
+              <div>
+                <strong>导入向导</strong>
+                <span>先解析资源候选，后续会接入匹配元数据、选择媒体库和正式入库</span>
+              </div>
+            </div>
+          </template>
+          <el-tabs v-model="importTab">
+            <el-tab-pane label="本地目录" name="local">
+              <div class="import-form-row">
+                <el-input v-model="localImportPath" placeholder="/volume1/media/anime 或 单个视频文件路径" />
+                <el-button type="primary" :loading="importLoading" @click="previewLocalImport">预览本地文件</el-button>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="磁链 / 种子" name="torrent">
+              <div class="import-form-grid">
+                <el-input v-model="torrentImport.title" placeholder="发布标题，例如 [LoliHouse] Test - 01 [1080p][简繁内封字幕]" />
+                <el-input v-model="torrentImport.magnet" placeholder="magnet 链接" />
+                <el-input v-model="torrentImport.torrent_url" placeholder="torrent URL，可选" />
+                <el-button type="primary" :loading="importLoading" @click="previewTorrentImport">预览磁链</el-button>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </el-card>
+        <el-card class="import-panel">
+          <template #header>
+            <div class="card-header-row">
+              <div>
+                <strong>候选资源</strong>
+                <span>这里只做解析预览，不会写数据库</span>
+              </div>
+              <el-tag type="info">{{ importCandidates.length }} 条</el-tag>
+            </div>
+          </template>
+          <el-table :data="importCandidates" height="520" empty-text="暂无候选，先选择一种导入方式预览">
+            <el-table-column prop="source_type" label="来源" width="90" />
+            <el-table-column prop="series_title" label="标题" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="episode_number" label="集" width="70" />
+            <el-table-column prop="subtitle_group" label="字幕组" width="130" show-overflow-tooltip />
+            <el-table-column prop="resolution" label="分辨率" width="100" />
+            <el-table-column prop="language" label="语言" width="90" />
+            <el-table-column label="字幕形式" width="100">
+              <template #default="{ row }">{{ subtitleFormatText(row.subtitle_format) }}</template>
+            </el-table-column>
+            <el-table-column prop="source_uri" label="路径 / 链接" min-width="300" show-overflow-tooltip />
+          </el-table>
+        </el-card>
       </section>
 
       <section v-if="view === 'settings'">
@@ -639,6 +693,7 @@
       <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon><b>新番</b></button>
       <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon><b>日历</b></button>
       <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon><b>番剧</b></button>
+      <button :class="{ active: view === 'import' }" @click="view = 'import'"><el-icon><Search /></el-icon><b>导入</b></button>
       <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon><b>设置</b></button>
     </nav>
 
@@ -785,6 +840,16 @@ const keyword = ref('')
 const seriesFilter = ref('全部')
 const libraryYearFilter = ref('')
 const libraryScopeFilter = ref('')
+const importTab = ref('local')
+const localImportPath = ref('')
+const importLoading = ref(false)
+const importCandidates = ref([])
+const torrentImport = reactive({
+  title: '',
+  magnet: '',
+  torrent_url: '',
+  page_url: ''
+})
 const entryDrawerOpen = ref(false)
 const selectedEntryDetail = ref(null)
 const selectedEntryDomain = ref('seasonal')
@@ -819,6 +884,7 @@ const pageTitle = computed(() => ({
   seasonal: '新番',
   calendar: '日历',
   library: '番剧',
+  import: '导入',
   settings: '设置中心'
 }[view.value]))
 
@@ -844,6 +910,19 @@ const activeDetailRows = computed(() => selectedEntryDomain.value === 'library' 
 const downloadArtifactTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.download_artifact_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
 const episodeJobRows = computed(() => (dashboard.episode_jobs || []).slice(0, 20))
+const episodeJobsByEntry = computed(() => {
+  const groups = new Map()
+  for (const job of dashboard.episode_jobs || []) {
+    const key = Number(job.entry_id || 0)
+    if (!key) continue
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(job)
+  }
+  for (const rows of groups.values()) {
+    rows.sort((a, b) => Number(b.episode_number || 0) - Number(a.episode_number || 0))
+  }
+  return groups
+})
 const seasonalCalendarCards = computed(() => dashboard.seasonal_sync_calendar || [])
 const weekStart = computed(() => startOfWeek(calendarWeek.value ? new Date(calendarWeek.value) : new Date()))
 const weekDays = computed(() => {
@@ -963,16 +1042,17 @@ const filteredSeries = computed(() => {
   const text = keyword.value.toLowerCase()
   const source = view.value === 'library' ? libraryRows.value : seasonalRows.value
   return source.filter(item => {
+    const runtime = entryRuntime(item)
     const matched = !text || `${item.entry_display_title || item.display_title || item.title_cn} ${item.work_display_title || item.work_title || item.title_root || ''} ${item.entry_scope_label || ''} ${item.bangumi_id}`.toLowerCase().includes(text)
     if (!matched) return false
     if (view.value === 'library') {
       if (libraryYearFilter.value && Number(item.year || 0) !== Number(libraryYearFilter.value)) return false
       if (libraryScopeFilter.value && String(item.entry_scope_label || item.entry_badge_text || '') !== String(libraryScopeFilter.value)) return false
     }
-    if (seriesFilter.value === '可观看') return item.watch_status === 'ready' || Number(item.local_asset_count || 0) > 0
-    if (seriesFilter.value === '处理中') return item.watch_status === 'processing'
-    if (seriesFilter.value === '需处理') return item.watch_status === 'warning' || !item.bangumi_id || Boolean(item.has_failed_task)
-    if (seriesFilter.value === '未缓存') return item.watch_status === 'unavailable' || Number(item.local_asset_count || 0) <= 0
+    if (seriesFilter.value === '可观看') return runtime.ready_count > 0
+    if (seriesFilter.value === '处理中') return ['running', 'pending', 'waiting'].includes(runtime.status) && runtime.ready_count <= 0
+    if (seriesFilter.value === '需处理') return runtime.status === 'failed' || !item.bangumi_id || Boolean(item.has_failed_task)
+    if (seriesFilter.value === '未缓存') return runtime.ready_count <= 0
     return true
   })
 })
@@ -998,16 +1078,20 @@ const libraryWorks = computed(() => {
       })
     }
     const group = groups.get(key)
+    const runtime = entryRuntime(item)
     group.entry_count += 1
     group.release_count += Number(item.release_count || 0)
     group.download_artifact_count += Number(item.download_artifact_count || 0)
-    group.local_asset_count += Number(item.local_asset_count || 0)
-    if (group.local_asset_count > 0) {
+    group.local_asset_count += Math.max(Number(item.local_asset_count || 0), runtime.ready_count)
+    if (runtime.status === 'failed') {
+      group.watch_status = 'warning'
+      group.watch_status_label = '需处理'
+    } else if (group.local_asset_count > 0 && group.watch_status !== 'warning') {
       group.watch_status = 'ready'
       group.watch_status_label = `可观看 ${group.local_asset_count} 集`
-    } else if (group.download_artifact_count > 0 || group.release_count > 0) {
+    } else if (['running', 'waiting', 'pending'].includes(runtime.status) || group.download_artifact_count > 0 || group.release_count > 0) {
       group.watch_status = 'processing'
-      group.watch_status_label = '处理中'
+      group.watch_status_label = runtime.label || '处理中'
     }
     if (!group.poster_url && item.poster_url) group.poster_url = item.poster_url
     if (!group.year_label && item.year) group.year_label = `${item.year}`
@@ -1042,6 +1126,62 @@ function watchStatusTag(item) {
   if (status === 'warning') return 'danger'
   if (status === 'processing') return 'warning'
   return 'info'
+}
+
+function entryRuntime(item) {
+  const entryId = Number(item?.id || item?.entry_id || 0)
+  const jobs = episodeJobsByEntry.value.get(entryId) || []
+  const latest = jobs[0] || null
+  const readyCount = jobs.filter(job => job.stage === 'done' || job.status === 'completed').length
+  const failed = jobs.find(job => job.status === 'failed')
+  const active = jobs.find(job => ['running', 'waiting', 'pending'].includes(String(job.status || '')))
+  const status = failed ? 'failed' : active ? String(active.status || 'pending') : readyCount > 0 ? 'completed' : 'idle'
+  const label = failed
+    ? '需处理'
+    : active
+      ? (active.stage_label || '处理中')
+      : readyCount > 0
+        ? `可观看 ${readyCount} 集`
+        : '未缓存'
+  const reason = failed?.reason || active?.reason || latest?.reason || ''
+  return {
+    jobs,
+    latest,
+    ready_count: readyCount,
+    total_count: jobs.length,
+    status,
+    label,
+    reason,
+  }
+}
+
+function runtimeTag(item) {
+  const status = entryRuntime(item).status
+  if (status === 'failed') return 'danger'
+  if (status === 'running' || status === 'waiting' || status === 'pending') return 'warning'
+  if (status === 'completed') return 'success'
+  return 'info'
+}
+
+function runtimeLabel(item) {
+  return entryRuntime(item).label
+}
+
+function runtimeSummary(item) {
+  const runtime = entryRuntime(item)
+  if (runtime.latest?.episode_number) {
+    const prefix = `第 ${runtime.latest.episode_number} 集`
+    return runtime.reason ? `${prefix} · ${runtime.reason}` : `${prefix} · ${runtime.label}`
+  }
+  return seasonalStatusSummary(item)
+}
+
+function runtimeProgress(item) {
+  const runtime = entryRuntime(item)
+  if (runtime.total_count > 0) {
+    return Math.min(100, Math.round(runtime.ready_count / runtime.total_count * 100))
+  }
+  return progressOf(item)
 }
 
 function isQueueActive(queue) {
@@ -1203,6 +1343,52 @@ function applyDashboard(nextDashboard) {
   if (!source.some(item => item.key === selectedConsoleSection.value)) {
     const fallback = source[0] || queueListSections.value[0]
     selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
+  }
+}
+
+async function previewLocalImport() {
+  if (!localImportPath.value.trim()) {
+    ElMessage.warning('请输入本地目录或文件路径')
+    return
+  }
+  importLoading.value = true
+  try {
+    const result = await postAction('/import/local/preview', {
+      root_path: localImportPath.value.trim(),
+      limit: 300
+    })
+    importCandidates.value = result.items || []
+    if (result.status === 'not_found') {
+      ElMessage.warning(result.message || '路径不存在')
+    } else {
+      ElMessage.success(`解析到 ${importCandidates.value.length} 个候选`)
+    }
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  } finally {
+    importLoading.value = false
+  }
+}
+
+async function previewTorrentImport() {
+  importLoading.value = true
+  try {
+    const result = await postAction('/import/torrent/preview', {
+      title: torrentImport.title,
+      magnet: torrentImport.magnet,
+      torrent_url: torrentImport.torrent_url,
+      page_url: torrentImport.page_url
+    })
+    importCandidates.value = result.item && Object.keys(result.item).length ? [result.item] : []
+    if (result.status === 'invalid') {
+      ElMessage.warning(result.message || '资源链接无效')
+    } else {
+      ElMessage.success('解析完成')
+    }
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  } finally {
+    importLoading.value = false
   }
 }
 

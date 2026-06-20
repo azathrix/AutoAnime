@@ -909,6 +909,27 @@ h1 {
   gap: 14px;
 }
 
+.import-page {
+  display: grid;
+  gap: 14px;
+}
+
+.import-panel {
+  min-width: 0;
+}
+
+.import-form-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.import-form-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
 .toolbar {
   align-items: center;
   background: #fff;
@@ -1262,7 +1283,7 @@ h1 {
     box-shadow: 0 18px 48px rgba(15, 23, 42, .16);
     display: grid;
     gap: 4px;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     left: 10px;
     padding: 6px;
     position: fixed;
@@ -1306,6 +1327,8 @@ h1 {
   .log-layout,
   .console-workbench,
   .dashboard-bottom-grid,
+  .import-form-row,
+  .import-form-grid,
   .library-entry-card-grid,
   .detail-summary-grid {
     grid-template-columns: 1fr;
