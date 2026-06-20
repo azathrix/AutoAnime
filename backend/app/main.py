@@ -161,7 +161,7 @@ def enrich_retry_rows(rows: list[Any]) -> list[dict[str, Any]]:
     for row in result:
         retry_seconds = seconds_until(str(row.get("retry_after") or ""))
         row["retry_seconds"] = retry_seconds
-        row["waiting_retry"] = row.get("status") == "pending" and retry_seconds > 0
+        row["waiting_retry"] = row.get("status") == "waiting" or (row.get("status") == "pending" and retry_seconds > 0)
         row["display_title"] = (
             row.get("title_cn")
             or row.get("series_title")
@@ -359,7 +359,9 @@ def summarize_seasonal_entry(
             return result
 
     for task in entry_tasks:
-        if str(task.get("status") or "") != "pending" or not bool(task.get("waiting_retry")):
+        if str(task.get("status") or "") != "waiting" and not (
+            str(task.get("status") or "") == "pending" and bool(task.get("waiting_retry"))
+        ):
             continue
         reason = compact_task_reason(task) or f"剩余 {int(task.get('retry_seconds') or 0)} 秒"
         result["status_category"] = "cooldown"
@@ -1908,7 +1910,7 @@ async def api_process_runtime_sync() -> dict[str, str]:
 async def api_retry_failed() -> dict[str, str]:
     total = 0
     for task in runtime_store.tasks.values():
-        if task.status == "failed":
+        if task.status in {"failed", "waiting"}:
             task.status = "pending"
             task.attempts = 0
             task.retry_at = ""
@@ -1916,9 +1918,9 @@ async def api_retry_failed() -> dict[str, str]:
             task.updated_at = now()
             total += 1
     await runtime_store.bump()
-    log("info", f"已重置 Runtime 失败任务: {total} 个")
+    log("info", f"已重置 Runtime 失败/等待任务: {total} 个")
     trigger_queue("processor", delay=0)
-    return {"status": "started", "count": str(total), "message": f"失败任务已重新入队: {total} 个"}
+    return {"status": "started", "count": str(total), "message": f"失败/等待任务已重新入队: {total} 个"}
 
 
 @app.post("/api/runtime/retry-failed")

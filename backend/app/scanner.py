@@ -12,7 +12,7 @@ from .database import connect
 from .db import get_settings, hide_orphan_series, log, merge_duplicate_series, now
 from .library import bool_setting, parse_entry_labels
 from .metadata import fetch_bangumi_metadata
-from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_year, split_lines
+from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_subtitle_format, parse_year, split_lines
 
 
 async def fetch_entries(settings: dict[str, str]) -> list[ParsedRelease]:
@@ -134,6 +134,7 @@ def parse_mikan_page_releases(html_text: str, mikan_bangumi_id: str) -> list[Par
                 subtitle_group=group_name or parse_group(raw_title),
                 resolution=parse_resolution(raw_title),
                 language=parse_language(raw_title),
+                subtitle_format=parse_subtitle_format(raw_title),
                 bangumi_id="",
                 year=parse_year(raw_title, published_at),
                 torrent_url=torrent_url,
@@ -314,6 +315,7 @@ def coalesce_episode_release(conn, entry_id: int, episode_number: int, item: Par
         "subtitle_group": item.subtitle_group,
         "resolution": item.resolution,
         "language": item.language,
+        "subtitle_format": item.subtitle_format,
         "published_at": item.published_at,
     }
     best_existing = min((dict(row) for row in existing_rows), key=lambda row: release_priority_key(row, settings))
@@ -337,7 +339,7 @@ def coalesce_episode_release(conn, entry_id: int, episode_number: int, item: Par
         """
         UPDATE releases
         SET guid=?, title=?, subtitle_group=?, resolution=?, language=?,
-            torrent_url=?, magnet=?, published_at=?, updated_at=?
+            subtitle_format=?, torrent_url=?, magnet=?, published_at=?, updated_at=?
         WHERE id=?
         """,
         (
@@ -346,6 +348,7 @@ def coalesce_episode_release(conn, entry_id: int, episode_number: int, item: Par
             item.subtitle_group,
             item.resolution,
             item.language,
+            item.subtitle_format,
             item.torrent_url,
             item.magnet,
             item.published_at,
@@ -523,9 +526,9 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
             conn.execute(
                 """
                 INSERT INTO releases
-                  (series_id, entry_id, episode_number, guid, title, subtitle_group, resolution, language,
+                  (series_id, entry_id, episode_number, guid, title, subtitle_group, resolution, language, subtitle_format,
                    torrent_url, magnet, published_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guid) DO UPDATE SET
                   series_id=excluded.series_id,
                   entry_id=excluded.entry_id,
@@ -534,6 +537,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
                   subtitle_group=excluded.subtitle_group,
                   resolution=excluded.resolution,
                   language=excluded.language,
+                  subtitle_format=excluded.subtitle_format,
                   torrent_url=excluded.torrent_url,
                   magnet=excluded.magnet,
                   updated_at=excluded.updated_at
@@ -547,6 +551,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
                     item.subtitle_group,
                     item.resolution,
                     item.language,
+                    item.subtitle_format,
                     item.torrent_url,
                     item.magnet,
                     item.published_at,
@@ -587,9 +592,9 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
             """
             INSERT INTO rss_candidates
               (guid, title, series_title, episode_number, subtitle_group, resolution,
-               language, bangumi_id, mikan_bangumi_id, torrent_url, magnet, page_url, published_at, status,
+               language, subtitle_format, bangumi_id, mikan_bangumi_id, torrent_url, magnet, page_url, published_at, status,
                reason, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
               title=excluded.title,
               series_title=excluded.series_title,
@@ -597,6 +602,7 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
               subtitle_group=excluded.subtitle_group,
               resolution=excluded.resolution,
               language=excluded.language,
+              subtitle_format=excluded.subtitle_format,
               bangumi_id=excluded.bangumi_id,
               mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE rss_candidates.mikan_bangumi_id END,
               torrent_url=excluded.torrent_url,
@@ -615,6 +621,7 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
                 item.subtitle_group,
                 item.resolution,
                 item.language,
+                item.subtitle_format,
                 item.bangumi_id,
                 item.mikan_bangumi_id,
                 item.torrent_url,
@@ -641,6 +648,7 @@ def candidate_to_parsed_release(candidate) -> ParsedRelease:
         subtitle_group=candidate["subtitle_group"],
         resolution=candidate["resolution"],
         language=candidate["language"],
+        subtitle_format=candidate["subtitle_format"] if "subtitle_format" in candidate.keys() else "",
         bangumi_id=candidate["bangumi_id"],
         year=0,
         torrent_url=candidate["torrent_url"],

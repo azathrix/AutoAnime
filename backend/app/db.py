@@ -378,6 +378,7 @@ def init_db() -> None:
                 subtitle_group TEXT NOT NULL DEFAULT '',
                 resolution TEXT NOT NULL DEFAULT '',
                 language TEXT NOT NULL DEFAULT '',
+                subtitle_format TEXT NOT NULL DEFAULT '',
                 torrent_url TEXT NOT NULL DEFAULT '',
                 magnet TEXT NOT NULL DEFAULT '',
                 published_at TEXT NOT NULL DEFAULT '',
@@ -395,6 +396,7 @@ def init_db() -> None:
                 subtitle_group TEXT NOT NULL DEFAULT '',
                 resolution TEXT NOT NULL DEFAULT '',
                 language TEXT NOT NULL DEFAULT '',
+                subtitle_format TEXT NOT NULL DEFAULT '',
                 bangumi_id TEXT NOT NULL DEFAULT '',
                 mikan_bangumi_id TEXT NOT NULL DEFAULT '',
                 torrent_url TEXT NOT NULL DEFAULT '',
@@ -641,11 +643,22 @@ def migrate(conn: sqlite3.Connection) -> None:
     }
     release_additions = {
         "language": "TEXT NOT NULL DEFAULT ''",
+        "subtitle_format": "TEXT NOT NULL DEFAULT ''",
         "entry_id": "INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in release_additions.items():
         if column not in release_columns:
             conn.execute(f"ALTER TABLE releases ADD COLUMN {column} {ddl}")
+    candidate_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(rss_candidates)").fetchall()
+    }
+    candidate_additions = {
+        "subtitle_format": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in candidate_additions.items():
+        if column not in candidate_columns:
+            conn.execute(f"ALTER TABLE rss_candidates ADD COLUMN {column} {ddl}")
     entry_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(entries)").fetchall()
@@ -733,6 +746,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             subtitle_group TEXT NOT NULL DEFAULT '',
             resolution TEXT NOT NULL DEFAULT '',
             language TEXT NOT NULL DEFAULT '',
+            subtitle_format TEXT NOT NULL DEFAULT '',
             bangumi_id TEXT NOT NULL DEFAULT '',
             torrent_url TEXT NOT NULL DEFAULT '',
             magnet TEXT NOT NULL DEFAULT '',
@@ -752,6 +766,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     rss_candidate_additions = {
         "page_url": "TEXT NOT NULL DEFAULT ''",
         "mikan_bangumi_id": "TEXT NOT NULL DEFAULT ''",
+        "subtitle_format": "TEXT NOT NULL DEFAULT ''",
     }
     for column, ddl in rss_candidate_additions.items():
         if column not in rss_candidate_columns:

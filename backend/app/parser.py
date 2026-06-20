@@ -14,6 +14,7 @@ class ParsedRelease:
     subtitle_group: str
     resolution: str
     language: str
+    subtitle_format: str
     bangumi_id: str
     year: int
     torrent_url: str
@@ -145,6 +146,15 @@ def parse_language(title: str) -> str:
     return ""
 
 
+def parse_subtitle_format(title: str) -> str:
+    value = title.lower()
+    if re.search(r"(外挂|外掛|外挂字幕|外掛字幕|softsub|soft\s*sub|\bsrt\b|\bass\b)", value, re.I):
+        return "external"
+    if re.search(r"(内嵌|內嵌|内封|內封|内挂|內掛|内置|內置|硬字幕|hardsub|hard\s*sub|embedded)", value, re.I):
+        return "embedded"
+    return ""
+
+
 def parse_episode(title: str) -> int:
     patterns = [
         r"S\d{1,2}E(\d{1,3})",
@@ -256,6 +266,7 @@ def parse_entry(entry: Any) -> ParsedRelease:
         subtitle_group=parse_group(title),
         resolution=parse_resolution(title),
         language=parse_language(title),
+        subtitle_format=parse_subtitle_format(title),
         bangumi_id=parse_bangumi_id(entry, link, title),
         year=parse_year(title, published),
         torrent_url=torrent_url,

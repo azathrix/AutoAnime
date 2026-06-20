@@ -680,6 +680,9 @@
               <el-table-column prop="subtitle_group" label="字幕组" width="140" />
               <el-table-column prop="resolution" label="分辨率" width="100" />
               <el-table-column prop="language" label="语言" width="90" />
+              <el-table-column prop="subtitle_format" label="字幕形式" width="100">
+                <template #default="{ row }">{{ subtitleFormatText(row.subtitle_format) }}</template>
+              </el-table-column>
               <el-table-column prop="guid" label="GUID" min-width="220" show-overflow-tooltip />
               <el-table-column prop="title" label="发布标题" min-width="260" show-overflow-tooltip />
             </el-table>
@@ -690,8 +693,8 @@
                 <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ taskStatusText(row) }}</el-tag></template>
               </el-table-column>
               <el-table-column prop="target_dir" label="目标目录" min-width="220" show-overflow-tooltip />
-              <el-table-column prop="pikpak_task_id" label="下载任务" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="pikpak_file_id" label="文件 ID" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="submission_id" label="下载任务" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="provider_file_id" label="文件 ID" min-width="180" show-overflow-tooltip />
               <el-table-column prop="last_error" label="错误" min-width="220" show-overflow-tooltip />
               <el-table-column label="下次处理" width="130">
                 <template #default="{ row }">{{ row.waiting_retry ? formatCountdown(row.retry_seconds) : '-' }}</template>
@@ -1048,11 +1051,18 @@ function taskStatusText(row) {
   if (row?.status === 'synced') return '已同步'
   if (row?.status === 'submitted') return '已提交'
   if (row?.status === 'running') return '处理中'
+  if (row?.status === 'waiting') return '等待重试'
   if (row?.status === 'pending' && row?.waiting_retry) return '等待重试'
   if (row?.status === 'pending') return '待处理'
   if (row?.status === 'failed') return '失败'
   if (row?.status === 'superseded') return '已替代'
   return row?.status || ''
+}
+
+function subtitleFormatText(value) {
+  if (value === 'embedded') return '内嵌'
+  if (value === 'external') return '外挂'
+  return '-'
 }
 
 function formatCountdown(seconds) {

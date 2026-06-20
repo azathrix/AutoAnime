@@ -25,7 +25,7 @@ async def process_selection(context: ProcessorContext, payload: dict) -> Process
             {
                 "_subject_type": "release",
                 "_subject_id": release_id,
-                "_dedupe_key": f"cloud-presence:release:{release_id}",
+                "_dedupe_key": f"download:release:{release_id}",
                 "entry_id": entry_id,
                 "release_id": release_id,
             }
