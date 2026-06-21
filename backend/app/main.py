@@ -28,7 +28,7 @@ from .pipeline_orchestrator import run_ready_tasks, start_pipeline
 from .pipeline_runtime import finish_pipeline_run, pipeline_overview, start_pipeline_run, update_pipeline_run
 from .processors import register_builtin_processors
 from .scanner import language_tokens, mark_selected_releases, priority_match, priority_pick, resolve_entry_choice
-from .sync_service import cancel_sync_for_entry, scan_remote_library
+from .sync_service import scan_remote_library
 
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
@@ -777,48 +777,6 @@ def queue_entry_backfill(entry_id: int) -> dict[str, str]:
 def generate_entry_nfo(entry_id: int) -> dict[str, str]:
     generate_nfo_for_entry(entry_id, get_settings())
     return {"status": "generated"}
-
-
-def queue_entry_sync(entry_id: int) -> dict[str, str]:
-    with connect() as conn:
-        entry = conn.execute("SELECT domain_kind FROM entries WHERE id=?", (entry_id,)).fetchone()
-        artifacts = conn.execute(
-            """
-            SELECT id
-            FROM download_artifacts
-            WHERE entry_id=? AND status='available'
-            ORDER BY episode_number ASC, id ASC
-            """,
-            (entry_id,),
-        ).fetchall()
-    if not entry:
-        return {"status": "not_found", "message": "条目不存在"}
-    if not artifacts:
-        return {"status": "skipped", "count": "0", "message": "暂无可整理的下载产物"}
-    run_ids: list[int] = []
-    for artifact in artifacts:
-        run_id = start_pipeline(
-            "media_import",
-            trigger_source="manual",
-            first_step_key="local_sync",
-            subject_type="download_artifact",
-            subject_id=int(artifact["id"]),
-            payload={
-                "download_artifact_id": int(artifact["id"]),
-                "entry_id": entry_id,
-                "domain_kind": entry["domain_kind"],
-            },
-            message="手动本地整理",
-        )
-        run_ids.append(run_id)
-    trigger_queue("processor", delay=0)
-    log("info", f"手动本地整理已启动: entry_id={entry_id} count={len(run_ids)} run_ids={','.join(str(item) for item in run_ids)}")
-    return {"status": "queued", "count": str(len(run_ids)), "message": f"已启动本地整理: {len(run_ids)} 条"}
-
-
-def cancel_entry_sync(entry_id: int) -> dict[str, str]:
-    count, message = cancel_sync_for_entry(entry_id)
-    return {"status": "completed", "count": str(count), "message": message}
 
 
 def ready_count_runtime_processor() -> int:
@@ -2240,31 +2198,6 @@ async def api_backfill_seasonal_entry(entry_id: int) -> dict[str, str]:
     return queue_entry_backfill(entry_id)
 
 
-@app.post("/api/sync/tasks/process")
-async def api_process_runtime_sync() -> dict[str, str]:
-    async def run() -> str:
-        with connect() as conn:
-            entry_ids = [
-                int(row["entry_id"])
-                for row in conn.execute(
-                    """
-                    SELECT DISTINCT ca.entry_id
-                    FROM download_artifacts ca
-                    JOIN entries e ON e.id=ca.entry_id
-                    WHERE ca.status='available'
-                      AND COALESCE(e.hidden, 0)=0
-                      AND e.bangumi_id != ''
-                    """,
-                ).fetchall()
-            ]
-        for entry_id in entry_ids:
-            queue_entry_sync(entry_id)
-        return f"已启动本地整理流水线 {len(entry_ids)} 个；整理完成后会自动生成 NFO"
-
-    operation_id = run_operation("本地整理", run, "正在把下载产物整理到本地媒体库")
-    return {"status": "started", "operation_id": str(operation_id), "message": "本地整理处理已启动"}
-
-
 @app.post("/api/tasks/retry-failed")
 async def api_retry_failed() -> dict[str, str]:
     total = 0
@@ -2356,16 +2289,6 @@ async def api_generate_seasonal_nfo(entry_id: int) -> dict[str, str]:
     return generate_entry_nfo(entry_id)
 
 
-@app.post("/api/seasonal/{entry_id}/sync")
-async def api_sync_seasonal_entry(entry_id: int) -> dict[str, str]:
-    return queue_entry_sync(entry_id)
-
-
-@app.post("/api/seasonal/{entry_id}/sync/cancel")
-async def api_cancel_sync_seasonal_entry(entry_id: int) -> dict[str, str]:
-    return cancel_entry_sync(entry_id)
-
-
 @app.post("/api/library/{entry_id}/metadata")
 async def api_refresh_library_metadata(entry_id: int) -> dict[str, str]:
     return start_entry_metadata_refresh(entry_id)
@@ -2374,16 +2297,6 @@ async def api_refresh_library_metadata(entry_id: int) -> dict[str, str]:
 @app.post("/api/library/{entry_id}/nfo")
 async def api_generate_library_nfo(entry_id: int) -> dict[str, str]:
     return generate_entry_nfo(entry_id)
-
-
-@app.post("/api/library/{entry_id}/sync")
-async def api_sync_library_entry(entry_id: int) -> dict[str, str]:
-    return queue_entry_sync(entry_id)
-
-
-@app.post("/api/library/{entry_id}/sync/cancel")
-async def api_cancel_sync_library_entry(entry_id: int) -> dict[str, str]:
-    return cancel_entry_sync(entry_id)
 
 
 frontend_dir = APP_DIR.parent / "frontend_dist"
