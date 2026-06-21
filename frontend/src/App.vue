@@ -14,6 +14,8 @@
         <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon> 新番</button>
         <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
         <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧</button>
+        <button :class="{ active: view === 'movies' }" @click="view = 'movies'"><el-icon><Collection /></el-icon> 电影</button>
+        <button :class="{ active: view === 'tv' }" @click="view = 'tv'"><el-icon><Collection /></el-icon> 电视剧</button>
         <div class="nav-caption">系统</div>
         <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon> 日志</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
@@ -307,10 +309,64 @@
         </div>
       </section>
 
-      <section v-if="view === 'seasonal'" class="library seasonal-page">
-        <div class="toolbar">
+      <section v-if="view === 'seasonal'" class="library seasonal-page media-page">
+        <div class="toolbar media-toolbar">
           <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
-          <el-segmented v-model="seriesFilter" :options="['全部', '可观看', '处理中', '需处理', '未缓存']" />
+          <div class="toolbar-spacer"></div>
+          <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
+          <el-button type="primary" @click="openRssDialog">添加 RSS 订阅</el-button>
+        </div>
+        <div v-if="advancedFilterOpen" class="filter-board">
+          <div class="filter-row">
+            <span>年份</span>
+            <button :class="{ active: !libraryYearFilter }" @click="libraryYearFilter = ''">全部</button>
+            <button
+              v-for="year in currentYearOptions"
+              :key="year"
+              :class="{ active: Number(libraryYearFilter || 0) === Number(year) }"
+              @click="libraryYearFilter = Number(year)"
+            >{{ year }}</button>
+          </div>
+          <div class="filter-row">
+            <span>类型</span>
+            <button :class="{ active: !libraryMediaTypeFilter }" @click="libraryMediaTypeFilter = ''">全部</button>
+            <button
+              v-for="type in currentMediaTypeOptions"
+              :key="type"
+              :class="{ active: libraryMediaTypeFilter === type }"
+              @click="libraryMediaTypeFilter = type"
+            >{{ mediaTypeLabel(type) }}</button>
+          </div>
+          <div class="filter-row">
+            <span>地区</span>
+            <button :class="{ active: !libraryRegionFilter }" @click="libraryRegionFilter = ''">全部</button>
+            <button
+              v-for="region in currentRegionOptions"
+              :key="region"
+              :class="{ active: libraryRegionFilter === region }"
+              @click="libraryRegionFilter = region"
+            >{{ regionLabel(region) }}</button>
+          </div>
+          <div class="filter-row">
+            <span>季度</span>
+            <button :class="{ active: !libraryScopeFilter }" @click="libraryScopeFilter = ''">全部</button>
+            <button
+              v-for="scope in currentScopeOptions"
+              :key="scope"
+              :class="{ active: libraryScopeFilter === scope }"
+              @click="libraryScopeFilter = scope"
+            >{{ scope }}</button>
+          </div>
+          <div class="filter-row">
+            <span>标签</span>
+            <button :class="{ active: !libraryTagFilters.length }" @click="libraryTagFilters = []">全部</button>
+            <button
+              v-for="tag in currentTagOptions"
+              :key="tag"
+              :class="{ active: libraryTagFilters.includes(tag) }"
+              @click="toggleLibraryTag(tag)"
+            >{{ tag }}</button>
+          </div>
         </div>
         <div class="anime-grid catalog-card-grid">
           <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'seasonal')">
@@ -319,18 +375,19 @@
               <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
             </div>
             <div class="anime-body">
-              <h3>{{ item.work_display_title || item.entry_display_title || item.display_title || item.title_cn }}</h3>
+              <h3>{{ entryTitle(item) }}</h3>
               <p>{{ item.entry_scope_label || item.entry_secondary_title || item.bangumi_id || 'Season 01' }}</p>
               <div class="tagline">
-                <el-tag size="small" :type="runtimeTag(item)">{{ runtimeLabel(item) }}</el-tag>
-                <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
-                <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
+                <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
+                <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
                 <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
               </div>
-              <p v-if="runtimeSummary(item)" class="queue-note">{{ runtimeSummary(item) }}</p>
-              <el-progress :percentage="runtimeProgress(item)" :show-text="false" />
+              <div v-if="entryTags(item).length" class="mini-tag-row">
+                <span v-for="tag in entryTags(item).slice(0, 3)" :key="tag">{{ tag }}</span>
+              </div>
             </div>
           </article>
+          <el-empty v-if="!filteredSeries.length" description="没有匹配的新番条目" />
         </div>
       </section>
 
@@ -379,15 +436,15 @@
         </div>
       </section>
 
-      <section v-if="view === 'library'" class="library">
-        <div class="toolbar library-toolbar">
-          <el-input v-model="keyword" clearable placeholder="搜索番剧库条目、Bangumi ID、标题" />
-          <el-segmented v-model="seriesFilter" :options="['全部', '可观看', '处理中', '需处理', '未缓存']" />
-          <el-select v-model="libraryYearFilter" clearable placeholder="年份" class="compact-select">
-            <el-option v-for="year in libraryYearOptions" :key="year" :label="`${year} 年`" :value="year" />
-          </el-select>
+      <section v-if="isMediaCatalogView" class="library media-page">
+        <div class="toolbar media-toolbar">
+          <el-input v-model="keyword" clearable :placeholder="`搜索${currentMediaPageTitle}、Bangumi ID、TMDB ID、标题`" />
+          <div class="toolbar-spacer"></div>
+          <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
+          <el-button plain @click="openMediaWizard('import')">导入</el-button>
+          <el-button type="primary" @click="openMediaWizard('add')">添加</el-button>
         </div>
-        <div class="filter-board">
+        <div v-if="advancedFilterOpen" class="filter-board">
           <div class="filter-row">
             <span>媒体库</span>
             <button :class="{ active: !libraryLibraryFilter }" @click="libraryLibraryFilter = ''">全部</button>
@@ -399,10 +456,20 @@
             >{{ item.name }}</button>
           </div>
           <div class="filter-row">
+            <span>年份</span>
+            <button :class="{ active: !libraryYearFilter }" @click="libraryYearFilter = ''">全部</button>
+            <button
+              v-for="year in currentYearOptions"
+              :key="year"
+              :class="{ active: Number(libraryYearFilter || 0) === Number(year) }"
+              @click="libraryYearFilter = Number(year)"
+            >{{ year }}</button>
+          </div>
+          <div class="filter-row">
             <span>类型</span>
             <button :class="{ active: !libraryMediaTypeFilter }" @click="libraryMediaTypeFilter = ''">全部</button>
             <button
-              v-for="type in libraryMediaTypeOptions"
+              v-for="type in currentMediaTypeOptions"
               :key="type"
               :class="{ active: libraryMediaTypeFilter === type }"
               @click="libraryMediaTypeFilter = type"
@@ -412,7 +479,7 @@
             <span>地区</span>
             <button :class="{ active: !libraryRegionFilter }" @click="libraryRegionFilter = ''">全部</button>
             <button
-              v-for="region in libraryRegionOptions"
+              v-for="region in currentRegionOptions"
               :key="region"
               :class="{ active: libraryRegionFilter === region }"
               @click="libraryRegionFilter = region"
@@ -422,7 +489,7 @@
             <span>季度</span>
             <button :class="{ active: !libraryScopeFilter }" @click="libraryScopeFilter = ''">全部</button>
             <button
-              v-for="scope in libraryScopeOptions"
+              v-for="scope in currentScopeOptions"
               :key="scope"
               :class="{ active: libraryScopeFilter === scope }"
               @click="libraryScopeFilter = scope"
@@ -432,7 +499,7 @@
             <span>标签</span>
             <button :class="{ active: !libraryTagFilters.length }" @click="libraryTagFilters = []">全部</button>
             <button
-              v-for="tag in libraryTagOptions"
+              v-for="tag in currentTagOptions"
               :key="tag"
               :class="{ active: libraryTagFilters.includes(tag) }"
               @click="toggleLibraryTag(tag)"
@@ -441,69 +508,43 @@
         </div>
         <div class="library-summary-grid">
           <div class="metric-card">
-            <span>作品数</span>
-            <strong>{{ dashboard.library_summary?.work_count || 0 }}</strong>
+            <span>条目数</span>
+            <strong>{{ filteredSeries.length }}</strong>
           </div>
           <div class="metric-card">
-            <span>条目数</span>
-            <strong>{{ dashboard.library_summary?.entry_count || 0 }}</strong>
+            <span>可观看</span>
+            <strong>{{ filteredSeries.reduce((sum, item) => sum + watchableCount(item), 0) }}</strong>
           </div>
           <div class="metric-card">
             <span>待关联</span>
-            <strong>{{ dashboard.library_summary?.unmatched_count || 0 }}</strong>
+            <strong>{{ filteredSeries.filter(item => !item.bangumi_id && !item.tmdb_id).length }}</strong>
           </div>
           <div class="metric-card">
-            <span>失败条目</span>
-            <strong>{{ dashboard.library_summary?.failed_entry_count || 0 }}</strong>
+            <span>最近更新</span>
+            <strong>{{ filteredSeries.filter(hasRecentUpdate).length }}</strong>
           </div>
         </div>
-        <div class="library-work-grid library-catalog-grid">
-          <section v-for="work in libraryWorks" :key="work.key" class="library-work-card">
-            <header class="library-work-header anime-card catalog-card" @click="toggleWorkExpanded(work.key)">
-              <div class="cover work-cover">
-                <img v-if="work.poster_url" :src="work.poster_url" />
-                <span v-else>{{ work.work_title?.slice(0, 2) || 'AN' }}</span>
-              </div>
-              <div class="anime-body">
-                <h3>{{ work.work_title || '未命名作品' }}</h3>
-                <p>{{ work.entry_count }} 个条目 · {{ work.year_label || '年份未知' }}</p>
-                <div class="tagline">
-                  <el-tag size="small" :type="watchStatusTag(work)">{{ work.watch_status_label || '未缓存' }}</el-tag>
-                  <el-tag size="small">{{ work.media_type_label }}</el-tag>
-                  <el-tag size="small" type="info">{{ work.library_label }}</el-tag>
-                  <el-tag size="small" type="info">{{ work.release_count }} 发布</el-tag>
-                  <el-tag size="small" type="success">本地 {{ work.local_asset_count }}</el-tag>
-                  <el-tag v-if="work.entry_count > 1" size="small">{{ isWorkExpanded(work.key) ? '收起合集' : '展开合集' }}</el-tag>
-                </div>
-                <el-progress :percentage="libraryProgressOf(work)" :show-text="false" />
-              </div>
-            </header>
-            <div v-show="isWorkExpanded(work.key)" class="library-entry-list catalog-card-grid">
-              <article v-for="item in work.entries" :key="item.id" class="anime-card catalog-card library-entry-card" @click.stop="openEntry(item.id, 'library')">
-                <div class="cover poster-cover">
-                  <img v-if="item.poster_url" :src="item.poster_url" />
-                  <span v-else>{{ item.display_title?.slice(0, 2) || item.title_cn?.slice(0, 2) || 'AN' }}</span>
-                </div>
-                <div class="anime-body">
-                  <h3>{{ item.work_display_title || item.entry_display_title || item.display_title || item.title_cn }}</h3>
-                  <p>{{ item.entry_scope_label || item.entry_secondary_title || 'Season 01' }} · Bangumi: {{ item.bangumi_id || '未关联' }}</p>
-                  <div class="tagline">
-                    <el-tag size="small" :type="runtimeTag(item)">{{ runtimeLabel(item) }}</el-tag>
-                    <el-tag size="small">{{ mediaTypeLabel(item.media_type) }}</el-tag>
-                    <el-tag size="small" type="info">{{ regionLabel(item.region) }}</el-tag>
-                    <el-tag size="small" type="info">{{ item.release_count }} 发布</el-tag>
-                    <el-tag size="small" type="success">本地 {{ item.local_asset_count || 0 }}</el-tag>
-                    <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
-                  </div>
-                  <div v-if="entryTags(item).length" class="mini-tag-row">
-                    <span v-for="tag in entryTags(item).slice(0, 4)" :key="tag">{{ tag }}</span>
-                  </div>
-                  <p v-if="runtimeSummary(item)" class="queue-note">{{ runtimeSummary(item) }}</p>
-                  <el-progress :percentage="runtimeProgress(item)" :show-text="false" />
-                </div>
-              </article>
+        <div class="anime-grid catalog-card-grid">
+          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'library')">
+            <div class="cover poster-cover">
+              <img v-if="item.poster_url" :src="item.poster_url" />
+              <span v-else>{{ entryTitle(item).slice(0, 2) || 'AN' }}</span>
             </div>
-          </section>
+            <div class="anime-body">
+              <h3>{{ entryTitle(item) }}</h3>
+              <p>{{ item.entry_scope_label || item.entry_secondary_title || item.year || '未分季' }}</p>
+              <div class="tagline">
+                <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
+                <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
+                <el-tag size="small">{{ mediaTypeLabel(item.media_type) }}</el-tag>
+                <el-tag size="small" type="info">{{ regionLabel(item.region) }}</el-tag>
+              </div>
+              <div v-if="entryTags(item).length" class="mini-tag-row">
+                <span v-for="tag in entryTags(item).slice(0, 3)" :key="tag">{{ tag }}</span>
+              </div>
+            </div>
+          </article>
+          <el-empty v-if="!filteredSeries.length" :description="`没有匹配的${currentMediaPageTitle}`" />
         </div>
       </section>
 
@@ -638,119 +679,156 @@
       <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon><b>新番</b></button>
       <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon><b>日历</b></button>
       <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon><b>番剧</b></button>
+      <button :class="{ active: view === 'movies' }" @click="view = 'movies'"><el-icon><Collection /></el-icon><b>电影</b></button>
+      <button :class="{ active: view === 'tv' }" @click="view = 'tv'"><el-icon><Collection /></el-icon><b>剧集</b></button>
       <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon><b>日志</b></button>
       <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon><b>设置</b></button>
     </nav>
 
-    <el-drawer v-model="entryDrawerOpen" size="720px" :title="selectedEntryDetail?.entry?.title_cn || (selectedEntryDomain === 'library' ? '番剧库条目' : '番剧设置')">
+    <el-drawer v-model="entryDrawerOpen" size="760px" :title="entryTitle(selectedEntryDetail?.entry) || (selectedEntryDomain === 'library' ? '媒体条目' : '新番设置')">
       <template v-if="selectedEntryDetail?.entry">
-        <el-alert
-          type="info"
-          show-icon
-          :closable="false"
-          :title="selectedEntryDomain === 'library' ? '这里处理番剧库条目本身；后续会补独立的补番/导入能力。' : '这里只处理规则和冲突；下载与本地整理由后台任务自动推进。'"
-          class="settings-alert"
-        />
-        <el-form :model="selectedEntry" label-position="top">
-          <div class="form-row">
-            <el-form-item label="中文标题"><el-input v-model="selectedEntry.title_cn" /></el-form-item>
-            <el-form-item label="年份"><el-input-number v-model="selectedEntry.year" /></el-form-item>
-          </div>
-          <div class="form-row">
-            <el-form-item label="Bangumi ID"><el-input v-model="selectedEntry.bangumi_id" /></el-form-item>
-          </div>
-          <template v-if="selectedEntryDomain === 'seasonal'">
-            <div class="form-row">
-              <el-form-item label="自动下载">
-                <el-select v-model="selectedEntry.auto_download">
-                  <el-option label="跟随全局" value="inherit" />
-                  <el-option label="开启" value="on" />
-                  <el-option label="关闭" value="off" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="补全">
-                <el-select v-model="selectedEntry.backfill_mode">
-                  <el-option label="跟随全局" value="inherit" />
-                  <el-option label="不补全" value="none" />
-                  <el-option label="补全本季" value="season" />
-                  <el-option label="补全全部" value="all" />
-                </el-select>
-              </el-form-item>
+        <el-tabs class="entry-detail-tabs">
+          <el-tab-pane label="信息">
+            <div class="entry-info-head">
+              <div class="cover poster-cover">
+                <img v-if="selectedEntry.poster_url" :src="selectedEntry.poster_url" />
+                <span v-else>{{ entryTitle(selectedEntry).slice(0, 2) || 'AN' }}</span>
+              </div>
+              <div>
+                <h2>{{ entryTitle(selectedEntry) }}</h2>
+                <p>{{ selectedEntry.entry_scope_label || selectedEntry.entry_secondary_title || selectedEntry.display_title || '-' }}</p>
+                <div class="tagline">
+                  <el-tag size="small">{{ mediaTypeLabel(selectedEntry.media_type) }}</el-tag>
+                  <el-tag size="small" type="info">{{ regionLabel(selectedEntry.region) }}</el-tag>
+                  <el-tag size="small" type="success">可观看 {{ watchableCount(selectedEntryStats) }} 集</el-tag>
+                  <el-tag v-if="selectedEntryDomain === 'seasonal'" size="small" type="primary">追番中</el-tag>
+                </div>
+              </div>
             </div>
-          </template>
-        </el-form>
-        <div class="sync-panel">
-          <div>
-            <strong>本地整理</strong>
-            <span>{{ syncSummary }}</span>
-          </div>
-          <el-switch :model-value="syncWanted" @change="toggleEntrySync" />
-        </div>
-        <div class="drawer-actions">
-          <el-button type="primary" @click="saveCurrentEntry">保存</el-button>
-          <el-button plain @click="runEntryAction('metadata')">刷新元数据</el-button>
-          <el-button plain @click="runEntryAction('nfo')">生成 NFO</el-button>
-          <el-button plain @click="runEntryAction('backfill')">补全条目</el-button>
-          <el-popconfirm title="只从列表隐藏这个误识别条目，保留关联记录。确定隐藏？" @confirm="deleteCurrentEntry">
-            <template #reference>
-              <el-button type="danger" plain>{{ selectedEntryDomain === 'library' ? '隐藏条目' : '隐藏误识别' }}</el-button>
-            </template>
-          </el-popconfirm>
-        </div>
-        <el-divider />
-        <el-tabs>
-          <el-tab-pane label="RSS 发布">
-            <el-table :data="selectedEntryDetail.releases" height="320">
-              <el-table-column prop="episode_number" label="集" width="70" />
-              <el-table-column label="选中" width="80">
-                <template #default="{ row }">
-                  <el-tag v-if="row.selected" size="small" type="success">是</el-tag>
-                  <span v-else>-</span>
+            <el-form :model="selectedEntry" label-position="top">
+              <div class="form-row">
+                <el-form-item label="中文标题"><el-input v-model="selectedEntry.title_cn" /></el-form-item>
+                <el-form-item label="年份"><el-input-number v-model="selectedEntry.year" /></el-form-item>
+              </div>
+              <div class="form-row">
+                <el-form-item label="Bangumi ID"><el-input v-model="selectedEntry.bangumi_id" /></el-form-item>
+                <el-form-item label="TMDB ID"><el-input v-model="selectedEntry.tmdb_id" /></el-form-item>
+              </div>
+              <div class="form-row">
+                <el-form-item label="媒体类型">
+                  <el-select v-model="selectedEntry.media_type">
+                    <el-option label="动画" value="anime" />
+                    <el-option label="电影" value="movie" />
+                    <el-option label="电视剧" value="tv" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="国家 / 地区">
+                  <el-select v-model="selectedEntry.region" clearable>
+                    <el-option label="日本" value="jp" />
+                    <el-option label="中国" value="cn" />
+                    <el-option label="欧美" value="us" />
+                    <el-option label="韩国" value="kr" />
+                    <el-option label="其他" value="other" />
+                  </el-select>
+                </el-form-item>
+              </div>
+            </el-form>
+            <el-descriptions :column="2" border class="entry-meta-descriptions">
+              <el-descriptions-item label="Bangumi ID">{{ selectedEntry.bangumi_id || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="TMDB ID">{{ selectedEntry.tmdb_id || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="年份 / 月份">{{ selectedEntry.year || '-' }} / {{ selectedEntry.month || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="追番状态">{{ selectedEntryDomain === 'seasonal' ? '追番中' : '普通媒体库条目' }}</el-descriptions-item>
+              <el-descriptions-item label="别名" :span="2">{{ selectedEntry.aliases || selectedEntry.alias || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="标签" :span="2">
+                <div class="mini-tag-row">
+                  <span v-for="tag in entryTags(selectedEntry)" :key="tag">{{ tag }}</span>
+                  <em v-if="!entryTags(selectedEntry).length">-</em>
+                </div>
+              </el-descriptions-item>
+            </el-descriptions>
+            <div class="drawer-actions">
+              <el-button type="primary" @click="saveCurrentEntry">保存信息</el-button>
+              <el-popconfirm
+                v-if="selectedEntryDomain === 'seasonal'"
+                title="归档后新番页不再显示，番剧库仍会保留该动画条目。确定归档？"
+                @confirm="archiveCurrentEntry"
+              >
+                <template #reference>
+                  <el-button plain>归档</el-button>
                 </template>
-              </el-table-column>
-              <el-table-column prop="subtitle_group" label="字幕组" width="140" />
+              </el-popconfirm>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane label="集数资源">
+            <el-table :data="entryResourceRows" height="520" empty-text="暂无集数资源">
+              <el-table-column prop="episode_number" label="集" width="70" />
+              <el-table-column prop="resource_title" label="当前选中资源" min-width="260" show-overflow-tooltip />
+              <el-table-column prop="subtitle_group" label="字幕组" width="140" show-overflow-tooltip />
               <el-table-column prop="resolution" label="分辨率" width="100" />
-              <el-table-column prop="language" label="语言" width="90" />
-              <el-table-column prop="subtitle_format" label="字幕形式" width="100">
+              <el-table-column prop="language" label="语言" width="100" />
+              <el-table-column label="字幕类型" width="110">
                 <template #default="{ row }">{{ subtitleFormatText(row.subtitle_format) }}</template>
               </el-table-column>
-              <el-table-column prop="guid" label="GUID" min-width="220" show-overflow-tooltip />
-              <el-table-column prop="title" label="发布标题" min-width="260" show-overflow-tooltip />
-            </el-table>
-          </el-tab-pane>
-          <el-tab-pane label="下载任务">
-            <el-table :data="selectedEntryDetail.tasks" height="320">
-              <el-table-column prop="status" label="状态" width="110">
-                <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ taskStatusText(row) }}</el-tag></template>
+              <el-table-column prop="subtitle_file" label="字幕文件" min-width="180" show-overflow-tooltip />
+              <el-table-column label="已下载" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">{{ row.downloaded ? '是' : '否' }}</el-tag>
+                </template>
               </el-table-column>
-              <el-table-column prop="target_dir" label="目标目录" min-width="220" show-overflow-tooltip />
-              <el-table-column prop="submission_id" label="下载任务" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="provider_file_id" label="文件 ID" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="last_error" label="错误" min-width="220" show-overflow-tooltip />
-              <el-table-column label="下次处理" width="130">
-                <template #default="{ row }">{{ row.waiting_retry ? formatCountdown(row.retry_seconds) : '-' }}</template>
-              </el-table-column>
-            </el-table>
-          </el-tab-pane>
-          <el-tab-pane label="下载产物">
-            <el-table :data="selectedEntryDetail.download_artifacts" height="320">
-              <el-table-column prop="episode_number" label="集" width="70" />
-              <el-table-column prop="provider" label="下载器" width="100" />
-              <el-table-column prop="remote_path" label="远端路径" min-width="260" show-overflow-tooltip />
-              <el-table-column prop="provider_file_id" label="文件 ID" min-width="180" show-overflow-tooltip />
-            </el-table>
-          </el-tab-pane>
-          <el-tab-pane label="本地资源">
-            <el-table :data="selectedEntryDetail.local_assets" height="320">
-              <el-table-column prop="episode_number" label="集" width="70" />
-              <el-table-column prop="status" label="状态" width="110" />
-              <el-table-column prop="local_path" label="本地路径" min-width="260" show-overflow-tooltip />
-              <el-table-column prop="nfo_status" label="NFO" width="110" />
+              <el-table-column prop="local_path" label="本地文件路径" min-width="260" show-overflow-tooltip />
             </el-table>
           </el-tab-pane>
         </el-tabs>
       </template>
     </el-drawer>
+
+    <el-dialog v-model="rssDialogOpen" title="添加 RSS 订阅" width="560px">
+      <el-form :model="rssForm" label-position="top">
+        <el-form-item label="订阅名称"><el-input v-model="rssForm.name" placeholder="例如：Mikan 追番" /></el-form-item>
+        <el-form-item label="RSS 地址"><el-input v-model="rssForm.url" placeholder="https://mikanani.me/RSS/..." /></el-form-item>
+        <el-form-item label="订阅类型">
+          <el-select v-model="rssForm.kind">
+            <el-option label="Mikan" value="mikan" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rssDialogOpen = false">取消</el-button>
+        <el-button type="primary" @click="saveRssSubscription">保存订阅</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="mediaWizardOpen" :title="mediaWizardTitle" width="760px">
+      <el-steps :active="mediaWizardStep" finish-status="success" align-center>
+        <el-step title="选择来源" />
+        <el-step title="匹配作品" />
+        <el-step title="集数与字幕" />
+        <el-step title="收录" />
+      </el-steps>
+      <div class="wizard-panel">
+        <template v-if="mediaWizardStep === 0">
+          <el-upload drag action="#" :auto-upload="false" multiple>
+            <p>选择本地目录或文件</p>
+            <small>第一版按浏览器上传器设计，暂不要求填写 NAS 服务端路径。</small>
+          </el-upload>
+          <el-input v-if="mediaWizardMode === 'add'" v-model="mediaWizardSeed" placeholder="Bangumi ID / TMDB ID / 作品名 / 磁力链接" />
+        </template>
+        <template v-else-if="mediaWizardStep === 1">
+          <el-empty description="匹配作品信息骨架：后续接 Bangumi / TMDB / 手动编辑" />
+        </template>
+        <template v-else-if="mediaWizardStep === 2">
+          <el-empty description="匹配集数与字幕骨架：后续显示资源、字幕文件和默认选择" />
+        </template>
+        <template v-else>
+          <el-empty description="收录确认骨架：后续写入统一媒体条目和集数资源" />
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="mediaWizardOpen = false">关闭</el-button>
+        <el-button :disabled="mediaWizardStep <= 0" @click="mediaWizardStep -= 1">上一步</el-button>
+        <el-button type="primary" :disabled="mediaWizardStep >= 3" @click="mediaWizardStep += 1">下一步</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -774,12 +852,16 @@ const refreshInterval = ref(5000)
 const liveConnected = ref(false)
 const consoleNavMode = ref('队列')
 const calendarWeek = ref('')
-const expandedWorkKeys = ref(new Set())
+const advancedFilterOpen = ref(false)
+const rssDialogOpen = ref(false)
+const mediaWizardOpen = ref(false)
+const mediaWizardMode = ref('import')
+const mediaWizardStep = ref(0)
+const mediaWizardSeed = ref('')
 let refreshTimer = null
 let dashboardStream = null
 let streamRetryTimer = null
 const keyword = ref('')
-const seriesFilter = ref('全部')
 const libraryYearFilter = ref('')
 const libraryScopeFilter = ref('')
 const libraryMediaTypeFilter = ref('')
@@ -814,18 +896,83 @@ const mediaLibraryForm = reactive({
   media_type: 'anime',
   root_path: '',
 })
+const rssForm = reactive({
+  name: '',
+  url: '',
+  kind: 'mikan',
+})
 
 const pageTitle = computed(() => ({
   dashboard: '控制台',
   seasonal: '新番',
   calendar: '日历',
   library: '番剧',
+  movies: '电影',
+  tv: '电视剧',
   logs: '日志与维护',
   settings: '设置中心'
 }[view.value]))
 
 const seasonalRows = computed(() => dashboard.seasonal_items || [])
 const libraryRows = computed(() => dashboard.library_items || [])
+const isMediaCatalogView = computed(() => ['library', 'movies', 'tv'].includes(view.value))
+const currentMediaType = computed(() => ({
+  library: 'anime',
+  movies: 'movie',
+  tv: 'tv',
+}[view.value] || 'anime'))
+const currentMediaPageTitle = computed(() => ({
+  library: '番剧',
+  movies: '电影',
+  tv: '电视剧',
+}[view.value] || '媒体'))
+const currentCatalogSourceRows = computed(() => {
+  if (!isMediaCatalogView.value) return seasonalRows.value
+  return libraryRows.value.filter(item => belongsToCurrentMediaPage(item))
+})
+const currentYearOptions = computed(() => {
+  const values = new Set()
+  for (const item of currentCatalogSourceRows.value) {
+    const year = Number(item.year || 0)
+    if (year > 0) values.add(year)
+  }
+  return Array.from(values).sort((a, b) => b - a)
+})
+const currentMediaTypeOptions = computed(() => {
+  const values = new Set()
+  for (const item of currentCatalogSourceRows.value) {
+    const type = entryMediaType(item)
+    if (type) values.add(type)
+  }
+  return Array.from(values).sort((a, b) => mediaTypeLabel(a).localeCompare(mediaTypeLabel(b)))
+})
+const currentRegionOptions = computed(() => {
+  const values = new Set()
+  for (const item of currentCatalogSourceRows.value) {
+    if (item.region) values.add(item.region)
+  }
+  return Array.from(values).sort((a, b) => regionLabel(a).localeCompare(regionLabel(b)))
+})
+const currentScopeOptions = computed(() => {
+  const values = new Set()
+  for (const item of currentCatalogSourceRows.value) {
+    const scope = item.entry_scope_label || item.entry_badge_text || ''
+    if (scope) values.add(scope)
+  }
+  return Array.from(values).sort((a, b) => String(a).localeCompare(String(b)))
+})
+const currentTagOptions = computed(() => {
+  const counts = new Map()
+  for (const item of currentCatalogSourceRows.value) {
+    for (const tag of entryTags(item)) {
+      counts.set(tag, (counts.get(tag) || 0) + 1)
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 36)
+    .map(item => item[0])
+})
 const libraryLibraryOptions = computed(() => {
   const used = new Set(libraryRows.value.map(item => Number(item.target_library_id || 0)).filter(Boolean))
   return (dashboard.media_libraries || []).filter(item => used.has(Number(item.id || 0)))
@@ -986,29 +1133,89 @@ const syncSummary = computed(() => {
   if (syncWanted.value) return '已开启，下载完成后会整理到本地媒体库'
   return '关闭后不会自动整理到本地媒体库'
 })
+const mediaWizardTitle = computed(() => {
+  const action = mediaWizardMode.value === 'add' ? '添加' : '导入'
+  return `${action}${currentMediaPageTitle.value}`
+})
+const entryResourceRows = computed(() => {
+  const detail = selectedEntryDetail.value || {}
+  const rows = new Map()
+  for (const release of detail.releases || []) {
+    const episode = Number(release.episode_number || 0)
+    const key = episode > 0 ? `episode:${episode}` : `release:${release.id}`
+    const previous = rows.get(key)
+    if (previous && previous.selected && !release.selected) continue
+    rows.set(key, {
+      key,
+      episode_number: episode || '-',
+      release_id: release.id,
+      resource_title: release.title || release.guid || '-',
+      subtitle_group: release.subtitle_group || '-',
+      resolution: release.resolution || '-',
+      language: release.language || '-',
+      subtitle_format: release.subtitle_format || '',
+      subtitle_file: '-',
+      downloaded: false,
+      local_path: '',
+      selected: Boolean(release.selected),
+    })
+  }
+  for (const artifact of detail.download_artifacts || []) {
+    const episode = Number(artifact.episode_number || 0)
+    const key = episode > 0 ? `episode:${episode}` : `artifact:${artifact.id}`
+    const row = rows.get(key) || {
+      key,
+      episode_number: episode || '-',
+      resource_title: artifact.remote_path || artifact.provider_file_id || '-',
+      subtitle_group: '-',
+      resolution: '-',
+      language: '-',
+      subtitle_format: '',
+      subtitle_file: '-',
+      downloaded: false,
+      local_path: '',
+    }
+    row.resource_title = row.resource_title === '-' ? (artifact.remote_path || artifact.provider_file_id || '-') : row.resource_title
+    rows.set(key, row)
+  }
+  for (const asset of detail.local_assets || []) {
+    const episode = Number(asset.episode_number || 0)
+    const key = episode > 0 ? `episode:${episode}` : `local:${asset.id}`
+    const row = rows.get(key) || {
+      key,
+      episode_number: episode || '-',
+      resource_title: asset.local_path || '-',
+      subtitle_group: '-',
+      resolution: '-',
+      language: '-',
+      subtitle_format: '',
+      subtitle_file: '-',
+      downloaded: false,
+      local_path: '',
+    }
+    row.downloaded = String(asset.status || '').toLowerCase() === 'synced' || Boolean(asset.local_path)
+    row.local_path = asset.local_path || row.local_path || ''
+    if (asset.subtitle_path) row.subtitle_file = asset.subtitle_path
+    rows.set(key, row)
+  }
+  return Array.from(rows.values()).sort((a, b) => Number(a.episode_number || 0) - Number(b.episode_number || 0))
+})
 
 const filteredSeries = computed(() => {
   const text = keyword.value.toLowerCase()
-  const source = view.value === 'library' ? libraryRows.value : seasonalRows.value
+  const source = currentCatalogSourceRows.value
   return source.filter(item => {
-    const runtime = entryRuntime(item)
-    const matched = !text || `${item.entry_display_title || item.display_title || item.title_cn} ${item.work_display_title || item.work_title || item.title_root || ''} ${item.entry_scope_label || ''} ${item.bangumi_id}`.toLowerCase().includes(text)
+    const matched = !text || `${item.entry_display_title || item.display_title || item.title_cn} ${item.work_display_title || item.work_title || item.title_root || ''} ${item.entry_scope_label || ''} ${item.bangumi_id || ''} ${item.tmdb_id || ''}`.toLowerCase().includes(text)
     if (!matched) return false
-    if (view.value === 'library') {
-      if (libraryLibraryFilter.value && Number(item.target_library_id || 0) !== Number(libraryLibraryFilter.value)) return false
-      if (libraryMediaTypeFilter.value && String(item.media_type || '') !== String(libraryMediaTypeFilter.value)) return false
-      if (libraryRegionFilter.value && String(item.region || '') !== String(libraryRegionFilter.value)) return false
-      if (libraryYearFilter.value && Number(item.year || 0) !== Number(libraryYearFilter.value)) return false
-      if (libraryScopeFilter.value && String(item.entry_scope_label || item.entry_badge_text || '') !== String(libraryScopeFilter.value)) return false
-      if (libraryTagFilters.value.length) {
-        const tags = entryTags(item)
-        if (!libraryTagFilters.value.every(tag => tags.includes(tag))) return false
-      }
+    if (isMediaCatalogView.value && libraryLibraryFilter.value && Number(item.target_library_id || 0) !== Number(libraryLibraryFilter.value)) return false
+    if (libraryMediaTypeFilter.value && entryMediaType(item) !== String(libraryMediaTypeFilter.value)) return false
+    if (libraryRegionFilter.value && String(item.region || '') !== String(libraryRegionFilter.value)) return false
+    if (libraryYearFilter.value && Number(item.year || 0) !== Number(libraryYearFilter.value)) return false
+    if (libraryScopeFilter.value && String(item.entry_scope_label || item.entry_badge_text || '') !== String(libraryScopeFilter.value)) return false
+    if (libraryTagFilters.value.length) {
+      const tags = entryTags(item)
+      if (!libraryTagFilters.value.every(tag => tags.includes(tag))) return false
     }
-    if (seriesFilter.value === '可观看') return runtime.ready_count > 0
-    if (seriesFilter.value === '处理中') return ['running', 'pending', 'waiting'].includes(runtime.status) && runtime.ready_count <= 0
-    if (seriesFilter.value === '需处理') return runtime.status === 'failed' || !item.bangumi_id || Boolean(item.has_failed_task)
-    if (seriesFilter.value === '未缓存') return runtime.ready_count <= 0
     return true
   })
 })
@@ -1121,6 +1328,64 @@ function regionLabel(value) {
 function libraryName(id) {
   const row = (dashboard.media_libraries || []).find(item => Number(item.id || 0) === Number(id || 0))
   return row?.name || ''
+}
+
+function entryMediaType(item) {
+  const value = String(item?.media_type || 'anime').toLowerCase()
+  if (value === 'movie' || value === 'film') return 'movie'
+  if (value === 'tv' || value === 'series' || value === 'drama') return 'tv'
+  return 'anime'
+}
+
+function belongsToCurrentMediaPage(item) {
+  const type = entryMediaType(item)
+  if (view.value === 'movies') return type === 'movie'
+  if (view.value === 'tv') return type === 'tv'
+  return type === 'anime'
+}
+
+function entryTitle(item) {
+  if (!item) return ''
+  return item.work_display_title
+    || item.entry_display_title
+    || item.display_title
+    || item.title_cn
+    || item.work_title
+    || item.title_root
+    || '未命名条目'
+}
+
+function watchableCount(item) {
+  if (!item) return 0
+  const runtimeReady = entryRuntime(item).ready_count
+  return Math.max(
+    Number(item.local_asset_count || 0),
+    Number(item.downloaded_count || 0),
+    Number(runtimeReady || 0),
+  )
+}
+
+function parseDateValue(value) {
+  if (!value) return 0
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+function hasRecentUpdate(item) {
+  const entryId = Number(item?.id || item?.entry_id || 0)
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+  const direct = [
+    item?.updated_at,
+    item?.synced_at,
+    item?.latest_release_at,
+    item?.last_release_at,
+    item?.published_at,
+  ].some(value => parseDateValue(value) >= cutoff)
+  if (direct) return true
+  return [...(dashboard.seasonal_update_calendar || []), ...(dashboard.seasonal_sync_calendar || [])].some(row => {
+    if (Number(row.entry_id || 0) !== entryId) return false
+    return parseDateValue(row.updated_at || row.synced_at || row.published_at) >= cutoff
+  })
 }
 
 function parseJsonArray(value) {
@@ -1251,8 +1516,10 @@ function taskStatusText(row) {
 }
 
 function subtitleFormatText(value) {
-  if (value === 'embedded') return '内嵌'
-  if (value === 'external') return '外挂'
+  const key = String(value || '').toLowerCase()
+  if (key === 'embedded' || key === 'hardsub' || key === 'burned') return '内嵌'
+  if (key === 'muxed' || key === 'softsub' || key === 'internal') return '内封'
+  if (key === 'external' || key === 'sidecar') return '外挂'
   return '-'
 }
 
@@ -1439,6 +1706,28 @@ async function runAction(path) {
   }
 }
 
+function openRssDialog() {
+  rssForm.name = rssForm.name || 'Mikan RSS'
+  rssForm.kind = 'mikan'
+  rssDialogOpen.value = true
+}
+
+async function saveRssSubscription() {
+  if (!rssForm.url.trim()) {
+    ElMessage.warning('RSS 地址不能为空')
+    return
+  }
+  ElMessage.info('RSS 订阅接口会在下一阶段接入，当前仍使用设置页的 Mikan RSS。')
+  rssDialogOpen.value = false
+}
+
+function openMediaWizard(mode) {
+  mediaWizardMode.value = mode
+  mediaWizardStep.value = 0
+  mediaWizardSeed.value = ''
+  mediaWizardOpen.value = true
+}
+
 function exportLogs() {
   const text = filteredServerLogText.value || ''
   if (!text.trim()) {
@@ -1546,6 +1835,22 @@ async function toggleEntrySync(enabled) {
   await reload()
 }
 
+async function archiveCurrentEntry() {
+  if (selectedEntryDomain.value !== 'seasonal') return
+  const id = selectedEntry.value?.id
+  if (!id) return
+  const result = await deleteAction(`/seasonal/${id}`)
+  if (result.status === 'not_found' || result.status === 'invalid_domain') {
+    ElMessage.warning(result.message || '条目不存在')
+  } else {
+    ElMessage.success('已归档，新番页不再显示')
+  }
+  entryDrawerOpen.value = false
+  selectedEntryDetail.value = null
+  selectedEntryDomain.value = 'seasonal'
+  await reload()
+}
+
 async function runEntryAction(action) {
   const base = selectedEntryDomain.value === 'library' ? '/library' : '/seasonal'
   try {
@@ -1633,6 +1938,15 @@ watch(consoleNavMode, value => {
   selectedConsoleSection.value = ''
 })
 watch(view, value => {
+  if (['seasonal', 'library', 'movies', 'tv'].includes(value)) {
+    libraryYearFilter.value = ''
+    libraryScopeFilter.value = ''
+    libraryMediaTypeFilter.value = ''
+    libraryRegionFilter.value = ''
+    libraryLibraryFilter.value = ''
+    libraryTagFilters.value = []
+    advancedFilterOpen.value = false
+  }
   if (value === 'settings') reloadDiagnostics().catch(error => ElMessage.error(apiErrorMessage(error)))
 })
 

@@ -745,6 +745,11 @@ h1 {
   padding: 3px 8px;
 }
 
+.mini-tag-row em {
+  color: #94a3b8;
+  font-style: normal;
+}
+
 .queue-detail-note {
   color: #64748b !important;
   font-size: 12px !important;
@@ -963,6 +968,14 @@ h1 {
 
 .toolbar .el-input {
   max-width: 420px;
+}
+
+.media-toolbar .el-input {
+  max-width: 520px;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
 }
 
 .filter-board {
@@ -1271,6 +1284,55 @@ h1 {
 .drawer-actions {
   flex-wrap: wrap;
   margin-top: 8px;
+}
+
+.entry-info-head {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 112px minmax(0, 1fr);
+  margin-bottom: 18px;
+}
+
+.entry-info-head .poster-cover {
+  min-height: 156px;
+}
+
+.entry-info-head h2 {
+  font-size: 22px;
+  line-height: 1.35;
+  margin: 4px 0 8px;
+}
+
+.entry-info-head p {
+  color: #64748b;
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+
+.entry-meta-descriptions {
+  margin-top: 12px;
+}
+
+.wizard-panel {
+  display: grid;
+  gap: 16px;
+  min-height: 280px;
+  padding-top: 22px;
+}
+
+.wizard-panel .el-upload {
+  width: 100%;
+}
+
+.wizard-panel p {
+  color: #0f172a;
+  font-weight: 800;
+  margin: 0 0 6px;
+}
+
+.wizard-panel small {
+  color: #64748b;
 }
 
 .sync-panel {
