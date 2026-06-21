@@ -62,11 +62,14 @@ class SettingsPayload(BaseModel):
     auto_scan: bool = False
     auto_download_unique: bool = True
     auto_download_by_priority: bool = True
+    auto_generate_nfo: bool = True
+    backfill_current_season: bool = False
     default_backfill: str = "none"
-    subtitle_priority: list[str] = []
-    resolution_priority: list[str] = []
-    language_priority: list[str] = []
-    secondary_language_priority: list[str] = []
+    subtitle_priority: list[str] = Field(default_factory=list)
+    resolution_priority: list[str] = Field(default_factory=list)
+    language_priority: list[str] = Field(default_factory=list)
+    secondary_language_priority: list[str] = Field(default_factory=list)
+    downloaders: list[dict[str, Any]] = Field(default_factory=list)
     download_backend: str = "rclone"
     local_downloader_root: str = "/data/local-downloader"
     rclone_command: str = "rclone"
@@ -85,6 +88,8 @@ class SettingsPayload(BaseModel):
     work_dir_template: str = ""
     season_dir_template: str = ""
     episode_name_template: str = ""
+    movie_name_template: str = ""
+    tv_name_template: str = ""
 
 
 class EntryPayload(BaseModel):
@@ -450,11 +455,20 @@ def settings_response() -> dict[str, Any]:
     result["auto_download_unique"] = bool_setting(settings.get("auto_download_unique", "true"))
     result["auto_download_by_priority"] = bool_setting(settings.get("auto_download_by_priority", "true"))
     result["auto_sync_following"] = bool_setting(settings.get("auto_sync_following", "false"))
+    result["auto_generate_nfo"] = bool_setting(settings.get("auto_generate_nfo", "true"))
+    result["backfill_current_season"] = bool_setting(settings.get("backfill_current_season", "false"))
     result["subtitle_priority"] = split_setting(settings.get("subtitle_priority", ""))
     result["resolution_priority"] = split_setting(settings.get("resolution_priority", ""))
     result["language_priority"] = split_setting(settings.get("language_priority", ""))
     result["secondary_language_priority"] = split_setting(settings.get("secondary_language_priority", ""))
     result["work_dir_template"] = settings.get("series_dir_template", "")
+    try:
+        downloaders = json.loads(settings.get("downloaders_json", "[]") or "[]")
+    except json.JSONDecodeError:
+        downloaders = []
+    result["downloaders"] = downloaders if isinstance(downloaders, list) else []
+    result["movie_name_template"] = settings.get("movie_name_template", "")
+    result["tv_name_template"] = settings.get("tv_name_template", "")
     return result
 
 
@@ -1700,11 +1714,14 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "auto_scan": str(payload.auto_scan).lower(),
             "auto_download_unique": str(payload.auto_download_unique).lower(),
             "auto_download_by_priority": str(payload.auto_download_by_priority).lower(),
-            "default_backfill": payload.default_backfill,
+            "auto_generate_nfo": str(payload.auto_generate_nfo).lower(),
+            "backfill_current_season": str(payload.backfill_current_season).lower(),
+            "default_backfill": "season" if payload.backfill_current_season else payload.default_backfill,
             "subtitle_priority": "\n".join(payload.subtitle_priority),
             "resolution_priority": "\n".join(payload.resolution_priority),
             "language_priority": "\n".join(payload.language_priority),
             "secondary_language_priority": "\n".join(payload.secondary_language_priority),
+            "downloaders_json": json.dumps(payload.downloaders, ensure_ascii=False),
             "download_backend": payload.download_backend,
             "local_downloader_root": payload.local_downloader_root.strip() or "/data/local-downloader",
             "rclone_command": payload.rclone_command.strip() or "rclone",
@@ -1723,6 +1740,8 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "series_dir_template": payload.work_dir_template.strip(),
             "season_dir_template": payload.season_dir_template.strip(),
             "episode_name_template": payload.episode_name_template.strip(),
+            "movie_name_template": payload.movie_name_template.strip(),
+            "tv_name_template": payload.tv_name_template.strip(),
         }
     )
     current = get_settings()
@@ -1734,9 +1753,12 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "language_priority",
             "secondary_language_priority",
             "default_backfill",
+            "backfill_current_season",
             "series_dir_template",
             "season_dir_template",
             "episode_name_template",
+            "movie_name_template",
+            "tv_name_template",
             "local_library_root",
             "auto_sync_following",
         ]

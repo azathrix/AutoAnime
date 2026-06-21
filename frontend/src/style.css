@@ -1281,6 +1281,62 @@ h1 {
   margin-top: 10px;
 }
 
+.nested-settings-tabs {
+  min-height: 260px;
+}
+
+.downloader-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.downloader-list {
+  display: grid;
+  gap: 10px;
+}
+
+.downloader-row {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto auto 150px minmax(140px, 1fr) minmax(180px, 1.2fr) auto auto;
+  padding: 10px;
+}
+
+.downloader-type {
+  width: 150px;
+}
+
+.media-root-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.media-root-grid > div {
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.media-root-grid span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.media-root-grid code {
+  color: #0f172a;
+  font-weight: 800;
+}
+
 .drawer-actions {
   flex-wrap: wrap;
   margin-top: 8px;
@@ -1406,7 +1462,7 @@ h1 {
     box-shadow: 0 18px 48px rgba(15, 23, 42, .16);
     display: grid;
     gap: 4px;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     left: 10px;
     padding: 6px;
     position: fixed;
@@ -1451,8 +1507,14 @@ h1 {
   .console-workbench,
   .logs-layout,
   .library-entry-card-grid,
+  .downloader-row,
+  .media-root-grid,
   .detail-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .downloader-type {
+    width: 100%;
   }
 
   .console-nav {

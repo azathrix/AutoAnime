@@ -553,119 +553,77 @@
           <template #header>全局设置</template>
           <el-form :model="settings" label-position="top" class="settings-form">
             <el-tabs>
-              <el-tab-pane label="来源">
+              <el-tab-pane label="基础">
                 <el-alert
                   type="info"
                   show-icon
                   :closable="false"
-                  title="保存设置会自动重排选集、补全、同步等后续任务；要立即触发新一轮源头扫描，请回到控制台点击“扫描全部”。"
+                  title="RSS 订阅入口在新番页；这里保留代理、补全、NFO 和命名规则等全局行为。"
                   class="settings-alert"
                 />
-                <el-form-item label="Mikan RSS"><el-input v-model="settings.rss_url" /></el-form-item>
                 <el-form-item label="RSS 代理"><el-input v-model="settings.rss_proxy" placeholder="http://NAS_IP:20171" /></el-form-item>
                 <div class="form-row">
-                  <el-form-item label="自动扫描"><el-switch v-model="settings.auto_scan" /></el-form-item>
-                  <el-form-item label="扫描间隔"><el-input-number v-model="settings.scan_interval_minutes" :min="1" /></el-form-item>
-                  <el-form-item label="默认补全">
-                    <el-select v-model="settings.default_backfill">
-                      <el-option label="不补全" value="none" />
-                      <el-option label="补全本季" value="season" />
-                      <el-option label="补全全部" value="all" />
-                    </el-select>
-                  </el-form-item>
+                  <el-form-item label="补全本季"><el-switch v-model="settings.backfill_current_season" /></el-form-item>
+                  <el-form-item label="自动生成 NFO"><el-switch v-model="settings.auto_generate_nfo" /></el-form-item>
                 </div>
               </el-tab-pane>
               <el-tab-pane label="自动选择">
-                <div class="form-row">
-                  <el-form-item label="唯一匹配自动下载"><el-switch v-model="settings.auto_download_unique" /></el-form-item>
-                  <el-form-item label="按优先级选择"><el-switch v-model="settings.auto_download_by_priority" /></el-form-item>
-                </div>
-                <div class="priority-layout">
-                  <PriorityList title="字幕组优先级" v-model="settings.subtitle_priority" placeholder="添加字幕组" />
-                  <PriorityList title="分辨率优先级" v-model="settings.resolution_priority" placeholder="添加分辨率" />
-                  <PriorityList title="主字幕语言优先级" v-model="settings.language_priority" placeholder="添加主字幕语言" />
-                  <PriorityList title="副字幕语言优先级" v-model="settings.secondary_language_priority" placeholder="添加副字幕语言" />
-                </div>
+                <el-tabs tab-position="left" class="nested-settings-tabs">
+                  <el-tab-pane label="动画">
+                    <div class="priority-layout">
+                      <PriorityList title="字幕组优先级" v-model="settings.subtitle_priority" placeholder="添加字幕组" />
+                      <PriorityList title="分辨率优先级" v-model="settings.resolution_priority" placeholder="添加分辨率" />
+                      <PriorityList title="主字幕语言优先级" v-model="settings.language_priority" placeholder="添加主字幕语言" />
+                      <PriorityList title="副字幕语言优先级" v-model="settings.secondary_language_priority" placeholder="添加副字幕语言" />
+                    </div>
+                  </el-tab-pane>
+                  <el-tab-pane label="电影">
+                    <el-alert type="info" :closable="false" show-icon title="电影自动选择规则预留：后续按画质、来源、字幕、版本标签扩展。" />
+                  </el-tab-pane>
+                  <el-tab-pane label="电视剧">
+                    <el-alert type="info" :closable="false" show-icon title="电视剧自动选择规则预留：后续按季、集、字幕和版本标签扩展。" />
+                  </el-tab-pane>
+                </el-tabs>
               </el-tab-pane>
               <el-tab-pane label="下载器">
-                <el-form-item label="下载器执行方式">
-                  <el-radio-group v-model="settings.download_backend">
-                    <el-radio-button label="rclone">rclone 命令</el-radio-button>
-                    <el-radio-button label="api">PikPak API</el-radio-button>
-                    <el-radio-button label="local">本地测试</el-radio-button>
-                  </el-radio-group>
-                </el-form-item>
-                <div class="form-row" v-if="settings.download_backend === 'rclone'">
-                  <el-form-item label="rclone 命令"><el-input v-model="settings.rclone_command" placeholder="rclone" /></el-form-item>
-                  <el-form-item label="rclone remote"><el-input v-model="settings.rclone_remote" placeholder="pikpak" /></el-form-item>
+                <div class="downloader-settings">
+                  <draggable v-model="settings.downloaders" item-key="id" handle=".drag-handle" class="downloader-list">
+                    <template #item="{ element, index }">
+                      <div class="downloader-row">
+                        <span class="drag-handle">⋮⋮</span>
+                        <span class="rank">{{ index + 1 }}</span>
+                        <el-select v-model="element.type" class="downloader-type">
+                          <el-option label="PikPak rclone" value="pikpak_rclone" />
+                          <el-option label="PikPak API" value="pikpak_api" />
+                          <el-option label="aria2" value="aria2" />
+                          <el-option label="qBittorrent" value="qb" />
+                        </el-select>
+                        <el-input v-model="element.name" placeholder="名称" />
+                        <el-input v-model="element.remote_dir" placeholder="远端目录 / 临时目录" />
+                        <el-switch v-model="element.enabled" />
+                        <el-button type="danger" link @click="removeDownloader(index)">删除</el-button>
+                      </div>
+                    </template>
+                  </draggable>
+                  <el-button plain @click="addDownloader">添加下载器</el-button>
                 </div>
-                <el-form-item v-if="settings.download_backend === 'rclone'" label="rclone 配置文件"><el-input v-model="settings.rclone_config_path" placeholder="/data/rclone/rclone.conf" /></el-form-item>
-                <el-form-item v-if="settings.download_backend === 'local'" label="本地测试下载器目录"><el-input v-model="settings.local_downloader_root" placeholder="/data/local-downloader" /></el-form-item>
-                <el-form-item label="认证方式">
-                  <el-radio-group v-model="settings.pikpak_auth_mode">
-                    <el-radio-button label="token">Access + Refresh Token</el-radio-button>
-                    <el-radio-button label="password">账号密码</el-radio-button>
-                  </el-radio-group>
-                </el-form-item>
-                <div class="form-row">
-                  <el-form-item label="Access Token"><el-input v-model="settings.pikpak_access_token" type="password" show-password /></el-form-item>
-                  <el-form-item label="Refresh Token"><el-input v-model="settings.pikpak_refresh_token" type="password" show-password /></el-form-item>
-                </div>
-                <div class="form-row">
-                  <el-form-item label="用户名"><el-input v-model="settings.pikpak_username" /></el-form-item>
-                  <el-form-item label="密码"><el-input v-model="settings.pikpak_password" type="password" show-password /></el-form-item>
-                </div>
-                <el-form-item label="PikPak 代理"><el-input v-model="settings.pikpak_proxy" placeholder="通常留空" /></el-form-item>
               </el-tab-pane>
               <el-tab-pane label="媒体库">
                 <el-alert
                   type="info"
                   show-icon
                   :closable="false"
-                  title="建议外层目录只保留作品总名，季信息放在 Season 目录层，例如：作品名 (2026) [bangumi-123456] / Season 01。"
+                  title="媒体根目录固定为容器内 media，系统会自动使用 media/anime、media/movies、media/tv。"
                   class="settings-alert"
                 />
-                <div class="form-row">
-                  <el-form-item label="下载器远端目录"><el-input v-model="settings.library_root" /></el-form-item>
-                <el-form-item label="默认本地媒体根目录"><el-input v-model="settings.local_library_root" placeholder="/media/autoanime" /></el-form-item>
+                <div class="media-root-grid">
+                  <div><span>动画</span><code>media/anime</code></div>
+                  <div><span>电影</span><code>media/movies</code></div>
+                  <div><span>电视剧</span><code>media/tv</code></div>
                 </div>
-                <div class="media-library-settings">
-                  <div v-for="library in dashboard.media_libraries" :key="library.id" class="media-library-setting-row">
-                    <div>
-                      <strong>{{ library.name }}</strong>
-                      <span>{{ library.media_type }} · {{ library.download_strategy }} · {{ Number(library.enabled || 0) ? '启用' : '停用' }}</span>
-                    </div>
-                    <code>{{ library.root_path }}</code>
-                    <el-button type="danger" link @click="deleteMediaLibrary(library.id)">删除</el-button>
-                  </div>
-                </div>
-                <div class="media-library-editor">
-                  <el-input v-model="mediaLibraryForm.name" placeholder="媒体库名称，例如：国漫 / 电影 / 美剧" />
-                  <el-select v-model="mediaLibraryForm.media_type" placeholder="类型">
-                    <el-option label="动画" value="anime" />
-                    <el-option label="电影" value="movie" />
-                    <el-option label="剧集" value="tv" />
-                    <el-option label="其他" value="other" />
-                  </el-select>
-                  <el-input v-model="mediaLibraryForm.root_path" placeholder="/media/autoanime/Library" />
-                  <el-button type="primary" @click="saveMediaLibrary">新增媒体库</el-button>
-                </div>
-                <el-form-item label="追更自动下载到本地"><el-switch v-model="settings.auto_sync_following" /></el-form-item>
-                <el-form-item label="NFO 输出目录"><el-input v-model="settings.nfo_output_root" placeholder="留空；同步后默认写入本地媒体库" /></el-form-item>
-                <el-form-item label="作品目录模板"><el-input v-model="settings.work_dir_template" /></el-form-item>
-                <el-form-item label="季目录模板"><el-input v-model="settings.season_dir_template" /></el-form-item>
-                <el-form-item label="单集名模板"><el-input v-model="settings.episode_name_template" /></el-form-item>
-              </el-tab-pane>
-              <el-tab-pane label="系统">
-                <div class="diagnostics-grid">
-                  <div><span>数据库</span><strong>{{ diagnostics.db_path || '-' }}</strong></div>
-                  <div><span>数据目录可写</span><strong>{{ diagnostics.data_dir_writable ? '是' : '否' }}</strong></div>
-                  <div><span>数据库大小</span><strong>{{ diagnostics.db_size || 0 }} bytes</strong></div>
-                  <div><span>作品 / 条目 / 发布</span><strong>{{ diagnostics.tables?.works || 0 }} / {{ diagnostics.tables?.entries || 0 }} / {{ diagnostics.tables?.releases || 0 }}</strong></div>
-                  <div><span>下载产物 / 本地 / 整理规则</span><strong>{{ diagnostics.tables?.download_artifacts || 0 }} / {{ diagnostics.tables?.local_assets || 0 }} / {{ diagnostics.tables?.sync_rules || 0 }}</strong></div>
-                  <div><span>旧 series 表</span><strong>{{ diagnostics.tables?.legacy_series || 0 }}</strong></div>
-                </div>
-                <el-button :icon="Refresh" @click="reloadDiagnostics">刷新诊断</el-button>
+                <el-form-item label="动画命名模板"><el-input v-model="settings.episode_name_template" /></el-form-item>
+                <el-form-item label="电影命名模板"><el-input v-model="settings.movie_name_template" /></el-form-item>
+                <el-form-item label="电视剧命名模板"><el-input v-model="settings.tv_name_template" /></el-form-item>
               </el-tab-pane>
             </el-tabs>
             <div class="form-actions"><el-button type="primary" size="large" :loading="savingSettings" @click="saveAllSettings">保存设置</el-button></div>
@@ -1654,6 +1612,7 @@ async function reload() {
   try {
     applyDashboard(await getDashboard())
     Object.assign(settings, await getSettings())
+    normalizeSettingsShape()
     if (view.value === 'settings') await reloadDiagnostics()
   } finally {
     loading.value = false
@@ -1776,6 +1735,7 @@ function exportLogs() {
 async function saveAllSettings() {
   savingSettings.value = true
   try {
+    normalizeSettingsShape()
     await saveSettings(settings)
     ElMessage.success('设置已保存')
     await reload()
@@ -1860,6 +1820,35 @@ async function toggleEntrySync(enabled) {
     ElMessage.success(result.message || '同步状态已更新')
   }
   await reload()
+}
+
+function normalizeSettingsShape() {
+  if (!Array.isArray(settings.downloaders)) settings.downloaders = []
+  settings.backfill_current_season = Boolean(settings.backfill_current_season)
+  settings.auto_generate_nfo = settings.auto_generate_nfo !== false
+  settings.movie_name_template = settings.movie_name_template || '{title_cn} ({year})/{title_cn} ({year})'
+  settings.tv_name_template = settings.tv_name_template || '{title_cn} ({year})/Season {season:02d}/{title_cn} - S{season:02d}E{episode:02d}'
+  settings.episode_name_template = settings.episode_name_template || '{title_cn} - S{season:02d}E{episode:02d} - {episode_title}'
+}
+
+function addDownloader() {
+  normalizeSettingsShape()
+  settings.downloaders = [
+    ...settings.downloaders,
+    {
+      id: `downloader-${Date.now()}`,
+      name: 'PikPak',
+      type: 'pikpak_rclone',
+      remote_dir: '/Temp',
+      enabled: true,
+      max_attempts: 3,
+    },
+  ]
+}
+
+function removeDownloader(index) {
+  normalizeSettingsShape()
+  settings.downloaders = settings.downloaders.filter((_, i) => i !== index)
 }
 
 async function archiveCurrentEntry() {
