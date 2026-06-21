@@ -18,10 +18,11 @@ if [ "${AUTOANIME_ALL_PROXY:-}" != "" ]; then
 fi
 
 echo "Stopping existing AutoAnime container..."
-docker compose down --remove-orphans
+docker compose down --remove-orphans || true
+docker rm -f autoanime >/dev/null 2>&1 || true
 
 echo "Building and starting AutoAnime..."
-docker compose up -d --build
+docker compose up -d --build --force-recreate --remove-orphans
 
 echo "Checking container status..."
 docker compose ps

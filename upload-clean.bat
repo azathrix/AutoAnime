@@ -6,17 +6,13 @@ set "ROOT=%ROOT:~0,-1%"
 set "TARGET=%AUTOANIME_UPLOAD_TARGET%"
 if "%TARGET%"=="" set "TARGET=\\InputName\docker\autoanime"
 
-if exist "%ROOT%\package-clean.bat" if exist "%ROOT%\frontend\node_modules\.bin\vite.cmd" (
-  call "%ROOT%\package-clean.bat"
-  if errorlevel 1 (
-    echo Clean package failed.
-    exit /b 1
-  )
-  set "SOURCE=%ROOT%\build\AutoAnime-clean"
-) else (
-  set "SOURCE=%ROOT%"
+call "%ROOT%\package-clean.bat"
+if errorlevel 1 (
+  echo Clean package failed.
+  exit /b 1
 )
 
+set "SOURCE=%ROOT%\build\AutoAnime-clean"
 if not exist "%TARGET%" mkdir "%TARGET%"
 
 robocopy "%SOURCE%" "%TARGET%" ^
@@ -31,7 +27,8 @@ if %RC% GEQ 8 (
   exit /b %RC%
 )
 
-echo Uploaded source to %TARGET%
+echo Uploaded clean package to %TARGET%
 echo Deploy command on NAS:
-echo cd /volume1/docker/autoanime ^&^& docker compose down --remove-orphans ^&^& docker compose up -d --build
+echo cd /volume1/docker/autoanime ^&^& ./deploy-nas.sh
 exit /b 0
+
