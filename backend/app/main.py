@@ -1426,6 +1426,7 @@ def dashboard_data() -> dict[str, Any]:
         seasonal_sync_calendar = conn.execute(
             """
             SELECT la.id,
+              e.id AS entry_id,
               la.local_path,
               la.updated_at AS synced_at,
               ca.episode_number,
@@ -1444,7 +1445,6 @@ def dashboard_data() -> dict[str, Any]:
             JOIN entries e ON e.id=r.entry_id
             JOIN seasonal_entries se ON se.entry_id=e.id
             JOIN works w ON w.id=e.work_id
-            JOIN sync_rules sr ON sr.entry_id=e.id AND sr.sync_enabled=1
             WHERE la.status='synced'
               AND COALESCE(e.hidden, 0)=0
               AND COALESCE(se.following, 1)=1
@@ -1475,7 +1475,6 @@ def dashboard_data() -> dict[str, Any]:
             JOIN entries e ON e.id=r.entry_id
             JOIN seasonal_entries se ON se.entry_id=e.id
             JOIN works w ON w.id=e.work_id
-            JOIN sync_rules sr ON sr.entry_id=e.id AND sr.sync_enabled=1
             LEFT JOIN download_artifacts ca ON ca.release_id=r.id
             LEFT JOIN local_assets la ON la.release_id=r.id
             WHERE COALESCE(e.hidden, 0)=0

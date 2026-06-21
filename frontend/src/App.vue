@@ -508,10 +508,6 @@
             <div class="anime-body">
               <h3>{{ entryTitle(item) }}</h3>
               <p>{{ item.entry_scope_label || item.entry_secondary_title || item.bangumi_id || 'Season 01' }}</p>
-              <div class="tagline">
-                <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
-                <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
-              </div>
               <div v-if="entryTags(item).length" class="mini-tag-row">
                 <span v-for="tag in entryTags(item).slice(0, 3)" :key="tag">{{ tag }}</span>
               </div>
@@ -654,7 +650,7 @@
                 <div class="tagline">
                   <el-tag size="small">{{ mediaTypeLabel(selectedEntry.media_type) }}</el-tag>
                   <el-tag size="small" type="info">{{ regionLabel(selectedEntry.region) }}</el-tag>
-                  <el-tag size="small" type="success">可观看 {{ watchableCount(selectedEntryStats) }} 集</el-tag>
+                  <el-tag v-if="selectedEntryDomain === 'seasonal'" size="small" type="success">可观看 {{ watchableCount(selectedEntryStats) }} 集</el-tag>
                   <el-tag v-if="selectedEntryDomain === 'seasonal'" size="small" type="primary">追番中</el-tag>
                 </div>
               </div>
@@ -1363,12 +1359,7 @@ function entryTitle(item) {
 
 function watchableCount(item) {
   if (!item) return 0
-  const runtimeReady = entryRuntime(item).ready_count
-  return Math.max(
-    Number(item.local_asset_count || 0),
-    Number(item.downloaded_count || 0),
-    Number(runtimeReady || 0),
-  )
+  return Number(item.local_asset_count || 0)
 }
 
 function parseDateValue(value) {
@@ -1380,14 +1371,6 @@ function parseDateValue(value) {
 function hasRecentUpdate(item) {
   const entryId = Number(item?.id || item?.entry_id || 0)
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
-  const direct = [
-    item?.updated_at,
-    item?.synced_at,
-    item?.latest_release_at,
-    item?.last_release_at,
-    item?.published_at,
-  ].some(value => parseDateValue(value) >= cutoff)
-  if (direct) return true
   return [...(dashboard.seasonal_update_calendar || []), ...(dashboard.seasonal_sync_calendar || [])].some(row => {
     if (Number(row.entry_id || 0) !== entryId) return false
     return parseDateValue(row.updated_at || row.synced_at || row.published_at) >= cutoff
