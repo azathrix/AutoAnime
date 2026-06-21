@@ -1694,6 +1694,7 @@ async function runAction(path) {
 
 function openRssDialog() {
   rssForm.name = rssForm.name || 'Mikan RSS'
+  rssForm.url = rssForm.url || settings.rss_url || ''
   rssForm.kind = 'mikan'
   rssDialogOpen.value = true
 }
@@ -1703,8 +1704,19 @@ async function saveRssSubscription() {
     ElMessage.warning('RSS 地址不能为空')
     return
   }
-  ElMessage.info('RSS 订阅接口会在下一阶段接入，当前仍使用设置页的 Mikan RSS。')
-  rssDialogOpen.value = false
+  try {
+    await postAction('/rss-subscriptions', {
+      name: rssForm.name.trim() || 'Mikan RSS',
+      url: rssForm.url.trim(),
+      kind: rssForm.kind || 'mikan',
+      enabled: true,
+    })
+    ElMessage.success('RSS 订阅已保存')
+    rssDialogOpen.value = false
+    await reload()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
 }
 
 function openMediaWizard(mode) {

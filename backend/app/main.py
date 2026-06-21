@@ -1828,6 +1828,8 @@ async def api_create_rss_subscription(payload: RssSubscriptionPayload) -> dict[s
             (payload.name.strip() or "Mikan RSS", url, kind, int(payload.enabled), ts, ts),
         )
         row = conn.execute("SELECT * FROM rss_subscriptions WHERE url=?", (url,)).fetchone()
+    if payload.enabled:
+        save_settings({"rss_url": url})
     log("info", f"RSS 订阅已保存: kind={kind} url={url}")
     return {"status": "saved", "item": row_to_dict(row)}
 
@@ -1854,6 +1856,8 @@ async def api_update_rss_subscription(subscription_id: int, payload: RssSubscrip
             (payload.name.strip() or "Mikan RSS", url, kind, int(payload.enabled), ts, subscription_id),
         )
         row = conn.execute("SELECT * FROM rss_subscriptions WHERE id=?", (subscription_id,)).fetchone()
+    if payload.enabled:
+        save_settings({"rss_url": url})
     return {"status": "saved", "item": row_to_dict(row)}
 
 
