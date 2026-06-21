@@ -1609,7 +1609,7 @@ function queueState(queue) {
   if (queue.queue_state === 'debouncing') return '聚合中'
   if (queue.queue_state === 'rerun_pending') return '待重跑'
   if (queue.queue_state === 'cooldown' || Number(queue.waiting || 0) > 0) return '等待重试'
-  if (queue.queue_state === 'ready' || Number(queue.pending || 0) > 0) return '待调度'
+  if (queue.queue_state === 'ready' || Number(queue.pending || 0) > 0) return '可执行'
   return '空闲'
 }
 
@@ -1623,7 +1623,7 @@ function queuePendingHint(queue) {
   if (key === 'backfill') return '待处理表示番剧已入库，等待去 Mikan 番组页补抓历史条目。'
   if (key === 'metadata') return '待处理表示已拿到 Bangumi 线索，等待补全正式元数据。'
   if (key === 'mikan_match') return '待处理表示 RSS 候选已入队，等待解析对应的 Mikan/Bangumi 关联。'
-  return '任务已入队，等待调度执行。'
+  return '任务已入队，等待执行。'
 }
 
 function seasonalStatusSummary(item) {
