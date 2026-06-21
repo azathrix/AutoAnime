@@ -14,6 +14,8 @@ DEFAULT_SETTINGS = {
     "rss_proxy": "",
     "scan_interval_minutes": "60",
     "auto_scan": "false",
+    "queue_dispatch_enabled": "true",
+    "queue_dispatch_interval_minutes": "1",
     "auto_download_unique": "true",
     "auto_download_by_priority": "true",
     "auto_generate_nfo": "true",

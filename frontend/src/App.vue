@@ -225,9 +225,19 @@
                 </div>
                 <div class="detail-summary-grid">
                   <div><span>间隔</span><strong>{{ selectedScheduledJob.interval_minutes || 0 }} 分钟</strong></div>
+                  <div><span>启用</span><strong>{{ Number(selectedScheduledJob.enabled ?? 1) ? '是' : '否' }}</strong></div>
                   <div><span>防抖</span><strong>{{ selectedScheduledJob.debounce_seconds || 0 }} 秒</strong></div>
                   <div><span>最近状态</span><strong>{{ selectedScheduledJob.last_status || '-' }}</strong></div>
                   <div><span>最近执行</span><strong>{{ selectedScheduledJob.latest_run?.started_at || '-' }}</strong></div>
+                </div>
+                <div class="scheduled-config-panel">
+                  <el-form label-position="top">
+                    <div class="form-row">
+                      <el-form-item label="启用定时任务"><el-switch v-model="scheduledJobForm.enabled" /></el-form-item>
+                      <el-form-item label="执行间隔（分钟）"><el-input-number v-model="scheduledJobForm.interval_minutes" :min="1" /></el-form-item>
+                    </div>
+                    <el-button type="primary" plain @click="saveScheduledJob">保存定时配置</el-button>
+                  </el-form>
                 </div>
                 <el-table :data="selectedScheduledRuns" height="520" class="candidate-table">
                   <el-table-column prop="status" label="状态" width="110">
@@ -715,25 +725,79 @@
                 </template>
               </el-table-column>
               <el-table-column prop="local_path" label="本地文件路径" min-width="260" show-overflow-tooltip />
+              <el-table-column label="操作" width="110" fixed="right">
+                <template #default="{ row }">
+                  <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </el-tab-pane>
         </el-tabs>
       </template>
     </el-drawer>
 
-    <el-dialog v-model="rssDialogOpen" title="添加 RSS 订阅" width="560px">
-      <el-form :model="rssForm" label-position="top">
-        <el-form-item label="订阅名称"><el-input v-model="rssForm.name" placeholder="例如：Mikan 追番" /></el-form-item>
-        <el-form-item label="RSS 地址"><el-input v-model="rssForm.url" placeholder="https://mikanani.me/RSS/..." /></el-form-item>
-        <el-form-item label="订阅类型">
-          <el-select v-model="rssForm.kind">
-            <el-option label="Mikan" value="mikan" />
-          </el-select>
-        </el-form-item>
+    <el-dialog v-model="episodeResourceDialogOpen" title="配置集数资源" width="620px">
+      <el-form :model="episodeResourceForm" label-position="top">
+        <div class="form-row">
+          <el-form-item label="集数"><el-input v-model="episodeResourceForm.episode_number" disabled /></el-form-item>
+          <el-form-item label="分辨率"><el-input v-model="episodeResourceForm.resolution" placeholder="1080p" /></el-form-item>
+        </div>
+        <el-form-item label="当前资源标题"><el-input v-model="episodeResourceForm.title" /></el-form-item>
+        <div class="form-row">
+          <el-form-item label="字幕组"><el-input v-model="episodeResourceForm.subtitle_group" /></el-form-item>
+          <el-form-item label="语言"><el-input v-model="episodeResourceForm.language" /></el-form-item>
+        </div>
+        <div class="form-row">
+          <el-form-item label="字幕类型">
+            <el-select v-model="episodeResourceForm.subtitle_format" clearable>
+              <el-option label="内嵌" value="embedded" />
+              <el-option label="内封" value="muxed" />
+              <el-option label="外挂" value="external" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="是否内嵌"><el-switch v-model="episodeResourceForm.embedded" /></el-form-item>
+        </div>
+        <el-form-item label="外挂字幕文件"><el-input v-model="episodeResourceForm.subtitle_path" placeholder="留空表示无外挂字幕" /></el-form-item>
       </el-form>
       <template #footer>
+        <el-button @click="episodeResourceDialogOpen = false">取消</el-button>
+        <el-button type="primary" @click="saveEpisodeResource">保存配置</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="rssDialogOpen" title="RSS 订阅" width="760px">
+      <div class="rss-dialog-layout">
+        <el-form :model="rssForm" label-position="top" class="rss-form">
+          <el-form-item label="订阅名称"><el-input v-model="rssForm.name" placeholder="例如：Mikan 追番" /></el-form-item>
+          <el-form-item label="RSS 地址"><el-input v-model="rssForm.url" placeholder="https://mikanani.me/RSS/..." /></el-form-item>
+          <div class="form-row">
+            <el-form-item label="订阅类型">
+              <el-select v-model="rssForm.kind">
+                <el-option label="Mikan" value="mikan" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="启用"><el-switch v-model="rssForm.enabled" /></el-form-item>
+          </div>
+        </el-form>
+        <div class="rss-subscription-list" v-loading="rssLoading">
+          <div v-for="item in rssSubscriptions" :key="item.id" class="rss-subscription-row">
+            <div>
+              <strong>{{ item.name || 'Mikan RSS' }}</strong>
+              <span>{{ item.kind }} · {{ Number(item.enabled || 0) ? '启用' : '停用' }}</span>
+              <code>{{ item.url }}</code>
+            </div>
+            <div class="rss-row-actions">
+              <el-button size="small" plain @click="editRssSubscription(item)">编辑</el-button>
+              <el-button size="small" type="danger" plain @click="deleteRssSubscription(item.id)">删除</el-button>
+            </div>
+          </div>
+          <el-empty v-if="!rssSubscriptions.length && !rssLoading" description="暂无 RSS 订阅" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button v-if="rssEditingId" plain @click="resetRssForm">新增模式</el-button>
         <el-button @click="rssDialogOpen = false">取消</el-button>
-        <el-button type="primary" @click="saveRssSubscription">保存订阅</el-button>
+        <el-button type="primary" @click="saveRssSubscription">{{ rssEditingId ? '保存修改' : '保存订阅' }}</el-button>
       </template>
     </el-dialog>
 
@@ -776,7 +840,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
 import { Calendar, Collection, DataBoard, Document, Refresh, Search, Setting } from '@element-plus/icons-vue'
-import { deleteAction, getDashboard, getDiagnostics, getLibraryItem, getSeasonalItem, getSettings, postAction, saveLibraryItem, saveSeasonalItem, saveSettings } from './api'
+import { deleteAction, getAction, getDashboard, getDiagnostics, getLibraryItem, getSeasonalItem, getSettings, postAction, putAction, saveLibraryItem, saveSeasonalItem, saveSettings } from './api'
 import { APP_BUILD, APP_VERSION } from './version'
 
 const view = ref('dashboard')
@@ -793,10 +857,13 @@ const consoleNavMode = ref('队列')
 const calendarWeek = ref('')
 const advancedFilterOpen = ref(false)
 const rssDialogOpen = ref(false)
+const rssLoading = ref(false)
+const rssEditingId = ref(0)
 const mediaWizardOpen = ref(false)
 const mediaWizardMode = ref('import')
 const mediaWizardStep = ref(0)
 const mediaWizardSeed = ref('')
+const episodeResourceDialogOpen = ref(false)
 let refreshTimer = null
 let dashboardStream = null
 let streamRetryTimer = null
@@ -839,6 +906,25 @@ const rssForm = reactive({
   name: '',
   url: '',
   kind: 'mikan',
+  enabled: true,
+})
+const rssSubscriptions = ref([])
+const episodeResourceForm = reactive({
+  episode_id: 0,
+  resource_id: 0,
+  subtitle_id: 0,
+  episode_number: '',
+  title: '',
+  subtitle_group: '',
+  resolution: '',
+  language: '',
+  subtitle_format: '',
+  subtitle_path: '',
+  embedded: false,
+})
+const scheduledJobForm = reactive({
+  enabled: true,
+  interval_minutes: 1,
 })
 
 const pageTitle = computed(() => ({
@@ -1079,11 +1165,18 @@ const mediaWizardTitle = computed(() => {
 const entryResourceRows = computed(() => {
   const detail = selectedEntryDetail.value || {}
   const rows = new Map()
+  const episodeIds = new Map()
+  for (const episode of detail.episodes || []) {
+    episodeIds.set(Number(episode.episode_number || 0), Number(episode.id || 0))
+  }
   for (const resource of detail.episode_resources || []) {
     const episode = Number(resource.episode_number || 0)
     const key = episode > 0 ? `episode:${episode}` : `resource:${resource.id}`
     rows.set(key, {
       key,
+      episode_id: Number(resource.episode_id || episodeIds.get(episode) || 0),
+      resource_id: Number(resource.id || 0),
+      subtitle_id: 0,
       episode_number: episode || '-',
       release_id: resource.release_id || 0,
       resource_title: resource.title || resource.source_ref || '-',
@@ -1102,6 +1195,7 @@ const entryResourceRows = computed(() => {
     const key = episode > 0 ? `episode:${episode}` : `subtitle:${subtitle.id}`
     const row = rows.get(key)
     if (!row) continue
+    row.subtitle_id = Number(subtitle.id || 0)
     row.subtitle_file = subtitle.subtitle_path || row.subtitle_file
     row.subtitle_format = subtitle.subtitle_format || row.subtitle_format
     row.language = subtitle.language || row.language
@@ -1113,6 +1207,9 @@ const entryResourceRows = computed(() => {
     if (previous && (previous.selected || !release.selected)) continue
     rows.set(key, {
       key,
+      episode_id: Number(episodeIds.get(episode) || 0),
+      resource_id: 0,
+      subtitle_id: 0,
       episode_number: episode || '-',
       release_id: release.id,
       resource_title: release.title || release.guid || '-',
@@ -1131,6 +1228,9 @@ const entryResourceRows = computed(() => {
     const key = episode > 0 ? `episode:${episode}` : `artifact:${artifact.id}`
     const row = rows.get(key) || {
       key,
+      episode_id: Number(episodeIds.get(episode) || 0),
+      resource_id: 0,
+      subtitle_id: 0,
       episode_number: episode || '-',
       resource_title: artifact.remote_path || artifact.provider_file_id || '-',
       subtitle_group: '-',
@@ -1149,6 +1249,9 @@ const entryResourceRows = computed(() => {
     const key = episode > 0 ? `episode:${episode}` : `local:${asset.id}`
     const row = rows.get(key) || {
       key,
+      episode_id: Number(episodeIds.get(episode) || 0),
+      resource_id: 0,
+      subtitle_id: 0,
       episode_number: episode || '-',
       resource_title: asset.local_path || '-',
       subtitle_group: '-',
@@ -1454,6 +1557,7 @@ function queueBadge(queue) {
 function scheduledBadgeText(jobKey) {
   const job = (dashboard.scheduled_jobs || []).find(item => item.job_key === jobKey)
   if (!job) return '-'
+  if (!Number(job.enabled ?? 1)) return '关闭'
   if (job.last_status === 'failed') return '失败'
   if (job.last_status === 'running') return '运行'
   const minutes = Number(job.interval_minutes || 0)
@@ -1463,6 +1567,7 @@ function scheduledBadgeText(jobKey) {
 function scheduledBadgeType(jobKey) {
   const job = (dashboard.scheduled_jobs || []).find(item => item.job_key === jobKey)
   if (!job) return 'info'
+  if (!Number(job.enabled ?? 1)) return 'info'
   if (job.last_status === 'failed') return 'danger'
   if (job.last_status === 'running') return 'warning'
   return 'success'
@@ -1673,11 +1778,58 @@ async function runAction(path) {
   }
 }
 
-function openRssDialog() {
-  rssForm.name = rssForm.name || 'Mikan RSS'
-  rssForm.url = rssForm.url || settings.rss_url || ''
+function syncScheduledJobForm(job = selectedScheduledJob.value) {
+  scheduledJobForm.enabled = Boolean(Number(job?.enabled ?? 1))
+  scheduledJobForm.interval_minutes = Math.max(1, Number(job?.interval_minutes || 1))
+}
+
+async function saveScheduledJob() {
+  const job = selectedScheduledJob.value
+  if (!job?.job_key) return
+  try {
+    await putAction(`/scheduled-jobs/${job.job_key}`, {
+      enabled: scheduledJobForm.enabled,
+      interval_minutes: scheduledJobForm.interval_minutes,
+    })
+    ElMessage.success('定时配置已保存')
+    await reload()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function loadRssSubscriptions() {
+  rssLoading.value = true
+  try {
+    const result = await getAction('/rss-subscriptions')
+    rssSubscriptions.value = result.items || []
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  } finally {
+    rssLoading.value = false
+  }
+}
+
+function resetRssForm() {
+  rssEditingId.value = 0
+  rssForm.name = 'Mikan RSS'
+  rssForm.url = settings.rss_url || ''
   rssForm.kind = 'mikan'
+  rssForm.enabled = true
+}
+
+async function openRssDialog() {
+  resetRssForm()
   rssDialogOpen.value = true
+  await loadRssSubscriptions()
+}
+
+function editRssSubscription(item) {
+  rssEditingId.value = Number(item.id || 0)
+  rssForm.name = item.name || 'Mikan RSS'
+  rssForm.url = item.url || ''
+  rssForm.kind = item.kind || 'mikan'
+  rssForm.enabled = Boolean(Number(item.enabled ?? 1))
 }
 
 async function saveRssSubscription() {
@@ -1686,15 +1838,87 @@ async function saveRssSubscription() {
     return
   }
   try {
-    await postAction('/rss-subscriptions', {
+    const payload = {
       name: rssForm.name.trim() || 'Mikan RSS',
       url: rssForm.url.trim(),
       kind: rssForm.kind || 'mikan',
-      enabled: true,
-    })
+      enabled: rssForm.enabled,
+    }
+    if (rssEditingId.value) {
+      await putAction(`/rss-subscriptions/${rssEditingId.value}`, payload)
+    } else {
+      await postAction('/rss-subscriptions', payload)
+    }
     ElMessage.success('RSS 订阅已保存')
-    rssDialogOpen.value = false
+    resetRssForm()
+    await loadRssSubscriptions()
     await reload()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function deleteRssSubscription(id) {
+  try {
+    await deleteAction(`/rss-subscriptions/${id}`)
+    ElMessage.success('RSS 订阅已删除')
+    if (rssEditingId.value === Number(id)) resetRssForm()
+    await loadRssSubscriptions()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+function openEpisodeResourceEditor(row) {
+  if (!Number(row.episode_id || 0)) {
+    ElMessage.warning('该资源还没有可编辑的集数记录')
+    return
+  }
+  episodeResourceForm.episode_id = Number(row.episode_id || 0)
+  episodeResourceForm.resource_id = Number(row.resource_id || 0)
+  episodeResourceForm.subtitle_id = Number(row.subtitle_id || 0)
+  episodeResourceForm.episode_number = String(row.episode_number || '')
+  episodeResourceForm.title = row.resource_title === '-' ? '' : String(row.resource_title || '')
+  episodeResourceForm.subtitle_group = row.subtitle_group === '-' ? '' : String(row.subtitle_group || '')
+  episodeResourceForm.resolution = row.resolution === '-' ? '' : String(row.resolution || '')
+  episodeResourceForm.language = row.language === '-' ? '' : String(row.language || '')
+  episodeResourceForm.subtitle_format = String(row.subtitle_format || '')
+  episodeResourceForm.subtitle_path = row.subtitle_file === '-' ? '' : String(row.subtitle_file || '')
+  episodeResourceForm.embedded = ['embedded', 'hardsub', 'burned'].includes(String(row.subtitle_format || '').toLowerCase())
+  episodeResourceDialogOpen.value = true
+}
+
+async function saveEpisodeResource() {
+  const episodeId = Number(episodeResourceForm.episode_id || 0)
+  if (!episodeId) {
+    ElMessage.warning('缺少集数记录，无法保存')
+    return
+  }
+  try {
+    await putAction(`/episodes/${episodeId}/resource`, {
+      resource_id: episodeResourceForm.resource_id,
+      title: episodeResourceForm.title,
+      subtitle_group: episodeResourceForm.subtitle_group,
+      resolution: episodeResourceForm.resolution,
+      language: episodeResourceForm.language,
+      subtitle_format: episodeResourceForm.subtitle_format,
+      selected: true,
+    })
+    if (episodeResourceForm.subtitle_path || episodeResourceForm.subtitle_id) {
+      await putAction(`/episodes/${episodeId}/subtitle`, {
+        subtitle_id: episodeResourceForm.subtitle_id,
+        language: episodeResourceForm.language,
+        subtitle_format: episodeResourceForm.subtitle_format,
+        subtitle_path: episodeResourceForm.subtitle_path,
+        embedded: episodeResourceForm.embedded,
+        selected: true,
+      })
+    }
+    ElMessage.success('集数资源已保存')
+    episodeResourceDialogOpen.value = false
+    if (selectedEntry.value?.id) {
+      await openEntry(selectedEntry.value.id, selectedEntryDomain.value)
+    }
   } catch (error) {
     ElMessage.error(apiErrorMessage(error))
   }
@@ -1945,6 +2169,9 @@ watch([autoRefresh, refreshInterval], () => {
 watch(entryDrawerOpen, startAutoRefresh)
 watch(consoleNavMode, value => {
   selectedConsoleSection.value = ''
+})
+watch(selectedScheduledJob, job => {
+  syncScheduledJobForm(job)
 })
 watch(view, value => {
   if (['seasonal', 'library', 'movies', 'tv'].includes(value)) {

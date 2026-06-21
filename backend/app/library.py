@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
 
 from .database import connect
@@ -178,6 +179,18 @@ def local_series_path(entry: dict, settings: dict[str, str]) -> Path:
 
 def target_dir(series: dict, settings: dict[str, str]) -> str:
     root = settings.get("library_root") or "/Anime"
+    try:
+        downloaders = json.loads(settings.get("downloaders_json") or "[]")
+    except json.JSONDecodeError:
+        downloaders = []
+    if isinstance(downloaders, list):
+        for item in downloaders:
+            if not isinstance(item, dict) or item.get("enabled") is False:
+                continue
+            remote_dir = str(item.get("remote_dir") or "").strip()
+            if remote_dir:
+                root = remote_dir
+                break
     root = "/" + root.strip("/")
     return "/".join(
         [

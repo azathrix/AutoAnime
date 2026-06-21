@@ -60,6 +60,8 @@ class SettingsPayload(BaseModel):
     rss_proxy: str = ""
     scan_interval_minutes: int = 60
     auto_scan: bool = False
+    queue_dispatch_enabled: bool = True
+    queue_dispatch_interval_minutes: int = 1
     auto_download_unique: bool = True
     auto_download_by_priority: bool = True
     auto_generate_nfo: bool = True
@@ -139,6 +141,11 @@ class EpisodeSubtitlePayload(BaseModel):
     subtitle_path: str = ""
     embedded: bool = False
     selected: bool = True
+
+
+class ScheduledJobPayload(BaseModel):
+    enabled: bool = True
+    interval_minutes: int = 1
 
 
 class PipelineStartPayload(BaseModel):
@@ -452,6 +459,8 @@ def settings_response() -> dict[str, Any]:
     result: dict[str, Any] = dict(settings)
     result["scan_interval_minutes"] = int(settings.get("scan_interval_minutes") or 60)
     result["auto_scan"] = bool_setting(settings.get("auto_scan", "false"))
+    result["queue_dispatch_enabled"] = bool_setting(settings.get("queue_dispatch_enabled", "true"))
+    result["queue_dispatch_interval_minutes"] = int(settings.get("queue_dispatch_interval_minutes") or 1)
     result["auto_download_unique"] = bool_setting(settings.get("auto_download_unique", "true"))
     result["auto_download_by_priority"] = bool_setting(settings.get("auto_download_by_priority", "true"))
     result["auto_sync_following"] = bool_setting(settings.get("auto_sync_following", "false"))
@@ -1011,12 +1020,28 @@ def reschedule() -> None:
     ensure_queue_handlers()
     settings = get_settings()
     minutes = max(1, int(settings.get("scan_interval_minutes") or 60))
-    runtime_store.set_scheduler_sync("rss_scan", interval_minutes=minutes, updated_at=now())
-    runtime_store.set_scheduler_sync("queue_dispatch", interval_minutes=1, debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
+    queue_minutes = max(1, int(settings.get("queue_dispatch_interval_minutes") or 1))
+    rss_enabled = bool_setting(settings.get("auto_scan", "false"))
+    queue_dispatch_enabled = bool_setting(settings.get("queue_dispatch_enabled", "true"))
+    runtime_store.set_scheduler_sync(
+        "rss_scan",
+        interval_minutes=minutes,
+        enabled=int(rss_enabled),
+        updated_at=now(),
+    )
+    runtime_store.set_scheduler_sync(
+        "queue_dispatch",
+        interval_minutes=queue_minutes,
+        enabled=int(queue_dispatch_enabled),
+        debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS),
+        updated_at=now(),
+    )
     for name in queue_handlers:
         runtime_store.set_scheduler_sync(queue_job_key(name), debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
-    scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes, id="rss_scan")
-    scheduler.add_job(lambda: asyncio.create_task(dispatch_ready_queues()), "interval", minutes=1, id="queue_dispatch")
+    if rss_enabled:
+        scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes, id="rss_scan")
+    if queue_dispatch_enabled:
+        scheduler.add_job(lambda: asyncio.create_task(dispatch_ready_queues()), "interval", minutes=queue_minutes, id="queue_dispatch")
 
 
 def runtime_generation_alive(expected: str) -> bool:
@@ -1765,6 +1790,8 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "rss_proxy": payload.rss_proxy.strip(),
             "scan_interval_minutes": payload.scan_interval_minutes,
             "auto_scan": str(payload.auto_scan).lower(),
+            "queue_dispatch_enabled": str(payload.queue_dispatch_enabled).lower(),
+            "queue_dispatch_interval_minutes": payload.queue_dispatch_interval_minutes,
             "auto_download_unique": str(payload.auto_download_unique).lower(),
             "auto_download_by_priority": str(payload.auto_download_by_priority).lower(),
             "auto_generate_nfo": str(payload.auto_generate_nfo).lower(),
@@ -1847,6 +1874,27 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
     reschedule()
     log("info", "全局设置已保存")
     return settings_response()
+
+
+@app.put("/api/scheduled-jobs/{job_key}")
+async def api_update_scheduled_job(job_key: str, payload: ScheduledJobPayload) -> dict[str, Any]:
+    interval = max(1, int(payload.interval_minutes or 1))
+    enabled = str(bool(payload.enabled)).lower()
+    if job_key == "rss_scan":
+        save_settings({
+            "auto_scan": enabled,
+            "scan_interval_minutes": str(interval),
+        })
+    elif job_key == "queue_dispatch":
+        save_settings({
+            "queue_dispatch_enabled": enabled,
+            "queue_dispatch_interval_minutes": str(interval),
+        })
+    else:
+        raise HTTPException(status_code=404, detail="定时任务不存在")
+    reschedule()
+    log("info", f"定时任务已更新: job_key={job_key} enabled={enabled} interval={interval}m")
+    return {"status": "saved", "settings": settings_response()}
 
 
 @app.get("/api/rss-subscriptions")
@@ -1964,6 +2012,10 @@ async def api_update_episode_resource(episode_id: int, payload: EpisodeResourceP
                 "UPDATE episode_resources SET selected=0 WHERE entry_id=? AND episode_number=?",
                 (episode["entry_id"], episode["episode_number"]),
             )
+            conn.execute(
+                "UPDATE releases SET selected=0 WHERE entry_id=? AND episode_number=?",
+                (episode["entry_id"], episode["episode_number"]),
+            )
         if payload.resource_id:
             conn.execute(
                 """
@@ -1995,6 +2047,8 @@ async def api_update_episode_resource(episode_id: int, payload: EpisodeResourceP
                 ),
             )
             row = conn.execute("SELECT * FROM episode_resources WHERE id=?", (payload.resource_id,)).fetchone()
+            if payload.selected and row and int(row["release_id"] or 0) > 0:
+                conn.execute("UPDATE releases SET selected=1 WHERE id=?", (int(row["release_id"]),))
         else:
             conn.execute(
                 """

@@ -9,6 +9,10 @@ export async function getDashboard() {
   return (await api.get('/dashboard')).data
 }
 
+export async function getAction(path) {
+  return (await api.get(path)).data
+}
+
 export async function getSettings() {
   return (await api.get('/settings')).data
 }
@@ -55,6 +59,10 @@ export async function saveLibraryItem(id, payload) {
 
 export async function postAction(path, payload = undefined) {
   return (await api.post(path, payload)).data
+}
+
+export async function putAction(path, payload = undefined) {
+  return (await api.put(path, payload)).data
 }
 
 export async function deleteAction(path) {

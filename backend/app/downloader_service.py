@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import json
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +12,60 @@ from . import rclone_service
 from .pikpak_service import build_client, get_cloud_download_url, list_offline_tasks, submit_offline_download
 
 
+SUPPORTED_DOWNLOADER_TYPES = {
+    "pikpak_rclone": "rclone",
+    "pikpak_api": "api",
+    "rclone": "rclone",
+    "api": "api",
+    "local": "local",
+}
+
+
+def configured_downloaders(settings: dict[str, str]) -> list[dict[str, Any]]:
+    raw = settings.get("downloaders_json") or "[]"
+    try:
+        rows = json.loads(raw)
+    except json.JSONDecodeError:
+        rows = []
+    if not isinstance(rows, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(rows):
+        if not isinstance(item, dict) or item.get("enabled") is False:
+            continue
+        item_type = str(item.get("type") or "").strip().lower()
+        backend = SUPPORTED_DOWNLOADER_TYPES.get(item_type)
+        if not backend:
+            continue
+        result.append({
+            **item,
+            "_backend": backend,
+            "_priority": index,
+        })
+    return result
+
+
+def active_downloader(settings: dict[str, str]) -> dict[str, Any]:
+    rows = configured_downloaders(settings)
+    if rows:
+        return rows[0]
+    return {
+        "type": settings.get("download_backend") or "rclone",
+        "name": settings.get("download_backend") or "rclone",
+        "_backend": (settings.get("download_backend") or "rclone").strip().lower() or "rclone",
+    }
+
+
 def backend_key(settings: dict[str, str]) -> str:
-    return (settings.get("download_backend") or "rclone").strip().lower() or "rclone"
+    return str(active_downloader(settings).get("_backend") or "rclone").strip().lower() or "rclone"
 
 
 def provider_key(settings: dict[str, str]) -> str:
     backend = backend_key(settings)
+    downloader = active_downloader(settings)
+    provider_name = str(downloader.get("name") or downloader.get("type") or "").strip()
+    if provider_name:
+        return provider_name
     if backend == "rclone":
         return (settings.get("rclone_remote") or "rclone").strip().rstrip(":") or "rclone"
     if backend == "local":
