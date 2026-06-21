@@ -390,7 +390,6 @@
               <div class="tagline">
                 <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
                 <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
-                <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || 'season' }}</el-tag>
               </div>
               <div v-if="entryTags(item).length" class="mini-tag-row">
                 <span v-for="tag in entryTags(item).slice(0, 3)" :key="tag">{{ tag }}</span>
@@ -456,16 +455,6 @@
         </div>
         <div v-if="advancedFilterOpen" class="filter-board">
           <div class="filter-row">
-            <span>媒体库</span>
-            <button :class="{ active: !libraryLibraryFilter }" @click="libraryLibraryFilter = ''">全部</button>
-            <button
-              v-for="item in libraryLibraryOptions"
-              :key="item.id"
-              :class="{ active: Number(libraryLibraryFilter || 0) === Number(item.id) }"
-              @click="libraryLibraryFilter = Number(item.id)"
-            >{{ item.name }}</button>
-          </div>
-          <div class="filter-row">
             <span>年份</span>
             <button :class="{ active: !libraryYearFilter }" @click="libraryYearFilter = ''">全部</button>
             <button
@@ -524,11 +513,10 @@
             </div>
             <div class="anime-body">
               <h3>{{ entryTitle(item) }}</h3>
-              <p>{{ item.entry_scope_label || item.entry_secondary_title || item.year || '未分季' }}</p>
+              <p>{{ item.entry_scope_label || item.entry_secondary_title || item.bangumi_id || 'Season 01' }}</p>
               <div class="tagline">
                 <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
                 <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
-                <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || mediaTypeLabel(item.media_type) }}</el-tag>
               </div>
               <div v-if="entryTags(item).length" class="mini-tag-row">
                 <span v-for="tag in entryTags(item).slice(0, 3)" :key="tag">{{ tag }}</span>
@@ -898,7 +886,6 @@ const libraryYearFilter = ref('')
 const libraryScopeFilter = ref('')
 const libraryMediaTypeFilter = ref('')
 const libraryRegionFilter = ref('')
-const libraryLibraryFilter = ref('')
 const libraryTagFilters = ref([])
 const entryDrawerOpen = ref(false)
 const selectedEntryDetail = ref(null)
@@ -923,11 +910,6 @@ const dashboard = reactive({
 })
 const settings = reactive({})
 const diagnostics = reactive({ tables: {} })
-const mediaLibraryForm = reactive({
-  name: '',
-  media_type: 'anime',
-  root_path: '',
-})
 const rssForm = reactive({
   name: '',
   url: '',
@@ -1033,10 +1015,6 @@ const currentTagOptions = computed(() => {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, 36)
     .map(item => item[0])
-})
-const libraryLibraryOptions = computed(() => {
-  const used = new Set(libraryRows.value.map(item => Number(item.target_library_id || 0)).filter(Boolean))
-  return (dashboard.media_libraries || []).filter(item => used.has(Number(item.id || 0)))
 })
 const libraryMediaTypeOptions = computed(() => {
   const values = new Set()
@@ -1312,7 +1290,6 @@ const filteredSeries = computed(() => {
   return source.filter(item => {
     const matched = !text || `${item.entry_display_title || item.display_title || item.title_cn} ${item.work_display_title || item.work_title || item.title_root || ''} ${item.entry_scope_label || ''} ${item.bangumi_id || ''} ${item.tmdb_id || ''}`.toLowerCase().includes(text)
     if (!matched) return false
-    if (isMediaCatalogView.value && libraryLibraryFilter.value && Number(item.target_library_id || 0) !== Number(libraryLibraryFilter.value)) return false
     if (libraryMediaTypeFilter.value && entryMediaType(item) !== String(libraryMediaTypeFilter.value)) return false
     if (libraryRegionFilter.value && String(item.region || '') !== String(libraryRegionFilter.value)) return false
     if (libraryYearFilter.value && Number(item.year || 0) !== Number(libraryYearFilter.value)) return false
@@ -1323,65 +1300,6 @@ const filteredSeries = computed(() => {
     }
     return true
   })
-})
-
-const libraryWorks = computed(() => {
-  const groups = new Map()
-  for (const item of filteredSeries.value) {
-    const key = `${item.work_id || 0}:${item.work_display_title || item.work_title || item.title_root || item.display_title || item.title_cn || 'work'}`
-    if (!groups.has(key)) {
-      groups.set(key, {
-        key,
-        work_id: item.work_id || 0,
-        work_title: item.work_display_title || item.work_title || item.title_root || item.display_title || item.title_cn || '未命名作品',
-        poster_url: item.poster_url || '',
-        year_label: item.year ? `${item.year}` : '',
-        library_label: libraryName(item.target_library_id),
-        media_type_label: mediaTypeLabel(item.media_type),
-        regions: new Set(),
-        media_types: new Set(),
-        tags: new Set(),
-        entry_count: 0,
-        release_count: 0,
-        download_artifact_count: 0,
-        local_asset_count: 0,
-        watch_status: 'unavailable',
-        watch_status_label: '未缓存',
-        entries: []
-      })
-    }
-    const group = groups.get(key)
-    const runtime = entryRuntime(item)
-    group.entry_count += 1
-    group.release_count += Number(item.release_count || 0)
-    group.download_artifact_count += Number(item.download_artifact_count || 0)
-    group.local_asset_count += Math.max(Number(item.local_asset_count || 0), runtime.ready_count)
-    if (item.region) group.regions.add(item.region)
-    if (item.media_type) group.media_types.add(item.media_type)
-    for (const tag of entryTags(item)) group.tags.add(tag)
-    if (!group.library_label) group.library_label = libraryName(item.target_library_id)
-    group.media_type_label = Array.from(group.media_types).map(mediaTypeLabel).join(' / ') || group.media_type_label
-    if (runtime.status === 'failed') {
-      group.watch_status = 'warning'
-      group.watch_status_label = '需处理'
-    } else if (group.local_asset_count > 0 && group.watch_status !== 'warning') {
-      group.watch_status = 'ready'
-      group.watch_status_label = `可观看 ${group.local_asset_count} 集`
-    } else if (['running', 'waiting', 'pending'].includes(runtime.status) || group.download_artifact_count > 0 || group.release_count > 0) {
-      group.watch_status = 'processing'
-      group.watch_status_label = runtime.label || '处理中'
-    }
-    if (!group.poster_url && item.poster_url) group.poster_url = item.poster_url
-    if (!group.year_label && item.year) group.year_label = `${item.year}`
-    group.entries.push(item)
-  }
-  return Array.from(groups.values()).map(group => ({
-    ...group,
-    regions: Array.from(group.regions),
-    media_types: Array.from(group.media_types),
-    tags: Array.from(group.tags).slice(0, 8),
-    entries: group.entries.sort((a, b) => String(a.display_title || '').localeCompare(String(b.display_title || '')))
-  }))
 })
 
 function taskTag(status) {
@@ -1399,14 +1317,6 @@ function queueTag(queue) {
   if (queue.queue_state === 'debouncing' || queue.queue_state === 'cooldown' || Number(queue.waiting || 0) > 0) return 'info'
   if (Number(queue.pending || 0) > 0) return 'primary'
   return 'success'
-}
-
-function watchStatusTag(item) {
-  const status = String(item?.watch_status || '')
-  if (status === 'ready') return 'success'
-  if (status === 'warning') return 'danger'
-  if (status === 'processing') return 'warning'
-  return 'info'
 }
 
 function mediaTypeLabel(value) {
@@ -1428,11 +1338,6 @@ function regionLabel(value) {
     kr: '韩国',
     other: '其他',
   }[key] || key || '未知'
-}
-
-function libraryName(id) {
-  const row = (dashboard.media_libraries || []).find(item => Number(item.id || 0) === Number(id || 0))
-  return row?.name || ''
 }
 
 function entryMediaType(item) {
@@ -1543,35 +1448,6 @@ function entryRuntime(item) {
   }
 }
 
-function runtimeTag(item) {
-  const status = entryRuntime(item).status
-  if (status === 'failed') return 'danger'
-  if (status === 'running' || status === 'waiting' || status === 'pending') return 'warning'
-  if (status === 'completed') return 'success'
-  return 'info'
-}
-
-function runtimeLabel(item) {
-  return entryRuntime(item).label
-}
-
-function runtimeSummary(item) {
-  const runtime = entryRuntime(item)
-  if (runtime.latest?.episode_number) {
-    const prefix = `第 ${runtime.latest.episode_number} 集`
-    return runtime.reason ? `${prefix} · ${runtime.reason}` : `${prefix} · ${runtime.label}`
-  }
-  return seasonalStatusSummary(item)
-}
-
-function runtimeProgress(item) {
-  const runtime = entryRuntime(item)
-  if (runtime.total_count > 0) {
-    return Math.min(100, Math.round(runtime.ready_count / runtime.total_count * 100))
-  }
-  return progressOf(item)
-}
-
 function isQueueActive(queue) {
   if (!queue) return false
   if (queue.system_queue) return false
@@ -1660,34 +1536,6 @@ function queuePendingHint(queue) {
   if (key === 'metadata') return '待处理表示已拿到 Bangumi 线索，等待补全正式元数据。'
   if (key === 'mikan_match') return '待处理表示 RSS 候选已入队，等待解析对应的 Mikan/Bangumi 关联。'
   return '任务已入队，等待执行。'
-}
-
-function seasonalStatusSummary(item) {
-  return String(item?.status_summary || '')
-}
-
-function progressOf(item) {
-  const total = Number(item.episode_count || item.release_count || 1)
-  return Math.min(100, Math.round(Number(item.downloaded_count || 0) / total * 100))
-}
-
-function libraryProgressOf(item) {
-  const total = Number(item.release_count || item.episode_count || 1)
-  return Math.min(100, Math.round(Number(item.local_asset_count || item.download_artifact_count || 0) / total * 100))
-}
-
-function isWorkExpanded(key) {
-  return expandedWorkKeys.value.has(key)
-}
-
-function toggleWorkExpanded(key) {
-  const next = new Set(expandedWorkKeys.value)
-  if (next.has(key)) {
-    next.delete(key)
-  } else {
-    next.add(key)
-  }
-  expandedWorkKeys.value = next
 }
 
 function startOfWeek(date) {
@@ -2007,39 +1855,6 @@ async function saveAllSettings() {
   }
 }
 
-async function saveMediaLibrary() {
-  if (!mediaLibraryForm.name.trim() || !mediaLibraryForm.root_path.trim()) {
-    ElMessage.warning('媒体库名称和目录不能为空')
-    return
-  }
-  try {
-    const result = await postAction('/media-libraries', {
-      name: mediaLibraryForm.name.trim(),
-      media_type: mediaLibraryForm.media_type,
-      root_path: mediaLibraryForm.root_path.trim(),
-      download_strategy: 'download',
-      metadata_provider_priority: 'bangumi,tmdb,manual',
-      enabled: true,
-    })
-    ElMessage.success(result.message || '媒体库已保存')
-    mediaLibraryForm.name = ''
-    mediaLibraryForm.root_path = ''
-    await reload()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error))
-  }
-}
-
-async function deleteMediaLibrary(id) {
-  try {
-    const result = await deleteAction(`/media-libraries/${id}`)
-    ElMessage.success(result.message || '媒体库已删除')
-    await reload()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error))
-  }
-}
-
 function apiErrorMessage(error) {
   return error?.response?.data?.detail || error?.response?.data?.message || error?.message || '请求失败'
 }
@@ -2223,7 +2038,6 @@ watch(view, value => {
     libraryScopeFilter.value = ''
     libraryMediaTypeFilter.value = ''
     libraryRegionFilter.value = ''
-    libraryLibraryFilter.value = ''
     libraryTagFilters.value = []
     advancedFilterOpen.value = false
   }
