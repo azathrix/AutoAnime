@@ -15,6 +15,7 @@
         <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
         <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧</button>
         <div class="nav-caption">系统</div>
+        <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon> 日志</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
       <div class="sidebar-status">
@@ -80,37 +81,6 @@
           </div>
         </el-card>
 
-        <el-card class="span-4 console-card episode-job-card">
-          <template #header>
-            <div class="card-header-row">
-              <div>
-                <strong>按集运行态</strong>
-                <span>以每一集为单位汇总元数据、选集、下载、本地整理和 NFO</span>
-              </div>
-              <el-tag type="info">{{ episodeJobRows.length }} 条</el-tag>
-            </div>
-          </template>
-          <el-table :data="episodeJobRows" height="300" empty-text="暂无集数任务">
-            <el-table-column prop="status" label="状态" width="110">
-              <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ taskStatusText(row) }}</el-tag></template>
-            </el-table-column>
-            <el-table-column prop="display_title" label="番剧" min-width="220" show-overflow-tooltip />
-            <el-table-column prop="episode_number" label="集" width="70" />
-            <el-table-column prop="stage_label" label="阶段" width="120" />
-            <el-table-column label="规格" width="190" show-overflow-tooltip>
-              <template #default="{ row }">
-                {{ [row.subtitle_group, row.resolution, row.language, subtitleFormatText(row.subtitle_format)].filter(Boolean).join(' · ') || '-' }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="reason" label="说明" min-width="260" show-overflow-tooltip />
-            <el-table-column label="操作" width="96">
-              <template #default="{ row }">
-                <el-button v-if="row.entry_id" size="small" plain @click="openQueueEntry(row)">打开</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-
         <el-card class="span-4 console-card console-workbench-card">
           <div class="console-workbench">
             <aside class="console-nav">
@@ -118,16 +88,12 @@
                 <button :class="{ active: consoleNavMode === '队列' }" @click="consoleNavMode = '队列'">队列</button>
                 <button :class="{ active: consoleNavMode === '定时任务' }" @click="consoleNavMode = '定时任务'">定时任务</button>
               </div>
-              <div v-if="consoleNavMode === '队列'" class="console-nav-toolbar">
-                <el-segmented v-model="queueVisibilityMode" :options="['活跃', '全部']" size="small" />
-              </div>
               <div v-if="consoleNavMode === '队列'" class="console-nav-list">
                 <button
                   v-for="section in queueListSections"
                   :key="section.key"
                   class="console-nav-item"
                   :class="{ active: selectedConsoleSection === section.key }"
-                  v-show="shouldShowConsoleSection(section)"
                   @click="selectedConsoleSection = section.key"
                 >
                   <span>{{ section.name }}</span>
@@ -141,10 +107,8 @@
                   <el-tag v-else-if="section.kind === 'scheduled'" size="small" :type="scheduledBadgeType(section.job_key)">
                     {{ scheduledBadgeText(section.job_key) }}
                   </el-tag>
-                  <el-tag v-else-if="section.kind === 'logs'" size="small" :type="logsBadgeType">
-                    {{ logsBadgeText }}
-                  </el-tag>
                 </button>
+                <div v-if="!queueListSections.length" class="console-nav-empty">暂无队列</div>
               </div>
               <div v-else class="console-nav-list">
                 <button
@@ -173,12 +137,6 @@
                   <div class="detail-tags">
                     <el-tag :type="queueTag(selectedQueue)">{{ queueState(selectedQueue) }}</el-tag>
                     <el-tag v-if="selectedQueue.waiting" type="warning">重试 {{ selectedQueue.waiting }}</el-tag>
-                    <el-segmented
-                      v-if="selectedQueueDomainOptions.length > 1"
-                      v-model="selectedQueueDomainFilter"
-                      :options="selectedQueueDomainOptions"
-                      size="small"
-                    />
                     <el-button v-if="selectedQueueAction" size="small" plain @click="runAction(selectedQueueAction)">立即执行该队列</el-button>
                   </div>
                 </div>
@@ -280,88 +238,71 @@
                 </el-table>
               </template>
 
-              <template v-else-if="selectedConsoleSection === 'logs'">
-                <div class="detail-header">
-                  <div>
-                    <h3>服务日志</h3>
-                    <p>直接读取服务端日志文件</p>
-                  </div>
-                  <div class="detail-tags">
-                    <el-tag :type="logsBadgeType">{{ logsBadgeText }}</el-tag>
-                  </div>
-                </div>
-                <div class="detail-summary-grid">
-                  <div><span>最近错误</span><strong>{{ dashboard.console_overview?.recent_error_count || 0 }}</strong></div>
-                  <div><span>最近警告</span><strong>{{ dashboard.console_overview?.recent_warn_count || 0 }}</strong></div>
-                  <div><span>显示行数</span><strong>{{ filteredServerLogs.length || 0 }}</strong></div>
-                  <div><span>筛选</span><strong>{{ logKeyword || '全部' }}</strong></div>
-                </div>
-                <div class="log-console">
-                  <div class="log-toolbar">
-                    <el-input v-model="logKeyword" clearable placeholder="搜索日志" />
-                    <el-button plain @click="exportLogs">导出日志</el-button>
-                    <el-button plain @click="runAction('/logs/clear')">清空日志</el-button>
-                  </div>
-                  <pre class="server-log">{{ filteredServerLogText }}</pre>
-                </div>
-              </template>
-
-              <template v-else-if="selectedConsoleSection === 'maintenance'">
-                <div class="detail-header">
-                  <div>
-                    <h3>维护</h3>
-                    <p>手动触发、失败重试和数据清理</p>
-                  </div>
-                </div>
-                <div class="detail-summary-grid">
-                  <div><span>待处理任务</span><strong>{{ dashboard.console_overview?.pending_task_count || 0 }}</strong></div>
-                  <div><span>失败任务</span><strong>{{ dashboard.console_overview?.failed_task_count || 0 }}</strong></div>
-                  <div><span>等待重试</span><strong>{{ dashboard.console_overview?.waiting_retry_count || 0 }}</strong></div>
-                  <div><span>运行队列</span><strong>{{ dashboard.console_overview?.running_queue_count || 0 }}</strong></div>
-                </div>
-                <div class="maintenance-actions maintenance-pane">
-                  <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
-                  <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理下载队列</el-button>
-                  <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载任务</el-button>
-                  <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
-                  <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地整理记录和日志。确定？" @confirm="runAction('/system/clear-data')">
-                    <template #reference>
-                      <el-button type="danger" plain>清除所有数据</el-button>
-                    </template>
-                  </el-popconfirm>
+              <template v-else>
+                <div class="console-empty-state">
+                  <h3>选择一个队列查看详情</h3>
+                  <p>左侧显示当前运行时队列和定时任务。默认不自动选中，避免空队列时右侧误判为卡住。</p>
                 </div>
               </template>
             </section>
           </div>
         </el-card>
+      </section>
 
-        <div class="span-4 dashboard-bottom-grid">
-          <el-card class="console-card utility-card">
-            <el-tabs v-model="utilityTab">
-              <el-tab-pane label="日志" name="logs">
-                <div class="log-console compact-log-console">
-                  <div class="log-toolbar">
-                    <el-input v-model="logKeyword" clearable placeholder="搜索日志" />
-                    <el-button plain @click="exportLogs">导出日志</el-button>
-                    <el-button plain @click="runAction('/logs/clear')">清空日志</el-button>
-                  </div>
-                  <pre class="server-log">{{ filteredServerLogText }}</pre>
+      <section v-if="view === 'logs'" class="logs-page">
+        <div class="logs-layout">
+          <el-card class="console-card log-page-card">
+            <template #header>
+              <div class="card-header-row">
+                <div>
+                  <strong>服务日志</strong>
+                  <span>查看、搜索和导出运行日志</span>
                 </div>
-              </el-tab-pane>
-              <el-tab-pane label="维护" name="maintenance">
-                <div class="maintenance-actions maintenance-pane compact-maintenance-pane">
-                  <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
-                  <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理下载队列</el-button>
-                  <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载任务</el-button>
-                  <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
-                  <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地整理记录和日志。确定？" @confirm="runAction('/system/clear-data')">
-                    <template #reference>
-                      <el-button type="danger" plain>清除所有数据</el-button>
-                    </template>
-                  </el-popconfirm>
+                <el-tag :type="logsBadgeType">{{ logsBadgeText }}</el-tag>
+              </div>
+            </template>
+            <div class="detail-summary-grid">
+              <div><span>最近错误</span><strong>{{ dashboard.console_overview?.recent_error_count || 0 }}</strong></div>
+              <div><span>最近警告</span><strong>{{ dashboard.console_overview?.recent_warn_count || 0 }}</strong></div>
+              <div><span>显示行数</span><strong>{{ filteredServerLogs.length || 0 }}</strong></div>
+              <div><span>筛选</span><strong>{{ logKeyword || '全部' }}</strong></div>
+            </div>
+            <div class="log-console">
+              <div class="log-toolbar">
+                <el-input v-model="logKeyword" clearable placeholder="搜索日志" />
+                <el-button plain @click="exportLogs">导出日志</el-button>
+                <el-button plain @click="runAction('/logs/clear')">清空日志</el-button>
+              </div>
+              <pre class="server-log">{{ filteredServerLogText }}</pre>
+            </div>
+          </el-card>
+
+          <el-card class="console-card maintenance-card">
+            <template #header>
+              <div class="card-header-row">
+                <div>
+                  <strong>维护</strong>
+                  <span>手动触发、失败重试和数据清理</span>
                 </div>
-              </el-tab-pane>
-            </el-tabs>
+              </div>
+            </template>
+            <div class="detail-summary-grid maintenance-summary-grid">
+              <div><span>待处理任务</span><strong>{{ dashboard.console_overview?.pending_task_count || 0 }}</strong></div>
+              <div><span>失败任务</span><strong>{{ dashboard.console_overview?.failed_task_count || 0 }}</strong></div>
+              <div><span>等待重试</span><strong>{{ dashboard.console_overview?.waiting_retry_count || 0 }}</strong></div>
+              <div><span>运行队列</span><strong>{{ dashboard.console_overview?.running_queue_count || 0 }}</strong></div>
+            </div>
+            <div class="maintenance-actions maintenance-pane">
+              <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
+              <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理下载队列</el-button>
+              <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载任务</el-button>
+              <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
+              <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地整理记录和日志。确定？" @confirm="runAction('/system/clear-data')">
+                <template #reference>
+                  <el-button type="danger" plain>清除所有数据</el-button>
+                </template>
+              </el-popconfirm>
+            </div>
           </el-card>
         </div>
       </section>
@@ -697,6 +638,7 @@
       <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon><b>新番</b></button>
       <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon><b>日历</b></button>
       <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon><b>番剧</b></button>
+      <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon><b>日志</b></button>
       <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon><b>设置</b></button>
     </nav>
 
@@ -816,24 +758,21 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { ElMessage } from 'element-plus'
-import { Calendar, Collection, DataBoard, Refresh, Search, Setting } from '@element-plus/icons-vue'
+import { Calendar, Collection, DataBoard, Document, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { deleteAction, getDashboard, getDiagnostics, getLibraryItem, getSeasonalItem, getSettings, postAction, saveLibraryItem, saveSeasonalItem, saveSettings } from './api'
 import { APP_BUILD, APP_VERSION } from './version'
 
 const view = ref('dashboard')
 const appVersion = APP_VERSION
 const appBuild = APP_BUILD
-const selectedConsoleSection = ref('queue:mikan_match')
+const selectedConsoleSection = ref('')
 const logKeyword = ref('')
 const loading = ref(false)
 const savingSettings = ref(false)
 const autoRefresh = ref(true)
 const refreshInterval = ref(5000)
 const liveConnected = ref(false)
-const selectedQueueDomainFilter = ref('全部')
-const queueVisibilityMode = ref('活跃')
 const consoleNavMode = ref('队列')
-const utilityTab = ref('logs')
 const calendarWeek = ref('')
 const expandedWorkKeys = ref(new Set())
 let refreshTimer = null
@@ -881,6 +820,7 @@ const pageTitle = computed(() => ({
   seasonal: '新番',
   calendar: '日历',
   library: '番剧',
+  logs: '日志与维护',
   settings: '设置中心'
 }[view.value]))
 
@@ -968,12 +908,10 @@ const weekDays = computed(() => {
 const scanOperation = computed(() => dashboard.operations.find(op => op.name === '扫描全部' && op.status === 'running'))
 const queueMap = computed(() => Object.fromEntries((dashboard.queue_summary || []).map(item => [item.key, item])))
 const queueConsoleSections = computed(() => (dashboard.console_sections || []).filter(section => {
-  if (section.kind === 'group') return true
-  return section.kind === 'queue' && shouldShowConsoleSection(section)
+  return section.kind === 'queue'
 }))
 const queueListSections = computed(() => queueConsoleSections.value.filter(section => section.kind === 'queue'))
 const scheduledConsoleSections = computed(() => (dashboard.console_sections || []).filter(section => section.kind === 'scheduled'))
-const visibleConsoleSections = computed(() => (dashboard.console_sections || []).filter(section => shouldShowConsoleSection(section)))
 const selectedSectionMeta = computed(() => {
   const source = consoleNavMode.value === '定时任务' ? scheduledConsoleSections.value : queueListSections.value
   return source.find(item => item.key === selectedConsoleSection.value) || null
@@ -986,22 +924,7 @@ const selectedQueue = computed(() => {
 const selectedQueueItems = computed(() => {
   const section = selectedSectionMeta.value
   if (!section || section.kind !== 'queue') return []
-  const items = dashboard.queue_details?.[section.queue_key]?.items || []
-  if (selectedQueueDomainFilter.value === '全部') return items
-  if (selectedQueueDomainFilter.value === '新番') return items.filter(item => (item.domain_kind || 'seasonal') !== 'library')
-  if (selectedQueueDomainFilter.value === '番剧库') return items.filter(item => item.domain_kind === 'library')
-  return items
-})
-const selectedQueueDomainOptions = computed(() => {
-  const section = selectedSectionMeta.value
-  if (!section || section.kind !== 'queue') return ['全部']
-  const items = dashboard.queue_details?.[section.queue_key]?.items || []
-  const hasLibrary = items.some(item => item.domain_kind === 'library')
-  const hasSeasonal = items.some(item => (item.domain_kind || 'seasonal') !== 'library')
-  const options = ['全部']
-  if (hasSeasonal) options.push('新番')
-  if (hasLibrary) options.push('番剧库')
-  return options
+  return dashboard.queue_details?.[section.queue_key]?.items || []
 })
 const selectedQueueAction = computed(() => {
   const queue = selectedQueue.value
@@ -1365,15 +1288,6 @@ function queuePendingHint(queue) {
   return '任务已入队，等待调度执行。'
 }
 
-function shouldShowConsoleSection(section) {
-  if (!section) return false
-  if (section.kind === 'group' || section.kind === 'logs' || section.kind === 'maintenance') return true
-  if (section.kind === 'scheduled') return queueVisibilityMode.value === '全部'
-  if (section.kind !== 'queue') return false
-  if (queueVisibilityMode.value === '全部') return true
-  return isQueueActive(queueMap.value[section.queue_key])
-}
-
 function seasonalStatusSummary(item) {
   return String(item?.status_summary || '')
 }
@@ -1436,8 +1350,7 @@ function applyDashboard(nextDashboard) {
   Object.assign(dashboard, nextDashboard || {})
   const source = consoleNavMode.value === '定时任务' ? scheduledConsoleSections.value : queueListSections.value
   if (!source.some(item => item.key === selectedConsoleSection.value)) {
-    const fallback = source[0] || queueListSections.value[0]
-    selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
+    selectedConsoleSection.value = ''
   }
 }
 
@@ -1716,24 +1629,8 @@ watch([autoRefresh, refreshInterval], () => {
   }
 })
 watch(entryDrawerOpen, startAutoRefresh)
-watch(selectedConsoleSection, () => {
-  selectedQueueDomainFilter.value = '全部'
-})
-watch(queueVisibilityMode, () => {
-  if (!queueListSections.value.some(item => item.key === selectedConsoleSection.value)) {
-    const fallback = queueListSections.value[0]
-    selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
-  }
-})
 watch(consoleNavMode, value => {
-  if (value === '定时任务') {
-    selectedConsoleSection.value = scheduledConsoleSections.value[0]?.key || selectedConsoleSection.value
-    return
-  }
-  if (!queueListSections.value.some(item => item.key === selectedConsoleSection.value)) {
-    const fallback = queueListSections.value[0]
-    selectedConsoleSection.value = fallback?.key || 'queue:mikan_match'
-  }
+  selectedConsoleSection.value = ''
 })
 watch(view, value => {
   if (value === 'settings') reloadDiagnostics().catch(error => ElMessage.error(apiErrorMessage(error)))

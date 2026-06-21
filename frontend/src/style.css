@@ -322,16 +322,6 @@ h1 {
   min-height: 720px;
 }
 
-.dashboard-bottom-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: 1fr;
-}
-
-.utility-card {
-  min-height: 360px;
-}
-
 .scheduled-job-list {
   display: grid;
   gap: 10px;
@@ -375,15 +365,6 @@ h1 {
   gap: 8px;
 }
 
-.compact-log-console {
-  height: 460px;
-}
-
-.compact-maintenance-pane {
-  max-height: 430px;
-  min-height: 300px;
-}
-
 .console-overview-grid {
   margin-bottom: 14px;
 }
@@ -406,12 +387,6 @@ h1 {
   max-height: 700px;
   overflow: auto;
   padding: 0 12px 12px;
-}
-
-.console-nav-toolbar {
-  display: grid;
-  gap: 8px;
-  margin: 4px 0 8px;
 }
 
 .console-nav-tabs {
@@ -473,6 +448,49 @@ h1 {
 .console-nav-item.active {
   background: #eff6ff;
   border-color: #93c5fd;
+}
+
+.console-empty-state {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  color: #64748b;
+  display: grid;
+  min-height: 520px;
+  place-items: center;
+  text-align: center;
+}
+
+.console-empty-state h3 {
+  color: #1f2937;
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+.console-empty-state p {
+  margin: 0;
+  max-width: 460px;
+}
+
+.logs-page {
+  display: grid;
+  gap: 14px;
+}
+
+.logs-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+}
+
+.log-page-card,
+.maintenance-card {
+  min-width: 0;
+}
+
+.maintenance-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .console-detail {
@@ -1369,7 +1387,7 @@ h1 {
   .queue-grid,
   .log-layout,
   .console-workbench,
-  .dashboard-bottom-grid,
+  .logs-layout,
   .library-entry-card-grid,
   .detail-summary-grid {
     grid-template-columns: 1fr;
