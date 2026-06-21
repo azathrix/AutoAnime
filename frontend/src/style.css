@@ -208,10 +208,6 @@ h1 {
   margin-bottom: 12px;
 }
 
-.refresh-select {
-  width: 92px;
-}
-
 .content-grid {
   display: grid;
   gap: 14px;

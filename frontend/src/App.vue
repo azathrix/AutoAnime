@@ -44,12 +44,6 @@
             inactive-text="手动"
           />
           <el-tag :type="liveConnected ? 'success' : 'info'">{{ liveConnected ? '动态连接' : '轮询刷新' }}</el-tag>
-          <el-select v-model="refreshInterval" class="refresh-select" :disabled="!autoRefresh">
-            <el-option label="3 秒" :value="3000" />
-            <el-option label="5 秒" :value="5000" />
-            <el-option label="10 秒" :value="10000" />
-            <el-option label="30 秒" :value="30000" />
-          </el-select>
           <el-button :icon="Refresh" @click="reload" :loading="loading">刷新状态</el-button>
           <el-button v-if="view === 'dashboard' || view === 'seasonal'" type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
         </div>
@@ -880,7 +874,6 @@ const logKeyword = ref('')
 const loading = ref(false)
 const savingSettings = ref(false)
 const autoRefresh = ref(true)
-const refreshInterval = ref(5000)
 const liveConnected = ref(false)
 const consoleNavMode = ref('队列')
 const calendarWeek = ref('')
@@ -1646,7 +1639,7 @@ function startAutoRefresh() {
   refreshTimer = window.setInterval(() => {
     if (view.value === 'settings' || entryDrawerOpen.value) return
     reload()
-  }, refreshInterval.value)
+  }, 5000)
 }
 
 async function runAction(path) {
@@ -1981,7 +1974,7 @@ const PriorityList = {
   `
 }
 
-watch([autoRefresh, refreshInterval], () => {
+watch(autoRefresh, () => {
   if (autoRefresh.value) {
     startDashboardStream()
   } else {
