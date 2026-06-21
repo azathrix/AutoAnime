@@ -1,0 +1,20 @@
+services:
+  autoanime:
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        ALL_PROXY: ${ALL_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    image: autoanime:local
+    container_name: autoanime
+    restart: unless-stopped
+    ports:
+      - "32888:8080"
+    environment:
+      APP_DATA_DIR: /data
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/data
+      - /volume1/Assets3/Media:/media
