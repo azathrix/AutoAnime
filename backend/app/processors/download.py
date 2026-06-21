@@ -490,6 +490,7 @@ async def process_download_poll(context: ProcessorContext, payload: dict) -> Pro
                     file_id = str(remote.get("file_id") or remote.get("reference_resource", {}).get("id", "") or file_id)
                     if phase == "PHASE_TYPE_COMPLETE":
                         status = "completed"
+                        matched = remote
                     elif phase == "PHASE_TYPE_ERROR":
                         status = "failed"
                         message = str(remote.get("message") or "PikPak 离线任务失败")

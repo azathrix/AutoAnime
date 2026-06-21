@@ -23,11 +23,10 @@ from .episode_jobs import build_episode_jobs
 from .queue_bridge import register_queue_trigger
 from .runtime_store import runtime_store
 from .library import bool_setting
-from .metadata import generate_nfo_for_entry
 from .pipeline_orchestrator import run_ready_tasks, start_pipeline
 from .pipeline_runtime import finish_pipeline_run, pipeline_overview, start_pipeline_run, update_pipeline_run
 from .processors import register_builtin_processors
-from .scanner import language_tokens, mark_selected_releases, priority_match, priority_pick, resolve_entry_choice
+from .scanner import language_tokens, priority_match, priority_pick
 from .sync_service import scan_remote_library
 
 
@@ -702,81 +701,6 @@ def archive_seasonal_entry(entry_id: int) -> dict[str, str]:
         )
     log("info", f"新番已归档到番剧库: {entry['display_title']}")
     return {"status": "completed", "message": "已归档到番剧库"}
-
-
-def queue_entry_download(entry_id: int) -> dict[str, str]:
-    settings = get_settings()
-    with connect() as conn:
-        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
-        if not entry:
-            return {"status": "not_found"}
-    ids, choice = resolve_entry_choice(entry_id, settings)
-    mark_selected_releases(entry_id, ids)
-    if not ids:
-        message = choice["reason"] or "没有可下载发布"
-        log("warn", f"手动下载跳过: {entry['display_title']} - {message}")
-        return {"status": "skipped", "count": "0", "message": message}
-    pipeline_key = "seasonal_mikan_tracking" if entry["domain_kind"] == "seasonal" else "library_backfill"
-    for release_id in ids:
-        run_id = start_pipeline(
-            pipeline_key,
-            trigger_source="manual",
-            first_step_key="download",
-            subject_type="release",
-            subject_id=int(release_id),
-            payload={"release_id": int(release_id), "entry_id": entry_id, "domain_kind": entry["domain_kind"]},
-            message="手动下载",
-        )
-        log("info", f"手动下载流水线已启动: entry_id={entry_id} release_id={release_id} run_id={run_id}")
-    trigger_queue("processor", delay=0)
-    return {"status": "queued", "count": str(len(ids)), "message": f"已加入下载队列: {len(ids)} 条"}
-
-
-def start_entry_metadata_refresh(entry_id: int) -> dict[str, str]:
-    with connect() as conn:
-        entry = conn.execute("SELECT domain_kind FROM entries WHERE id=?", (entry_id,)).fetchone()
-    if not entry:
-        return {"status": "not_found", "message": "条目不存在"}
-    domain_kind = str(entry["domain_kind"] or "seasonal")
-    pipeline_key = "seasonal_mikan_tracking" if domain_kind == "seasonal" else "library_backfill"
-    run_id = start_pipeline(
-        pipeline_key,
-        trigger_source="manual",
-        first_step_key="bangumi_metadata",
-        subject_type="entry",
-        subject_id=entry_id,
-        payload={"entry_id": entry_id, "domain_kind": domain_kind},
-        message="手动刷新元数据",
-    )
-    trigger_queue("processor", delay=0)
-    return {"status": "queued", "run_id": str(run_id), "message": "元数据刷新已加入 Runtime 队列"}
-
-
-def queue_entry_backfill(entry_id: int) -> dict[str, str]:
-    with connect() as conn:
-        entry = conn.execute("SELECT domain_kind FROM entries WHERE id=?", (entry_id,)).fetchone()
-    if not entry:
-        return {"status": "not_found", "message": "条目不存在"}
-    domain_kind = str(entry["domain_kind"] or "seasonal")
-    pipeline_key = "seasonal_mikan_tracking" if domain_kind == "seasonal" else "library_backfill"
-    run_id = start_pipeline(
-        pipeline_key,
-        trigger_source="manual",
-        first_step_key="season_backfill",
-        subject_type="entry",
-        subject_id=entry_id,
-        payload={"entry_id": entry_id, "domain_kind": domain_kind},
-        message="手动补全条目发布",
-    )
-    trigger_queue("processor", delay=0)
-    if run_id <= 0:
-        return {"status": "invalid", "message": "当前流水线不支持补全"}
-    return {"status": "queued", "run_id": str(run_id), "message": "补全任务已加入 Runtime 队列"}
-
-
-def generate_entry_nfo(entry_id: int) -> dict[str, str]:
-    generate_nfo_for_entry(entry_id, get_settings())
-    return {"status": "generated"}
 
 
 def ready_count_runtime_processor() -> int:
@@ -2188,16 +2112,6 @@ async def api_scan_cloud() -> dict[str, str]:
     return {"status": "started", "operation_id": str(operation_id), "message": "远端资源扫描已启动"}
 
 
-@app.post("/api/library/{entry_id}/backfill")
-async def api_backfill_library_entry(entry_id: int) -> dict[str, str]:
-    return queue_entry_backfill(entry_id)
-
-
-@app.post("/api/seasonal/{entry_id}/backfill")
-async def api_backfill_seasonal_entry(entry_id: int) -> dict[str, str]:
-    return queue_entry_backfill(entry_id)
-
-
 @app.post("/api/tasks/retry-failed")
 async def api_retry_failed() -> dict[str, str]:
     total = 0
@@ -2250,53 +2164,6 @@ async def api_clear_data() -> dict[str, str]:
     clear_runtime_data()
     log("warn", "已清除所有运行数据")
     return {"status": "completed", "message": "已清除所有运行数据"}
-
-
-@app.post("/api/releases/{release_id}/download")
-async def api_download_release(release_id: int) -> dict[str, str]:
-    with connect() as conn:
-        release = conn.execute(
-            "SELECT r.entry_id, e.domain_kind FROM releases r JOIN entries e ON e.id=r.entry_id WHERE r.id=?",
-            (release_id,),
-        ).fetchone()
-    if not release:
-        return {"status": "not_found", "message": "发布不存在"}
-    pipeline_key = "seasonal_mikan_tracking" if release["domain_kind"] == "seasonal" else "library_backfill"
-    run_id = start_pipeline(
-        pipeline_key,
-        trigger_source="manual",
-        first_step_key="download",
-        subject_type="release",
-        subject_id=release_id,
-        payload={"release_id": release_id, "entry_id": int(release["entry_id"]), "domain_kind": release["domain_kind"]},
-        message="手动发布下载",
-    )
-    trigger_queue("processor", delay=0)
-    return {"status": "queued", "run_id": str(run_id)}
-
-@app.post("/api/seasonal/{entry_id}/download")
-async def api_download_seasonal_entry(entry_id: int) -> dict[str, str]:
-    return queue_entry_download(entry_id)
-
-
-@app.post("/api/seasonal/{entry_id}/metadata")
-async def api_refresh_seasonal_metadata(entry_id: int) -> dict[str, str]:
-    return start_entry_metadata_refresh(entry_id)
-
-
-@app.post("/api/seasonal/{entry_id}/nfo")
-async def api_generate_seasonal_nfo(entry_id: int) -> dict[str, str]:
-    return generate_entry_nfo(entry_id)
-
-
-@app.post("/api/library/{entry_id}/metadata")
-async def api_refresh_library_metadata(entry_id: int) -> dict[str, str]:
-    return start_entry_metadata_refresh(entry_id)
-
-
-@app.post("/api/library/{entry_id}/nfo")
-async def api_generate_library_nfo(entry_id: int) -> dict[str, str]:
-    return generate_entry_nfo(entry_id)
 
 
 frontend_dir = APP_DIR.parent / "frontend_dist"

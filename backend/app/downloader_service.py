@@ -7,7 +7,9 @@ from typing import Any
 
 import httpx
 
+from . import aria2_service
 from . import local_downloader_service
+from . import qbittorrent_service
 from . import rclone_service
 from .pikpak_service import build_client, get_cloud_download_url, list_offline_tasks, submit_offline_download
 
@@ -18,6 +20,9 @@ SUPPORTED_DOWNLOADER_TYPES = {
     "rclone": "rclone",
     "api": "api",
     "local": "local",
+    "aria2": "aria2",
+    "qb": "qb",
+    "qbittorrent": "qb",
 }
 ACTIVE_DOWNLOADER_KEY = "_active_downloader_json"
 DOWNLOAD_FAILOVER_ATTEMPTS = 3
@@ -127,11 +132,11 @@ def settings_for_provider(settings: dict[str, str], provider: str) -> dict[str, 
 
 
 def uses_remote_listing(settings: dict[str, str]) -> bool:
-    return backend_key(settings) in {"rclone", "local"}
+    return backend_key(settings) in {"rclone", "local", "aria2", "qb"}
 
 
 def needs_poll(settings: dict[str, str]) -> bool:
-    return backend_key(settings) == "rclone"
+    return backend_key(settings) in {"rclone", "aria2", "qb"}
 
 
 def remote_file_id(item: dict[str, Any]) -> str:
@@ -143,12 +148,20 @@ async def submit_download(settings: dict[str, str], source: str, target_dir: str
         return await rclone_service.add_url(settings, source, target_dir, name)
     if backend_key(settings) == "local":
         return await local_downloader_service.submit(settings, source, target_dir, name)
+    if backend_key(settings) == "aria2":
+        return await aria2_service.submit(settings, source, target_dir, name)
+    if backend_key(settings) == "qb":
+        return await qbittorrent_service.submit(settings, source, target_dir, name)
     return await submit_offline_download(settings, source, target_dir, name)
 
 
 async def list_tasks(settings: dict[str, str]) -> list[dict[str, Any]]:
     if backend_key(settings) in {"rclone", "local"}:
         return []
+    if backend_key(settings) == "aria2":
+        return await aria2_service.list_tasks(settings)
+    if backend_key(settings) == "qb":
+        return await qbittorrent_service.list_tasks(settings)
     return await list_offline_tasks(settings)
 
 
@@ -164,6 +177,10 @@ async def list_remote_files(
         return await rclone_service.list_files(settings, root_path, recursive=recursive)
     if backend_key(settings) == "local":
         return await local_downloader_service.list_files(settings, root_path, recursive=recursive)
+    if backend_key(settings) == "aria2":
+        return await aria2_service.list_files(settings, root_path, recursive=recursive)
+    if backend_key(settings) == "qb":
+        return await qbittorrent_service.list_files(settings, root_path, recursive=recursive)
     api = build_client(settings)
     if settings.get("pikpak_auth_mode") == "password":
         await api.login()
@@ -216,6 +233,15 @@ async def download_to_local(
 
     if backend_key(settings) == "local":
         await local_downloader_service.copy_to_local(settings, source, target, progress_cb=progress_cb)
+        return
+
+    if backend_key(settings) in {"aria2", "qb"}:
+        source_path = Path(file_id or source)
+        if not source_path.exists():
+            raise RuntimeError(f"下载器源文件不存在: {file_id or source}")
+        shutil.copy2(source_path, target_path)
+        if progress_cb:
+            await progress_cb(100, "本地下载器复制完成")
         return
 
     if backend_key(settings) == "rclone" and source:

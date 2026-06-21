@@ -587,6 +587,21 @@
                         </el-select>
                         <el-input v-model="element.name" placeholder="名称" />
                         <el-input v-model="element.remote_dir" placeholder="远端目录 / 临时目录" />
+                        <el-input
+                          v-if="['aria2', 'qb'].includes(element.type)"
+                          v-model="element.rpc_url"
+                          placeholder="RPC / Web UI 地址"
+                        />
+                        <el-input
+                          v-if="element.type === 'aria2'"
+                          v-model="element.token"
+                          placeholder="aria2 token"
+                          show-password
+                        />
+                        <template v-if="element.type === 'qb'">
+                          <el-input v-model="element.username" placeholder="qB 用户名" />
+                          <el-input v-model="element.password" placeholder="qB 密码" show-password />
+                        </template>
                         <el-switch v-model="element.enabled" />
                         <el-button type="danger" link @click="removeDownloader(index)">删除</el-button>
                       </div>
@@ -1890,6 +1905,10 @@ function addDownloader() {
       name: 'PikPak',
       type: 'pikpak_rclone',
       remote_dir: '/Temp',
+      rpc_url: '',
+      token: '',
+      username: '',
+      password: '',
       enabled: true,
       max_attempts: 3,
     },
@@ -1910,35 +1929,6 @@ async function archiveCurrentEntry() {
     ElMessage.warning(result.message || '条目不存在')
   } else {
     ElMessage.success('已归档，新番页不再显示')
-  }
-  entryDrawerOpen.value = false
-  selectedEntryDetail.value = null
-  selectedEntryDomain.value = 'seasonal'
-  await reload()
-}
-
-async function runEntryAction(action) {
-  const base = selectedEntryDomain.value === 'library' ? '/library' : '/seasonal'
-  try {
-    const entryId = selectedEntry.value?.id
-    if (!entryId) return
-    const result = await postAction(`${base}/${entryId}/${action}`)
-    ElMessage.success(result.message || (action === 'metadata' ? '元数据任务已启动' : 'NFO 已生成'))
-    await reload()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error))
-  }
-}
-
-async function deleteCurrentEntry() {
-  const id = selectedEntry.value?.id
-  if (!id) return
-  const base = selectedEntryDomain.value === 'library' ? '/library' : '/seasonal'
-  const result = await deleteAction(`${base}/${id}`)
-  if (result.status === 'not_found' || result.status === 'invalid_domain') {
-    ElMessage.warning(result.message || '番剧不存在')
-  } else {
-    ElMessage.success(result.message || '已删除')
   }
   entryDrawerOpen.value = false
   selectedEntryDetail.value = null
