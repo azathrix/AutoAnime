@@ -491,10 +491,6 @@ def empty_entry_response() -> dict[str, Any]:
         "episodes": [],
         "episode_resources": [],
         "episode_subtitles": [],
-        "releases": [],
-        "tasks": [],
-        "download_artifacts": [],
-        "local_assets": [],
         "groups": [],
         "resolutions": [],
         "languages": [],
@@ -506,28 +502,6 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
         if not entry:
             return empty_entry_response()
-        releases = conn.execute(
-            "SELECT * FROM releases WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
-            (entry_id,),
-        ).fetchall()
-        tasks = conn.execute(
-            """
-            SELECT *
-            FROM download_jobs
-            WHERE entry_id=?
-              AND status IN ('pending', 'running', 'submitted', 'failed')
-            ORDER BY id DESC
-            """,
-            (entry_id,),
-        ).fetchall()
-        download_artifacts = conn.execute(
-            "SELECT * FROM download_artifacts WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
-            (entry_id,),
-        ).fetchall()
-        local_assets = conn.execute(
-            "SELECT * FROM local_assets WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
-            (entry_id,),
-        ).fetchall()
         episodes = conn.execute(
             "SELECT * FROM episodes WHERE entry_id=? ORDER BY episode_number ASC, id ASC",
             (entry_id,),
@@ -540,19 +514,15 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
             "SELECT * FROM episode_subtitles WHERE entry_id=? ORDER BY episode_number ASC, selected DESC, id DESC",
             (entry_id,),
         ).fetchall()
-    groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
-    resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
-    languages = sorted({r["language"] for r in releases if r["language"]})
+    groups = sorted({r["subtitle_group"] for r in episode_resources if r["subtitle_group"]})
+    resolutions = sorted({r["resolution"] for r in episode_resources if r["resolution"]})
+    languages = sorted({r["language"] for r in episode_resources if r["language"]})
     entry_payload = enrich_catalog_entry({**row_to_dict(entry), "domain_kind": entry["domain_kind"]})
     return {
         "entry": entry_payload,
         "episodes": rows_to_dicts(episodes),
         "episode_resources": rows_to_dicts(episode_resources),
         "episode_subtitles": rows_to_dicts(episode_subtitles),
-        "releases": rows_to_dicts(releases),
-        "tasks": rows_to_dicts(tasks),
-        "download_artifacts": rows_to_dicts(download_artifacts),
-        "local_assets": rows_to_dicts(local_assets),
         "groups": groups,
         "resolutions": resolutions,
         "languages": languages,
