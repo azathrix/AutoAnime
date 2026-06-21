@@ -506,24 +506,6 @@
             >{{ tag }}</button>
           </div>
         </div>
-        <div class="library-summary-grid">
-          <div class="metric-card">
-            <span>条目数</span>
-            <strong>{{ filteredSeries.length }}</strong>
-          </div>
-          <div class="metric-card">
-            <span>可观看</span>
-            <strong>{{ filteredSeries.reduce((sum, item) => sum + watchableCount(item), 0) }}</strong>
-          </div>
-          <div class="metric-card">
-            <span>待关联</span>
-            <strong>{{ filteredSeries.filter(item => !item.bangumi_id && !item.tmdb_id).length }}</strong>
-          </div>
-          <div class="metric-card">
-            <span>最近更新</span>
-            <strong>{{ filteredSeries.filter(hasRecentUpdate).length }}</strong>
-          </div>
-        </div>
         <div class="anime-grid catalog-card-grid">
           <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'library')">
             <div class="cover poster-cover">
@@ -536,8 +518,7 @@
               <div class="tagline">
                 <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
                 <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
-                <el-tag size="small">{{ mediaTypeLabel(item.media_type) }}</el-tag>
-                <el-tag size="small" type="info">{{ regionLabel(item.region) }}</el-tag>
+                <el-tag size="small">{{ item.entry_badge_text || item.entry_kind || mediaTypeLabel(item.media_type) }}</el-tag>
               </div>
               <div v-if="entryTags(item).length" class="mini-tag-row">
                 <span v-for="tag in entryTags(item).slice(0, 3)" :key="tag">{{ tag }}</span>
