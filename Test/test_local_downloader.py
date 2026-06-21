@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -14,10 +15,11 @@ sys.path.insert(0, str(BACKEND))
 os.environ.setdefault("APP_DATA_DIR", tempfile.mkdtemp(prefix="autoanime-local-downloader-test-"))
 
 from app.database import connect
-from app.db import init_db, save_settings
-from app.import_service import commit_torrent_import, preview_torrent_import
+from app.db import init_db, now, save_settings
+from app.parser import ParsedRelease
 from app.pipeline_models import ProcessorContext
 from app.processors.download import process_download
+from app.scanner import upsert_release
 
 
 class LocalDownloaderTests(unittest.TestCase):
@@ -32,23 +34,43 @@ class LocalDownloaderTests(unittest.TestCase):
             save_settings(
                 {
                     "download_backend": "local",
+                    "downloaders_json": json.dumps(
+                        [
+                            {
+                                "id": "local-test",
+                                "name": "Local Test",
+                                "type": "local",
+                                "enabled": True,
+                                "remote_dir": "/Downloads",
+                            }
+                        ]
+                    ),
                     "local_downloader_root": str(remote_root),
-                    "local_library_root": str(local_root),
                     "library_root": "/Downloads",
                 }
             )
             with connect() as conn:
-                conn.execute(
-                    "UPDATE media_libraries SET root_path=? WHERE key='anime_library'",
-                    (str(local_root),),
-                )
-            candidate = preview_torrent_import(
-                title="[Manual] Local Provider Anime - 07 [1080p][简体]",
-                magnet="magnet:?xt=urn:btih:local-provider",
+                conn.execute("UPDATE media_libraries SET root_path=?", (str(local_root),))
+            _, entry_id, release_id = upsert_release(
+                ParsedRelease(
+                    guid="local-provider",
+                    title="[Manual] Local Provider Anime - 07 [1080p][简体]",
+                    series_title="Local Provider Anime",
+                    episode_number=7,
+                    subtitle_group="Manual",
+                    resolution="1080p",
+                    language="简体",
+                    subtitle_format="",
+                    bangumi_id="",
+                    year=2026,
+                    torrent_url="",
+                    magnet="magnet:?xt=urn:btih:local-provider",
+                    page_url="",
+                    mikan_bangumi_id="",
+                    published_at=now(),
+                ),
+                {"title_cn": "Local Provider Anime", "year": 2026},
             )
-            imported = commit_torrent_import(candidate, {"title_cn": "Local Provider Anime", "year": 2026})
-            release_id = int(imported["release_id"])
-            entry_id = int(imported["entry_id"])
 
             first = asyncio.run(process_download(self._context(release_id, 1), {"release_id": release_id, "entry_id": entry_id}))
             self.assertEqual(first.status, "failed_retryable")
