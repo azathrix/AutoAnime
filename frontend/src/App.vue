@@ -55,8 +55,8 @@
           <strong>{{ dashboard.seasonal_items.length }}</strong>
         </div>
         <div class="metric-card">
-          <span>下载产物</span>
-          <strong>{{ downloadArtifactTotal }}</strong>
+          <span>可观看</span>
+          <strong>{{ watchableTotal }}</strong>
         </div>
         <div class="metric-card">
           <span>本地资源</span>
@@ -303,7 +303,7 @@
               <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理下载队列</el-button>
               <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载任务</el-button>
               <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
-              <el-popconfirm title="会清空番剧、候选、任务、下载产物、本地整理记录和日志。确定？" @confirm="runAction('/system/clear-data')">
+              <el-popconfirm title="会清空番剧、候选、任务、下载记录、本地资源记录和日志。确定？" @confirm="runAction('/system/clear-data')">
                 <template #reference>
                   <el-button type="danger" plain>清除所有数据</el-button>
                 </template>
@@ -897,8 +897,6 @@ const selectedEntryDomain = ref('seasonal')
 const dashboard = reactive({
   seasonal_items: [],
   library_items: [],
-  media_libraries: [],
-  library_summary: {},
   seasonal_sync_calendar: [],
   seasonal_update_calendar: [],
   sync_rules: [],
@@ -906,7 +904,6 @@ const dashboard = reactive({
   scheduled_jobs: [],
   scheduled_runs: [],
   server_logs: [],
-  episode_jobs: [],
   queue_summary: [],
   queue_details: {},
   console_sections: [],
@@ -1063,22 +1060,8 @@ const libraryTagOptions = computed(() => {
     .map(item => item[0])
 })
 const activeDetailRows = computed(() => selectedEntryDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
-const downloadArtifactTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.download_artifact_count || 0), 0))
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
-const episodeJobRows = computed(() => (dashboard.episode_jobs || []).slice(0, 20))
-const episodeJobsByEntry = computed(() => {
-  const groups = new Map()
-  for (const job of dashboard.episode_jobs || []) {
-    const key = Number(job.entry_id || 0)
-    if (!key) continue
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push(job)
-  }
-  for (const rows of groups.values()) {
-    rows.sort((a, b) => Number(b.episode_number || 0) - Number(a.episode_number || 0))
-  }
-  return groups
-})
+const watchableTotal = computed(() => localAssetTotal.value)
 const seasonalCalendarCards = computed(() => dashboard.seasonal_sync_calendar || [])
 const weekStart = computed(() => startOfWeek(calendarWeek.value ? new Date(calendarWeek.value) : new Date()))
 const weekDays = computed(() => {
@@ -1400,33 +1383,6 @@ function toggleLibraryTag(tag) {
   libraryTagFilters.value = Array.from(next)
 }
 
-function entryRuntime(item) {
-  const entryId = Number(item?.id || item?.entry_id || 0)
-  const jobs = episodeJobsByEntry.value.get(entryId) || []
-  const latest = jobs[0] || null
-  const readyCount = jobs.filter(job => job.stage === 'done' || job.status === 'completed').length
-  const failed = jobs.find(job => job.status === 'failed')
-  const active = jobs.find(job => ['running', 'waiting', 'pending'].includes(String(job.status || '')))
-  const status = failed ? 'failed' : active ? String(active.status || 'pending') : readyCount > 0 ? 'completed' : 'idle'
-  const label = failed
-    ? '需处理'
-    : active
-      ? (active.stage_label || '处理中')
-      : readyCount > 0
-        ? `可观看 ${readyCount} 集`
-        : '未缓存'
-  const reason = failed?.reason || active?.reason || latest?.reason || ''
-  return {
-    jobs,
-    latest,
-    ready_count: readyCount,
-    total_count: jobs.length,
-    status,
-    label,
-    reason,
-  }
-}
-
 function isQueueActive(queue) {
   if (!queue) return false
   if (queue.system_queue) return false
@@ -1508,7 +1464,7 @@ function queuePendingHint(queue) {
   const key = String(queue?.key || '')
   if (key === 'rss') return '这里只显示最近的 RSS 候选；Mikan、元数据、选集、下载到本地由任务链推进。'
   if (key === 'download') return '待处理表示已选中发布，等待下载器提交、轮询完成并整理到本地媒体库。'
-  if (key === 'local_sync') return '待处理表示已有下载产物，等待补整理到本地媒体库。'
+  if (key === 'local_sync') return '待处理表示下载已完成，等待整理到本地媒体库。'
   if (key === 'selection') return '待处理表示元数据已完成，等待按规则自动选择发布。'
   if (key === 'processor') return '这里显示流水线统一处理器任务，扫描后可直接看每条数据卡在 RSS、匹配、元数据、整合、下载还是 NFO。'
   if (key === 'backfill') return '待处理表示番剧已入库，等待去 Mikan 番组页补抓历史条目。'

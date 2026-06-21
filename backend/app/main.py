@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from .config import APP_DIR, MEDIA_ROOT
 from .database import connect
 from .db import clear_runtime_data, diagnostics, get_runtime_generation, get_settings, init_db, log, merge_duplicate_series, now, save_settings
-from .episode_jobs import build_episode_jobs
 from .queue_bridge import register_queue_trigger
 from .runtime_store import runtime_store
 from .library import bool_setting
@@ -1379,39 +1378,6 @@ def dashboard_data() -> dict[str, Any]:
             ORDER BY e.updated_at DESC
             """
         ).fetchall()
-        library_summary_row = conn.execute(
-            """
-            SELECT
-              COUNT(DISTINCT w.id) AS work_count,
-              COUNT(DISTINCT e.id) AS entry_count,
-              COUNT(DISTINCT CASE WHEN COALESCE(e.bangumi_id, '')='' THEN e.id END) AS unmatched_count,
-              COUNT(DISTINCT ca.id) AS download_artifact_count,
-              COUNT(DISTINCT la.id) AS local_asset_count
-            FROM entries e
-            LEFT JOIN library_entries le ON le.entry_id=e.id
-            JOIN works w ON w.id=e.work_id
-            LEFT JOIN download_artifacts ca ON ca.entry_id=e.id
-            LEFT JOIN local_assets la ON la.entry_id=e.id AND la.status='synced'
-            WHERE COALESCE(e.hidden, 0)=0
-            """
-        ).fetchone()
-        library_failed_row = {"failed_entry_count": 0}
-        media_libraries = conn.execute(
-            """
-            SELECT *
-            FROM media_libraries
-            WHERE enabled=1
-            ORDER BY
-              CASE key
-                WHEN 'seasonal_anime' THEN 0
-                WHEN 'anime_library' THEN 1
-                WHEN 'movies' THEN 2
-                WHEN 'tv' THEN 3
-                ELSE 9
-              END,
-              id ASC
-            """
-        ).fetchall()
         sync_rules = conn.execute(
             """
             SELECT sr.*, e.display_title AS title_cn
@@ -1523,7 +1489,6 @@ def dashboard_data() -> dict[str, Any]:
     scheduled_jobs = scheduled_jobs_summary()
     scheduled_runs = list(runtime_snapshot.get("scheduler_runs") or [])[-40:]
     server_logs = list(runtime_snapshot.get("logs") or [])[-160:]
-    episode_jobs = build_episode_jobs(runtime_snapshot, limit=240)
     operations_list = [
         dict(item)
         for item in runtime_snapshot.get("operations", [])
@@ -1544,19 +1509,9 @@ def dashboard_data() -> dict[str, Any]:
     return {
         "seasonal_items": seasonal_rows,
         "library_items": library_rows,
-        "media_libraries": rows_to_dicts(media_libraries),
-        "library_summary": {
-            "work_count": int((library_summary_row["work_count"] if library_summary_row else 0) or 0),
-            "entry_count": int((library_summary_row["entry_count"] if library_summary_row else 0) or 0),
-            "unmatched_count": int((library_summary_row["unmatched_count"] if library_summary_row else 0) or 0),
-            "download_artifact_count": int((library_summary_row["download_artifact_count"] if library_summary_row else 0) or 0),
-            "local_asset_count": int((library_summary_row["local_asset_count"] if library_summary_row else 0) or 0),
-            "failed_entry_count": int((library_failed_row["failed_entry_count"] if library_failed_row else 0) or 0),
-        },
         "seasonal_sync_calendar": seasonal_calendar_rows,
         "seasonal_update_calendar": seasonal_update_rows,
         "recent_synced_seasonal_entries": recent_synced_rows,
-        "episode_jobs": episode_jobs,
         "sync_rules": rows_to_dicts(sync_rules),
         "operations": operations_list,
         "scheduled_jobs": scheduled_jobs,
@@ -1585,13 +1540,6 @@ async def cached_dashboard_data() -> dict[str, Any]:
 @app.get("/api/dashboard")
 async def api_dashboard() -> dict[str, Any]:
     return await cached_dashboard_data()
-
-
-@app.get("/api/episode-jobs")
-async def api_episode_jobs(domain_kind: str = Query("")) -> list[dict[str, Any]]:
-    return await run_in_threadpool(
-        lambda: build_episode_jobs(runtime_store.snapshot(), domain_kind=domain_kind, limit=500)
-    )
 
 
 @app.get("/api/dashboard/stream")
