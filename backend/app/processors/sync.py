@@ -100,6 +100,17 @@ async def sync_download_artifact_to_local(
             "SELECT id FROM local_assets WHERE download_artifact_id=?",
             (download_artifact_id,),
         ).fetchone()
+        conn.execute(
+            """
+            UPDATE episode_resources
+            SET downloaded=1,
+                local_path=?,
+                status='downloaded',
+                updated_at=?
+            WHERE release_id=?
+            """,
+            (target, ts, int(row["release_id"] or 0)),
+        )
     local_asset_id = int(local_asset["id"] or 0) if local_asset else 0
     log(
         "info",

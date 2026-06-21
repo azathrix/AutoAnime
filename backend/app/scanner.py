@@ -288,6 +288,60 @@ def release_has_downstream(conn, release_id: int) -> bool:
     return False
 
 
+def sync_episode_resource_for_release(conn, release_id: int, ts: str | None = None) -> None:
+    ts = ts or now()
+    release = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
+    if not release:
+        return
+    episode_id = 0
+    episode = conn.execute(
+        "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
+        (release["entry_id"], release["episode_number"]),
+    ).fetchone()
+    if episode:
+        episode_id = int(episode["id"])
+    source_ref = str(release["guid"] or release["id"])
+    conn.execute(
+        """
+        INSERT INTO episode_resources
+          (entry_id, episode_id, episode_number, source_type, source_ref, release_id, title,
+           subtitle_group, resolution, language, subtitle_format, torrent_url, magnet,
+           selected, status, created_at, updated_at)
+        VALUES (?, ?, ?, 'mikan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?)
+        ON CONFLICT(entry_id, episode_number, source_type, source_ref) DO UPDATE SET
+          episode_id=excluded.episode_id,
+          release_id=excluded.release_id,
+          title=excluded.title,
+          subtitle_group=excluded.subtitle_group,
+          resolution=excluded.resolution,
+          language=excluded.language,
+          subtitle_format=excluded.subtitle_format,
+          torrent_url=excluded.torrent_url,
+          magnet=excluded.magnet,
+          selected=excluded.selected,
+          status='available',
+          updated_at=excluded.updated_at
+        """,
+        (
+            release["entry_id"],
+            episode_id,
+            release["episode_number"],
+            source_ref,
+            release_id,
+            release["title"],
+            release["subtitle_group"],
+            release["resolution"],
+            release["language"],
+            release["subtitle_format"],
+            release["torrent_url"],
+            release["magnet"],
+            int(release["selected"] or 0),
+            ts,
+            ts,
+        ),
+    )
+
+
 def coalesce_episode_release(conn, entry_id: int, episode_number: int, item: ParsedRelease, ts: str) -> int | None:
     if episode_number <= 0:
         return None
@@ -580,6 +634,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
             "UPDATE download_jobs SET entry_id=? WHERE release_id=?",
             (entry_id, release_id),
         )
+        sync_episode_resource_for_release(conn, int(release_id), ts)
     return series_id, entry_id, release_id
 
 
@@ -897,11 +952,13 @@ def resolve_entry_choice(entry_id: int, settings: dict[str, str]) -> tuple[list[
 def mark_selected_releases(entry_id: int, release_ids: list[int]) -> None:
     with connect() as conn:
         conn.execute("UPDATE releases SET selected=0 WHERE entry_id=?", (entry_id,))
+        conn.execute("UPDATE episode_resources SET selected=0 WHERE entry_id=?", (entry_id,))
     if not release_ids:
         return
     with connect() as conn:
         placeholders = ",".join("?" for _ in release_ids)
         conn.execute(f"UPDATE releases SET selected=1 WHERE id IN ({placeholders})", release_ids)
+        conn.execute(f"UPDATE episode_resources SET selected=1 WHERE release_id IN ({placeholders})", release_ids)
 
 
 def extract_task_id(result: dict) -> str:

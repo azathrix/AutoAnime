@@ -1140,11 +1140,38 @@ const mediaWizardTitle = computed(() => {
 const entryResourceRows = computed(() => {
   const detail = selectedEntryDetail.value || {}
   const rows = new Map()
+  for (const resource of detail.episode_resources || []) {
+    const episode = Number(resource.episode_number || 0)
+    const key = episode > 0 ? `episode:${episode}` : `resource:${resource.id}`
+    rows.set(key, {
+      key,
+      episode_number: episode || '-',
+      release_id: resource.release_id || 0,
+      resource_title: resource.title || resource.source_ref || '-',
+      subtitle_group: resource.subtitle_group || '-',
+      resolution: resource.resolution || '-',
+      language: resource.language || '-',
+      subtitle_format: resource.subtitle_format || '',
+      subtitle_file: '-',
+      downloaded: Boolean(resource.downloaded) || Boolean(resource.local_path),
+      local_path: resource.local_path || '',
+      selected: Boolean(resource.selected),
+    })
+  }
+  for (const subtitle of detail.episode_subtitles || []) {
+    const episode = Number(subtitle.episode_number || 0)
+    const key = episode > 0 ? `episode:${episode}` : `subtitle:${subtitle.id}`
+    const row = rows.get(key)
+    if (!row) continue
+    row.subtitle_file = subtitle.subtitle_path || row.subtitle_file
+    row.subtitle_format = subtitle.subtitle_format || row.subtitle_format
+    row.language = subtitle.language || row.language
+  }
   for (const release of detail.releases || []) {
     const episode = Number(release.episode_number || 0)
     const key = episode > 0 ? `episode:${episode}` : `release:${release.id}`
     const previous = rows.get(key)
-    if (previous && previous.selected && !release.selected) continue
+    if (previous && (previous.selected || !release.selected)) continue
     rows.set(key, {
       key,
       episode_number: episode || '-',

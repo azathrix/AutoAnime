@@ -388,6 +388,45 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS episode_resources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_id INTEGER NOT NULL,
+                episode_id INTEGER NOT NULL DEFAULT 0,
+                episode_number INTEGER NOT NULL,
+                source_type TEXT NOT NULL DEFAULT '',
+                source_ref TEXT NOT NULL DEFAULT '',
+                release_id INTEGER NOT NULL DEFAULT 0,
+                title TEXT NOT NULL DEFAULT '',
+                subtitle_group TEXT NOT NULL DEFAULT '',
+                resolution TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                subtitle_format TEXT NOT NULL DEFAULT '',
+                torrent_url TEXT NOT NULL DEFAULT '',
+                magnet TEXT NOT NULL DEFAULT '',
+                selected INTEGER NOT NULL DEFAULT 0,
+                downloaded INTEGER NOT NULL DEFAULT 0,
+                local_path TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'available',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(entry_id, episode_number, source_type, source_ref)
+            );
+
+            CREATE TABLE IF NOT EXISTS episode_subtitles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER NOT NULL DEFAULT 0,
+                episode_resource_id INTEGER NOT NULL DEFAULT 0,
+                entry_id INTEGER NOT NULL,
+                episode_number INTEGER NOT NULL,
+                language TEXT NOT NULL DEFAULT '',
+                subtitle_format TEXT NOT NULL DEFAULT '',
+                subtitle_path TEXT NOT NULL DEFAULT '',
+                embedded INTEGER NOT NULL DEFAULT 0,
+                selected INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS rss_candidates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 guid TEXT NOT NULL UNIQUE,
@@ -406,6 +445,16 @@ def init_db() -> None:
                 published_at TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
                 reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS rss_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL UNIQUE,
+                kind TEXT NOT NULL DEFAULT 'mikan',
+                enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -772,6 +821,58 @@ def migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in rss_candidate_additions.items():
         if column not in rss_candidate_columns:
             conn.execute(f"ALTER TABLE rss_candidates ADD COLUMN {column} {ddl}")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS episode_resources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id INTEGER NOT NULL,
+            episode_id INTEGER NOT NULL DEFAULT 0,
+            episode_number INTEGER NOT NULL,
+            source_type TEXT NOT NULL DEFAULT '',
+            source_ref TEXT NOT NULL DEFAULT '',
+            release_id INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL DEFAULT '',
+            subtitle_group TEXT NOT NULL DEFAULT '',
+            resolution TEXT NOT NULL DEFAULT '',
+            language TEXT NOT NULL DEFAULT '',
+            subtitle_format TEXT NOT NULL DEFAULT '',
+            torrent_url TEXT NOT NULL DEFAULT '',
+            magnet TEXT NOT NULL DEFAULT '',
+            selected INTEGER NOT NULL DEFAULT 0,
+            downloaded INTEGER NOT NULL DEFAULT 0,
+            local_path TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'available',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(entry_id, episode_number, source_type, source_ref)
+        );
+
+        CREATE TABLE IF NOT EXISTS episode_subtitles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id INTEGER NOT NULL DEFAULT 0,
+            episode_resource_id INTEGER NOT NULL DEFAULT 0,
+            entry_id INTEGER NOT NULL,
+            episode_number INTEGER NOT NULL,
+            language TEXT NOT NULL DEFAULT '',
+            subtitle_format TEXT NOT NULL DEFAULT '',
+            subtitle_path TEXT NOT NULL DEFAULT '',
+            embedded INTEGER NOT NULL DEFAULT 0,
+            selected INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS rss_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL DEFAULT 'mikan',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
     episode_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(episodes)").fetchall()
@@ -987,7 +1088,10 @@ def diagnostics() -> dict[str, Any]:
             "series",
             "episodes",
             "releases",
+            "episode_resources",
+            "episode_subtitles",
             "rss_candidates",
+            "rss_subscriptions",
             "download_jobs",
             "download_artifacts",
             "sync_rules",
@@ -1020,6 +1124,8 @@ def clear_runtime_data() -> None:
             "sync_rules",
             "download_artifacts",
             "download_jobs",
+            "episode_subtitles",
+            "episode_resources",
             "rss_candidates",
             "library_entries",
             "seasonal_entries",
@@ -1030,7 +1136,7 @@ def clear_runtime_data() -> None:
             "series",
         ]:
             conn.execute(f"DELETE FROM {table}")
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('local_assets','sync_rules','download_artifacts','download_jobs','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series')")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('local_assets','sync_rules','download_artifacts','download_jobs','episode_subtitles','episode_resources','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series')")
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('runtime_generation', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

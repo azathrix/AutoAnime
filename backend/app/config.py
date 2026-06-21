@@ -16,6 +16,8 @@ DEFAULT_SETTINGS = {
     "auto_scan": "false",
     "auto_download_unique": "true",
     "auto_download_by_priority": "true",
+    "auto_generate_nfo": "true",
+    "backfill_current_season": "false",
     "default_backfill": "none",
     "subtitle_priority": "LoliHouse\n喵萌奶茶屋\nNekomoe kissaten\nANi\n猎户压制部\n百冬练习组\n桜都字幕组\n动漫国字幕组\n悠哈璃羽字幕社\n北宇治字幕组\n豌豆字幕组\n幻樱字幕组\n千夏字幕组\n雪飘工作室\n织梦字幕组\nSweetSub\nVCB-Studio",
     "resolution_priority": "1080p\n1080\n2160p\n720p",
@@ -42,5 +44,11 @@ DEFAULT_SETTINGS = {
     "series_dir_template": "{title_base} ({year}) [bangumi-{bangumi_id}]",
     "season_dir_template": "Season {season:02d}",
     "episode_name_template": "{title_cn} - S{season:02d}E{episode:02d} - {episode_title}",
+    "movie_name_template": "{title_cn} ({year})/{title_cn} ({year})",
+    "tv_name_template": "{title_cn} ({year})/Season {season:02d}/{title_cn} - S{season:02d}E{episode:02d}",
+    "anime_selection_rules_json": "{}",
+    "movie_selection_rules_json": "{}",
+    "tv_selection_rules_json": "{}",
+    "downloaders_json": "[]",
 }
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -108,6 +108,32 @@ class MediaLibraryPayload(BaseModel):
     metadata_provider_priority: str = "bangumi,tmdb,manual"
     naming_template: str = ""
     enabled: bool = True
+
+
+class RssSubscriptionPayload(BaseModel):
+    name: str = ""
+    url: str = ""
+    kind: str = "mikan"
+    enabled: bool = True
+
+
+class EpisodeResourcePayload(BaseModel):
+    resource_id: int = 0
+    title: str = ""
+    subtitle_group: str = ""
+    resolution: str = ""
+    language: str = ""
+    subtitle_format: str = ""
+    selected: bool = True
+
+
+class EpisodeSubtitlePayload(BaseModel):
+    subtitle_id: int = 0
+    language: str = ""
+    subtitle_format: str = ""
+    subtitle_path: str = ""
+    embedded: bool = False
+    selected: bool = True
 
 
 class PipelineStartPayload(BaseModel):
@@ -432,9 +458,30 @@ def settings_response() -> dict[str, Any]:
     return result
 
 
+def normalize_api_media_type(value: str) -> str:
+    key = str(value or "anime").strip().lower()
+    if key in {"anime", "movie", "tv"}:
+        return key
+    raise HTTPException(status_code=404, detail="未知媒体类型")
+
+
+def media_items_response(media_type: str) -> dict[str, Any]:
+    media_type = normalize_api_media_type(media_type)
+    rows = dashboard_data().get("library_items", [])
+    items = [
+        item
+        for item in rows
+        if str(item.get("media_type") or "anime").lower() == media_type
+    ]
+    return {"type": media_type, "items": items}
+
+
 def empty_entry_response() -> dict[str, Any]:
     return {
         "entry": None,
+        "episodes": [],
+        "episode_resources": [],
+        "episode_subtitles": [],
         "releases": [],
         "tasks": [],
         "download_artifacts": [],
@@ -472,12 +519,27 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
             "SELECT * FROM local_assets WHERE entry_id=? ORDER BY episode_number ASC, id DESC",
             (entry_id,),
         ).fetchall()
+        episodes = conn.execute(
+            "SELECT * FROM episodes WHERE entry_id=? ORDER BY episode_number ASC, id ASC",
+            (entry_id,),
+        ).fetchall()
+        episode_resources = conn.execute(
+            "SELECT * FROM episode_resources WHERE entry_id=? ORDER BY episode_number ASC, selected DESC, id DESC",
+            (entry_id,),
+        ).fetchall()
+        episode_subtitles = conn.execute(
+            "SELECT * FROM episode_subtitles WHERE entry_id=? ORDER BY episode_number ASC, selected DESC, id DESC",
+            (entry_id,),
+        ).fetchall()
     groups = sorted({r["subtitle_group"] for r in releases if r["subtitle_group"]})
     resolutions = sorted({r["resolution"] for r in releases if r["resolution"]})
     languages = sorted({r["language"] for r in releases if r["language"]})
     entry_payload = enrich_catalog_entry({**row_to_dict(entry), "domain_kind": entry["domain_kind"]})
     return {
         "entry": entry_payload,
+        "episodes": rows_to_dicts(episodes),
+        "episode_resources": rows_to_dicts(episode_resources),
+        "episode_subtitles": rows_to_dicts(episode_subtitles),
         "releases": rows_to_dicts(releases),
         "tasks": rows_to_dicts(tasks),
         "download_artifacts": rows_to_dicts(download_artifacts),
@@ -1710,6 +1772,231 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
     reschedule()
     log("info", "全局设置已保存")
     return settings_response()
+
+
+@app.get("/api/rss-subscriptions")
+async def api_rss_subscriptions() -> dict[str, Any]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM rss_subscriptions ORDER BY enabled DESC, id ASC"
+        ).fetchall()
+    return {"items": rows_to_dicts(rows)}
+
+
+@app.post("/api/rss-subscriptions")
+async def api_create_rss_subscription(payload: RssSubscriptionPayload) -> dict[str, Any]:
+    url = payload.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="RSS 地址不能为空")
+    kind = payload.kind.strip() or "mikan"
+    if kind != "mikan":
+        raise HTTPException(status_code=400, detail="当前只支持 Mikan RSS")
+    ts = now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO rss_subscriptions (name, url, kind, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET
+              name=excluded.name,
+              kind=excluded.kind,
+              enabled=excluded.enabled,
+              updated_at=excluded.updated_at
+            """,
+            (payload.name.strip() or "Mikan RSS", url, kind, int(payload.enabled), ts, ts),
+        )
+        row = conn.execute("SELECT * FROM rss_subscriptions WHERE url=?", (url,)).fetchone()
+    log("info", f"RSS 订阅已保存: kind={kind} url={url}")
+    return {"status": "saved", "item": row_to_dict(row)}
+
+
+@app.put("/api/rss-subscriptions/{subscription_id}")
+async def api_update_rss_subscription(subscription_id: int, payload: RssSubscriptionPayload) -> dict[str, Any]:
+    url = payload.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="RSS 地址不能为空")
+    kind = payload.kind.strip() or "mikan"
+    if kind != "mikan":
+        raise HTTPException(status_code=400, detail="当前只支持 Mikan RSS")
+    ts = now()
+    with connect() as conn:
+        existing = conn.execute("SELECT id FROM rss_subscriptions WHERE id=?", (subscription_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="RSS 订阅不存在")
+        conn.execute(
+            """
+            UPDATE rss_subscriptions
+            SET name=?, url=?, kind=?, enabled=?, updated_at=?
+            WHERE id=?
+            """,
+            (payload.name.strip() or "Mikan RSS", url, kind, int(payload.enabled), ts, subscription_id),
+        )
+        row = conn.execute("SELECT * FROM rss_subscriptions WHERE id=?", (subscription_id,)).fetchone()
+    return {"status": "saved", "item": row_to_dict(row)}
+
+
+@app.delete("/api/rss-subscriptions/{subscription_id}")
+async def api_delete_rss_subscription(subscription_id: int) -> dict[str, str]:
+    with connect() as conn:
+        row = conn.execute("SELECT id FROM rss_subscriptions WHERE id=?", (subscription_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="RSS 订阅不存在")
+        conn.execute("DELETE FROM rss_subscriptions WHERE id=?", (subscription_id,))
+    return {"status": "deleted", "message": "RSS 订阅已删除"}
+
+
+@app.get("/api/media/{media_type}")
+async def api_media_items(media_type: str) -> dict[str, Any]:
+    return media_items_response(media_type)
+
+
+@app.get("/api/media/{media_type}/{entry_id}")
+async def api_media_entry(media_type: str, entry_id: int) -> dict[str, Any]:
+    normalize_api_media_type(media_type)
+    return build_entry_response(entry_id)
+
+
+@app.put("/api/media/{media_type}/{entry_id}")
+async def api_update_media_entry(media_type: str, entry_id: int, payload: EntryPayload) -> dict[str, Any]:
+    normalize_api_media_type(media_type)
+    return save_entry_payload(entry_id, payload, expected_domain=None)
+
+
+@app.get("/api/entries/{entry_id}/episodes")
+async def api_entry_episodes(entry_id: int) -> dict[str, Any]:
+    detail = build_entry_response(entry_id)
+    return {
+        "entry": detail.get("entry"),
+        "episodes": detail.get("episodes", []),
+        "episode_resources": detail.get("episode_resources", []),
+        "episode_subtitles": detail.get("episode_subtitles", []),
+    }
+
+
+@app.put("/api/episodes/{episode_id}/resource")
+async def api_update_episode_resource(episode_id: int, payload: EpisodeResourcePayload) -> dict[str, Any]:
+    ts = now()
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        if payload.selected:
+            conn.execute(
+                "UPDATE episode_resources SET selected=0 WHERE entry_id=? AND episode_number=?",
+                (episode["entry_id"], episode["episode_number"]),
+            )
+        if payload.resource_id:
+            conn.execute(
+                """
+                UPDATE episode_resources
+                SET title=CASE WHEN ?='' THEN title ELSE ? END,
+                    subtitle_group=CASE WHEN ?='' THEN subtitle_group ELSE ? END,
+                    resolution=CASE WHEN ?='' THEN resolution ELSE ? END,
+                    language=CASE WHEN ?='' THEN language ELSE ? END,
+                    subtitle_format=CASE WHEN ?='' THEN subtitle_format ELSE ? END,
+                    selected=?,
+                    updated_at=?
+                WHERE id=? AND entry_id=?
+                """,
+                (
+                    payload.title.strip(),
+                    payload.title.strip(),
+                    payload.subtitle_group.strip(),
+                    payload.subtitle_group.strip(),
+                    payload.resolution.strip(),
+                    payload.resolution.strip(),
+                    payload.language.strip(),
+                    payload.language.strip(),
+                    payload.subtitle_format.strip(),
+                    payload.subtitle_format.strip(),
+                    int(payload.selected),
+                    ts,
+                    payload.resource_id,
+                    episode["entry_id"],
+                ),
+            )
+            row = conn.execute("SELECT * FROM episode_resources WHERE id=?", (payload.resource_id,)).fetchone()
+        else:
+            conn.execute(
+                """
+                INSERT INTO episode_resources
+                  (entry_id, episode_id, episode_number, source_type, source_ref, title,
+                   subtitle_group, resolution, language, subtitle_format, selected, created_at, updated_at)
+                VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    episode["entry_id"],
+                    episode_id,
+                    episode["episode_number"],
+                    f"manual:{episode_id}:{ts}",
+                    payload.title.strip(),
+                    payload.subtitle_group.strip(),
+                    payload.resolution.strip(),
+                    payload.language.strip(),
+                    payload.subtitle_format.strip(),
+                    int(payload.selected),
+                    ts,
+                    ts,
+                ),
+            )
+            row = conn.execute("SELECT * FROM episode_resources WHERE id=last_insert_rowid()").fetchone()
+    return {"status": "saved", "item": row_to_dict(row)}
+
+
+@app.put("/api/episodes/{episode_id}/subtitle")
+async def api_update_episode_subtitle(episode_id: int, payload: EpisodeSubtitlePayload) -> dict[str, Any]:
+    ts = now()
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        if payload.selected:
+            conn.execute(
+                "UPDATE episode_subtitles SET selected=0 WHERE entry_id=? AND episode_number=?",
+                (episode["entry_id"], episode["episode_number"]),
+            )
+        if payload.subtitle_id:
+            conn.execute(
+                """
+                UPDATE episode_subtitles
+                SET language=?, subtitle_format=?, subtitle_path=?, embedded=?, selected=?, updated_at=?
+                WHERE id=? AND entry_id=?
+                """,
+                (
+                    payload.language.strip(),
+                    payload.subtitle_format.strip(),
+                    payload.subtitle_path.strip(),
+                    int(payload.embedded),
+                    int(payload.selected),
+                    ts,
+                    payload.subtitle_id,
+                    episode["entry_id"],
+                ),
+            )
+            row = conn.execute("SELECT * FROM episode_subtitles WHERE id=?", (payload.subtitle_id,)).fetchone()
+        else:
+            conn.execute(
+                """
+                INSERT INTO episode_subtitles
+                  (episode_id, episode_resource_id, entry_id, episode_number, language,
+                   subtitle_format, subtitle_path, embedded, selected, created_at, updated_at)
+                VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    episode_id,
+                    episode["entry_id"],
+                    episode["episode_number"],
+                    payload.language.strip(),
+                    payload.subtitle_format.strip(),
+                    payload.subtitle_path.strip(),
+                    int(payload.embedded),
+                    int(payload.selected),
+                    ts,
+                    ts,
+                ),
+            )
+            row = conn.execute("SELECT * FROM episode_subtitles WHERE id=last_insert_rowid()").fetchone()
+    return {"status": "saved", "item": row_to_dict(row)}
 
 
 @app.get("/api/seasonal/{entry_id}")
