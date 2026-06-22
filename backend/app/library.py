@@ -130,7 +130,7 @@ def cn_number_to_int(value: str) -> int:
 
 
 def render_series_dir(series: dict, settings: dict[str, str]) -> str:
-    template = settings.get("series_dir_template") or "{title_base} ({year}) [bangumi-{bangumi_id}]"
+    template = settings.get("series_dir_template") or "{title_base}"
     title_cn = clean_name(series.get("title_cn") or series.get("title_raw") or "Unknown")
     title_base = normalize_series_root_title(title_cn)
     bangumi_id = series.get("bangumi_id") or "unknown"
@@ -153,8 +153,10 @@ def render_season_dir(season: int, settings: dict[str, str]) -> str:
 def render_episode_name(series: dict, episode_number: int, episode_title: str, settings: dict[str, str]) -> str:
     template = settings.get("episode_name_template") or "{title_cn} - S{season:02d}E{episode:02d} - {episode_title}"
     title_cn = clean_name(series.get("title_cn") or series.get("title_raw") or "Unknown")
+    title_base = normalize_series_root_title(title_cn)
     return template.format(
         title_cn=title_cn,
+        title_base=title_base,
         season=int(series.get("season_number") or 1),
         episode=int(episode_number or 0),
         episode_title=clean_name(episode_title or f"第{int(episode_number or 0):02d}话"),

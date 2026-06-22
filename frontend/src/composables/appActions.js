@@ -32,8 +32,8 @@ export function createAppActions(app, deps) {
 
   async function runAction(path) {
     try {
-      await postAction(path)
-      ElMessage.success('操作已提交')
+      const result = await postAction(path)
+      ElMessage.success(result?.message || '操作已提交')
       await app.reload()
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
@@ -640,8 +640,8 @@ export function createAppActions(app, deps) {
     app.settings.tv_source_priority = Array.isArray(app.settings.tv_source_priority) ? app.settings.tv_source_priority : []
     app.settings.tv_subtitle_priority = Array.isArray(app.settings.tv_subtitle_priority) ? app.settings.tv_subtitle_priority : []
     app.settings.downloaders = Array.isArray(app.settings.downloaders) ? app.settings.downloaders : []
-    app.settings.movie_name_template = app.settings.movie_name_template || '{title_cn} ({year})/{title_cn} ({year})'
-    app.settings.tv_name_template = app.settings.tv_name_template || '{title_cn} ({year})/Season {season:02d}/{title_cn} - S{season:02d}E{episode:02d}'
+    app.settings.movie_name_template = app.settings.movie_name_template || '{title_base}/{title_base}'
+    app.settings.tv_name_template = app.settings.tv_name_template || '{title_base}/Season {season:02d}/{title_base} - S{season:02d}E{episode:02d}'
     app.settings.episode_name_template = app.settings.episode_name_template || '{title_cn} - S{season:02d}E{episode:02d} - {episode_title}'
   }
 

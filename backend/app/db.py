@@ -373,6 +373,19 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, value),
             )
+        for key, old_value, new_value in [
+            ("series_dir_template", "{title_base} ({year}) [bangumi-{bangumi_id}]", "{title_base}"),
+            ("movie_name_template", "{title_cn} ({year})/{title_cn} ({year})", "{title_base}/{title_base}"),
+            (
+                "tv_name_template",
+                "{title_cn} ({year})/Season {season:02d}/{title_cn} - S{season:02d}E{episode:02d}",
+                "{title_base}/Season {season:02d}/{title_base} - S{season:02d}E{episode:02d}",
+            ),
+        ]:
+            conn.execute(
+                "UPDATE settings SET value=? WHERE key=? AND value=?",
+                (new_value, key, old_value),
+            )
         ensure_media_libraries(conn)
         migrate(conn)
 
