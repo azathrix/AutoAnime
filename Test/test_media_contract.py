@@ -162,6 +162,8 @@ class MediaContractTests(unittest.TestCase):
         self.assertEqual(payload["entry"]["media_type"], "tv")
         self.assertEqual(payload["episode_resources"][0]["episode_number"], 2)
         self.assertEqual(client.get(f"/api/media/movie/{int(detail['entry']['id'])}").status_code, 404)
+        self.assertEqual(client.get("/api/media/anime/999999").status_code, 404)
+        self.assertEqual(client.get("/api/entries/999999/episodes").status_code, 404)
 
 
 if __name__ == "__main__":

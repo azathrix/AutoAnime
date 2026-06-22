@@ -429,6 +429,8 @@ def build_media_entry_response(media_type: str, entry_id: int) -> dict[str, Any]
     media_type = normalize_api_media_type(media_type)
     detail = build_entry_response(entry_id)
     entry = detail.get("entry") or {}
+    if not entry:
+        raise HTTPException(status_code=404, detail="媒体条目不存在")
     entry_media_type = normalize_api_media_type(str(entry.get("media_type") or "anime"))
     if entry_media_type != media_type:
         raise HTTPException(status_code=404, detail="媒体条目类型不匹配")
@@ -1946,6 +1948,8 @@ async def api_update_media_entry(media_type: str, entry_id: int, payload: EntryP
 @app.get("/api/entries/{entry_id}/episodes")
 async def api_entry_episodes(entry_id: int) -> dict[str, Any]:
     detail = build_entry_response(entry_id)
+    if not detail.get("entry"):
+        raise HTTPException(status_code=404, detail="媒体条目不存在")
     return {
         "entry": detail.get("entry"),
         "episodes": detail.get("episodes", []),
