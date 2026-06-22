@@ -69,6 +69,13 @@ build\AniTrack-clean
 /volume1/docker/autoanime
 ```
 
+如果使用上传脚本，请进入 clean 包目录运行，脚本会同步“当前目录”到 NAS：
+
+```bat
+cd build\AniTrack-clean
+upload-clean.bat
+```
+
 启动或更新：
 
 ```sh
@@ -101,7 +108,7 @@ http://NAS_IP:32888
 
 ## 上传包规则
 
-需要上传的是 `build\AniTrack-clean` 目录内容。不要手动上传开发环境目录：
+需要上传的是 `build\AniTrack-clean` 目录内容。`upload-clean.bat` 也按这个约定上传脚本所在目录。不要手动上传开发环境目录：
 
 ```txt
 frontend/node_modules
