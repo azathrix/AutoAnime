@@ -2528,7 +2528,6 @@ async def api_update_episode_subtitle(episode_id: int, payload: EpisodeSubtitleP
 
 @app.post("/api/episodes/{episode_id}/refresh")
 async def api_refresh_episode_resource_state(episode_id: int) -> dict[str, Any]:
-    run_id = 0
     refreshed = 0
     with connect() as conn:
         episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
@@ -2547,25 +2546,7 @@ async def api_refresh_episode_resource_state(episode_id: int) -> dict[str, Any]:
                 (1 if exists else int(resource["downloaded"] or 0), now(), resource["id"]),
             )
             refreshed += 1
-        selected = next((resource for resource in resources if int(resource["selected"] or 0)), resources[0] if resources else None)
-        if selected and not int(selected["downloaded"] or 0) and int(selected["release_id"] or 0) > 0:
-            run_id = start_pipeline(
-                "library_backfill",
-                trigger_source="episode_refresh",
-                first_step_key="download",
-                subject_type="release",
-                subject_id=int(selected["release_id"]),
-                payload={
-                    "_dedupe_key": f"download:entry:{int(episode['entry_id'])}:episode:{int(episode['episode_number'])}",
-                    "entry_id": int(episode["entry_id"]),
-                    "release_id": int(selected["release_id"]),
-                    "episode_number": int(episode["episode_number"]),
-                    "domain_kind": "library",
-                },
-                message=f"刷新集数资源后补下载: entry_id={episode['entry_id']} episode={episode['episode_number']}",
-            )
-            trigger_queue("processor", delay=0)
-    return {"status": "refreshed", "count": refreshed, "download_run_id": run_id}
+    return {"status": "refreshed", "count": refreshed}
 
 
 @app.post("/api/episodes/{episode_id}/download")
@@ -2621,6 +2602,85 @@ async def api_download_episode_resource(episode_id: int) -> dict[str, Any]:
     )
     trigger_queue("processor", delay=0)
     return {"status": "started", "download_run_id": run_id, "message": "已加入下载队列"}
+
+
+@app.post("/api/entries/{entry_id}/download")
+async def api_download_entry_resources(entry_id: int) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    with connect() as conn:
+        entry = conn.execute("SELECT id FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            raise HTTPException(status_code=404, detail="媒体条目不存在")
+        reset_orphaned_download_jobs_in_conn(conn, entry_id)
+        candidates = conn.execute(
+            """
+            SELECT er.entry_id, er.episode_number, er.release_id
+            FROM episode_resources er
+            LEFT JOIN local_assets la
+              ON la.entry_id=er.entry_id
+             AND la.episode_number=er.episode_number
+             AND la.status='synced'
+            WHERE er.entry_id=?
+              AND er.selected=1
+              AND er.release_id > 0
+              AND COALESCE(er.downloaded, 0)=0
+              AND la.id IS NULL
+              AND NOT EXISTS (
+                SELECT 1
+                FROM download_jobs dj
+                WHERE dj.entry_id=er.entry_id
+                  AND dj.episode_number=er.episode_number
+                  AND dj.status IN ('pending','running','submitted','downloading')
+              )
+            ORDER BY er.episode_number ASC, er.id DESC
+            """,
+            (entry_id,),
+        ).fetchall()
+        ts = now()
+        seen_episodes: set[int] = set()
+        for candidate in candidates:
+            episode_number = int(candidate["episode_number"] or 0)
+            release_id = int(candidate["release_id"] or 0)
+            if episode_number <= 0 or release_id <= 0 or episode_number in seen_episodes:
+                continue
+            seen_episodes.add(episode_number)
+            if runtime_store.has_active_episode_task(entry_id, episode_number, DOWNLOAD_RUNTIME_PROCESSORS):
+                continue
+            conn.execute(
+                """
+                UPDATE episode_resources
+                SET status='queued', updated_at=?
+                WHERE entry_id=? AND episode_number=? AND selected=1
+                """,
+                (ts, entry_id, episode_number),
+            )
+            rows.append({"entry_id": entry_id, "episode_number": episode_number, "release_id": release_id})
+    run_ids: list[int] = []
+    for row in rows:
+        run_id = start_pipeline(
+            "library_backfill",
+            trigger_source="entry_batch_download",
+            first_step_key="download",
+            subject_type="release",
+            subject_id=int(row["release_id"]),
+            payload={
+                "_dedupe_key": f"download:entry:{entry_id}:episode:{int(row['episode_number'])}",
+                "entry_id": entry_id,
+                "release_id": int(row["release_id"]),
+                "episode_number": int(row["episode_number"]),
+                "domain_kind": "library",
+            },
+            message=f"批量下载集数: entry_id={entry_id} episode={row['episode_number']}",
+        )
+        run_ids.append(run_id)
+    if run_ids:
+        trigger_queue("processor", delay=0)
+    return {
+        "status": "started" if run_ids else "skipped",
+        "count": len(run_ids),
+        "download_run_ids": run_ids,
+        "message": f"已加入 {len(run_ids)} 个下载任务" if run_ids else "没有需要批量下载的集数",
+    }
 
 
 @app.post("/api/episodes/{episode_id}/download/cancel")
@@ -2690,13 +2750,10 @@ async def api_refresh_entry_resource_state(entry_id: int) -> dict[str, Any]:
     with connect() as conn:
         episodes = conn.execute("SELECT id FROM episodes WHERE entry_id=? ORDER BY episode_number", (entry_id,)).fetchall()
     count = 0
-    runs: list[int] = []
     for episode in episodes:
         result = await api_refresh_episode_resource_state(int(episode["id"]))
         count += int(result.get("count") or 0)
-        if int(result.get("download_run_id") or 0):
-            runs.append(int(result["download_run_id"]))
-    return {"status": "refreshed", "count": count, "download_run_ids": runs}
+    return {"status": "refreshed", "count": count}
 
 
 @app.delete("/api/seasonal/{entry_id}")

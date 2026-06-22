@@ -718,7 +718,7 @@
           </el-tab-pane>
           <el-tab-pane label="集数资源">
             <div class="resource-toolbar">
-              <el-button plain @click="refreshCurrentEntryResources">刷新全部</el-button>
+              <el-button type="primary" @click="downloadCurrentEntryResources">批量下载</el-button>
               <el-button plain @click="openEpisodeImportDialog">手动导入集数</el-button>
               <el-button type="primary" @click="openBatchSubtitleDialog">字幕批量配置</el-button>
             </div>
@@ -2241,7 +2241,7 @@ async function refreshEpisodeResource(row) {
   }
   try {
     const result = await postAction(`/episodes/${episodeId}/refresh`)
-    ElMessage.success(result.download_run_id ? '已刷新并重新加入下载队列' : '集数状态已刷新')
+    ElMessage.success(result.count ? '集数状态已刷新' : '没有可刷新的集数资源')
     if (selectedEntry.value?.id) {
       await openEntry(selectedEntry.value.id, selectedEntryDomain.value, selectedEntryMediaType.value)
     }
@@ -2301,12 +2301,12 @@ async function pauseEpisodeDownload(row) {
   }
 }
 
-async function refreshCurrentEntryResources() {
+async function downloadCurrentEntryResources() {
   const entry = selectedEntry.value
   if (!entry?.id) return
   try {
-    const result = await postAction(`/entries/${entry.id}/refresh-resources`)
-    ElMessage.success(result.download_run_ids?.length ? '已刷新并补下载缺失资源' : '集数资源状态已刷新')
+    const result = await postAction(`/entries/${entry.id}/download`)
+    ElMessage.success(result.count ? `已加入 ${result.count} 个下载任务` : '没有需要下载的集数')
     await openEntry(entry.id, selectedEntryDomain.value, selectedEntryMediaType.value)
   } catch (error) {
     ElMessage.error(apiErrorMessage(error))
