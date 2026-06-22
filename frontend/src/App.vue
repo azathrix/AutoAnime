@@ -252,6 +252,39 @@ const scheduledJobForm = reactive({
 const processorSettingsForm = reactive({
   download_concurrency: 2,
 })
+const appContextBindings = {}
+
+function exposeAppContext(bindings) {
+  Object.assign(appContextBindings, bindings)
+}
+
+const appContext = new Proxy(appContextBindings, {
+  get(target, key) {
+    if (typeof key !== 'string') return undefined
+    const value = target[key]
+    return isRef(value) ? value.value : value
+  },
+  set(target, key, value) {
+    if (typeof key !== 'string') return false
+    const current = target[key]
+    if (isRef(current)) {
+      current.value = value
+      return true
+    }
+    target[key] = value
+    return true
+  },
+  has(target, key) {
+    return typeof key === 'string' && key in target
+  },
+  ownKeys(target) {
+    return Reflect.ownKeys(target)
+  },
+  getOwnPropertyDescriptor(target, key) {
+    if (key in target) return { configurable: true, enumerable: true }
+    return undefined
+  },
+})
 
 const pageTitle = computed(() => ({
   dashboard: '控制台',
@@ -785,38 +818,176 @@ function queueTaskCanCancel(row) {
 
 
 
-function resolveAppContextBinding(key) {
-  try {
-    return eval(key)
-  } catch {
-    return undefined
-  }
-}
-
-const appContext = new Proxy({}, {
-  get(_target, key) {
-    if (typeof key !== 'string') return undefined
-    const value = resolveAppContextBinding(key)
-    return isRef(value) ? value.value : value
-  },
-  set(_target, key, value) {
-    if (typeof key !== 'string') return false
-    const current = resolveAppContextBinding(key)
-    if (isRef(current)) {
-      current.value = value
-      return true
-    }
-    return false
-  },
-  has() {
-    return true
-  },
-  ownKeys() {
-    return []
-  },
-  getOwnPropertyDescriptor() {
-    return { configurable: true, enumerable: true }
-  },
+exposeAppContext({
+  Calendar,
+  Collection,
+  DataBoard,
+  Document,
+  Refresh,
+  Search,
+  Setting,
+  activeDetailRows,
+  addDays,
+  advancedFilterOpen,
+  appBuild,
+  appVersion,
+  batchSubtitleCanAdvance,
+  batchSubtitleCanSave,
+  batchSubtitleDialogOpen,
+  batchSubtitleForm,
+  batchSubtitleInvalidRows,
+  batchSubtitlePreviewRows,
+  batchSubtitleStep,
+  belongsToCurrentMediaPage,
+  calendarWeek,
+  cardInitials,
+  cardSubtitle,
+  consoleNavMode,
+  currentCatalogSourceRows,
+  currentMediaPageTitle,
+  currentMediaType,
+  currentMediaTypeOptions,
+  currentMonthOptions,
+  currentRegionOptions,
+  currentScopeOptions,
+  currentTagOptions,
+  currentYearOptions,
+  dashboard,
+  diagnostics,
+  entryDrawerOpen,
+  entryEditDialogOpen,
+  entryEditForm,
+  entryMediaType,
+  entryResourceRows,
+  entryTags,
+  entryTitle,
+  episodeCanCancel,
+  episodeCanPause,
+  episodeDownloadTag,
+  episodeDownloadText,
+  episodeImportCanAdvance,
+  episodeImportCanSave,
+  episodeImportDialogOpen,
+  episodeImportForm,
+  episodeImportInvalidCount,
+  episodeImportResourceRows,
+  episodeImportStep,
+  episodeImportSubtitleRows,
+  episodeResourceDialogOpen,
+  episodeResourceForm,
+  errorMessage,
+  filteredSeries,
+  filteredServerLogs,
+  filteredServerLogText,
+  formatCountdown,
+  formatDateKey,
+  handleBatchSubtitlePicked,
+  handleSubtitleFilePicked,
+  hasRecentUpdate,
+  inferEpisodeFromText,
+  isMediaCatalogView,
+  isQueueActive,
+  isValidResourceReference,
+  isValidSubtitleReference,
+  jsonFromListText,
+  keyword,
+  libraryMediaTypeFilter,
+  libraryMonthFilter,
+  libraryRegionFilter,
+  libraryRows,
+  libraryScopeFilter,
+  libraryTagFilters,
+  libraryYearFilter,
+  listTextFromJson,
+  liveConnected,
+  loading,
+  localAssetTotal,
+  logKeyword,
+  logsBadgeText,
+  logsBadgeType,
+  mediaTypeLabel,
+  mediaWizardCandidates,
+  mediaWizardDraft,
+  mediaWizardFiles,
+  mediaWizardInvalidResourceCount,
+  mediaWizardInvalidSubtitleCount,
+  mediaWizardMode,
+  mediaWizardOpen,
+  mediaWizardResourceRows,
+  mediaWizardSaving,
+  mediaWizardStep,
+  mediaWizardSubtitleRows,
+  mediaWizardTitle,
+  metadataFetchProgress,
+  metadataFetching,
+  metadataSearchDialogOpen,
+  metadataSearchKeyword,
+  metadataSearchLoading,
+  metadataSearchProvider,
+  metadataSearchResults,
+  numberFromInput,
+  openBatchSubtitleDialog,
+  openEpisodeImportDialog,
+  pageTitle,
+  parseDateValue,
+  processorSettingsDialogOpen,
+  processorSettingsForm,
+  queueBadge,
+  queueConsoleSections,
+  queueListSections,
+  queueMap,
+  queuePendingHint,
+  queueState,
+  queueTag,
+  queueTaskCanCancel,
+  queueTaskProgressText,
+  refreshEpisodeResource,
+  regionLabel,
+  reload,
+  reloadDiagnostics,
+  resourceReferenceKind,
+  rssDialogOpen,
+  rssEditingId,
+  rssForm,
+  rssLoading,
+  rssSubscriptions,
+  savingSettings,
+  scanOperation,
+  scanProgress,
+  scanRunning,
+  scheduledBadgeText,
+  scheduledBadgeType,
+  scheduledConsoleSections,
+  scheduledJobForm,
+  scheduledSettingsDialogOpen,
+  seasonalCalendarCards,
+  seasonalRows,
+  selectedConsoleSection,
+  selectedEntry,
+  selectedEntryDetail,
+  selectedEntryDomain,
+  selectedEntryMediaType,
+  selectedEntryStats,
+  selectedQueue,
+  selectedQueueAction,
+  selectedQueueItems,
+  selectedScheduledJob,
+  selectedScheduledRuns,
+  selectedSectionMeta,
+  settings,
+  shiftCalendarWeek,
+  sourceModeText,
+  splitTextLines,
+  startOfWeek,
+  subtitleFormatText,
+  taskStatusText,
+  taskTag,
+  toggleLibraryTag,
+  view,
+  watchableCount,
+  watchableTotal,
+  weekDays,
+  weekStart,
 })
 
 provide('appContext', appContext)
@@ -831,6 +1002,7 @@ const {
   cancelQueueDownload,
   commitEpisodeImport,
   commitMediaWizard,
+  deleteEpisodeResource,
   deleteRssSubscription,
   downloadCurrentEntryResources,
   downloadEpisodeResource,
@@ -879,6 +1051,56 @@ const {
   saveMediaItem,
   saveSettings,
   uploadFile,
+})
+
+exposeAppContext({
+  addDownloader,
+  advanceMediaWizard,
+  apiErrorMessage,
+  applyMetadataToWizard,
+  archiveCurrentEntry,
+  cancelEpisodeDownload,
+  cancelQueueDownload,
+  commitEpisodeImport,
+  commitMediaWizard,
+  deleteEpisodeResource,
+  deleteRssSubscription,
+  downloadCurrentEntryResources,
+  downloadEpisodeResource,
+  editRssSubscription,
+  entryEditPayload,
+  exportLogs,
+  fetchEntryMetadata,
+  loadRssSubscriptions,
+  normalizeSettingsShape,
+  openEntry,
+  openEntryEditDialog,
+  openEpisodeResourceEditor,
+  openMediaWizard,
+  openMetadataSearch,
+  openProcessorSettings,
+  openQueueEntry,
+  openRssDialog,
+  openScheduledSettings,
+  pauseEpisodeDownload,
+  refreshEpisodeResource,
+  removeDownloader,
+  resetRssForm,
+  resetSelectionRules,
+  runAction,
+  runMetadataSearch,
+  saveAllSettings,
+  saveBatchSubtitles,
+  saveEntryEditForm,
+  saveEpisodeResource,
+  saveProcessorSettings,
+  saveRssSubscription,
+  saveScheduledJob,
+  searchWizardMetadata,
+  startMetadataProgress,
+  stopMetadataProgress,
+  syncScheduledJobForm,
+  uploadMediaWizardFiles,
 })
 
 watch(consoleNavMode, value => {
