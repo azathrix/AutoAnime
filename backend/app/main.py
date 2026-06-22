@@ -28,7 +28,7 @@ from .metadata import refresh_entry_metadata
 from .pipeline_orchestrator import run_ready_tasks, start_pipeline
 from .pipeline_runtime import finish_pipeline_run, pipeline_overview, start_pipeline_run, update_pipeline_run
 from .processors import register_builtin_processors
-from .parser import fingerprint
+from .parser import fingerprint, parse_episode
 from .scanner import language_tokens, priority_match, priority_pick
 
 
@@ -72,12 +72,12 @@ class SettingsPayload(BaseModel):
     episode_name_template: str = ""
     movie_name_template: str = ""
     tv_name_template: str = ""
-    movie_quality_priority: str = ""
-    movie_source_priority: str = ""
-    movie_subtitle_priority: str = ""
-    tv_quality_priority: str = ""
-    tv_source_priority: str = ""
-    tv_subtitle_priority: str = ""
+    movie_quality_priority: list[str] = Field(default_factory=list)
+    movie_source_priority: list[str] = Field(default_factory=list)
+    movie_subtitle_priority: list[str] = Field(default_factory=list)
+    tv_quality_priority: list[str] = Field(default_factory=list)
+    tv_source_priority: list[str] = Field(default_factory=list)
+    tv_subtitle_priority: list[str] = Field(default_factory=list)
 
 
 class EntryPayload(BaseModel):
@@ -150,6 +150,20 @@ class EpisodeSubtitlePayload(BaseModel):
     selected: bool = True
 
 
+class EpisodeImportPayload(BaseModel):
+    resources_text: str = ""
+    subtitles_text: str = ""
+    subtitle_format: str = "external"
+    language: str = ""
+
+
+class BatchSubtitlePayload(BaseModel):
+    subtitles_text: str = ""
+    file_names: list[str] = Field(default_factory=list)
+    subtitle_format: str = "external"
+    language: str = ""
+
+
 class ScheduledJobPayload(BaseModel):
     enabled: bool = True
     interval_minutes: int = 1
@@ -184,6 +198,15 @@ def normalize_json_list_text(value: str) -> str:
 
 def subtitle_embedded_value(format_value: str) -> int:
     return 1 if str(format_value or "").strip().lower() in {"embedded", "hardsub", "burned", "muxed", "softsub", "internal"} else 0
+
+
+def split_input_lines(value: str) -> list[str]:
+    return [line.strip() for line in str(value or "").splitlines() if line.strip()]
+
+
+def parsed_episode_or_fallback(text: str, fallback: int) -> int:
+    parsed = parse_episode(text)
+    return parsed if parsed > 0 else max(1, fallback)
 
 
 def rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
@@ -432,12 +455,12 @@ def settings_response() -> dict[str, Any]:
         "episode_name_template": settings.get("episode_name_template", ""),
         "movie_name_template": settings.get("movie_name_template", ""),
         "tv_name_template": settings.get("tv_name_template", ""),
-        "movie_quality_priority": settings.get("movie_quality_priority", ""),
-        "movie_source_priority": settings.get("movie_source_priority", ""),
-        "movie_subtitle_priority": settings.get("movie_subtitle_priority", ""),
-        "tv_quality_priority": settings.get("tv_quality_priority", ""),
-        "tv_source_priority": settings.get("tv_source_priority", ""),
-        "tv_subtitle_priority": settings.get("tv_subtitle_priority", ""),
+        "movie_quality_priority": split_setting(settings.get("movie_quality_priority", "")),
+        "movie_source_priority": split_setting(settings.get("movie_source_priority", "")),
+        "movie_subtitle_priority": split_setting(settings.get("movie_subtitle_priority", "")),
+        "tv_quality_priority": split_setting(settings.get("tv_quality_priority", "")),
+        "tv_source_priority": split_setting(settings.get("tv_source_priority", "")),
+        "tv_subtitle_priority": split_setting(settings.get("tv_subtitle_priority", "")),
     }
 
 
@@ -1837,12 +1860,12 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "episode_name_template": payload.episode_name_template.strip(),
             "movie_name_template": payload.movie_name_template.strip(),
             "tv_name_template": payload.tv_name_template.strip(),
-            "movie_quality_priority": payload.movie_quality_priority.strip(),
-            "movie_source_priority": payload.movie_source_priority.strip(),
-            "movie_subtitle_priority": payload.movie_subtitle_priority.strip(),
-            "tv_quality_priority": payload.tv_quality_priority.strip(),
-            "tv_source_priority": payload.tv_source_priority.strip(),
-            "tv_subtitle_priority": payload.tv_subtitle_priority.strip(),
+            "movie_quality_priority": "\n".join(payload.movie_quality_priority),
+            "movie_source_priority": "\n".join(payload.movie_source_priority),
+            "movie_subtitle_priority": "\n".join(payload.movie_subtitle_priority),
+            "tv_quality_priority": "\n".join(payload.tv_quality_priority),
+            "tv_source_priority": "\n".join(payload.tv_source_priority),
+            "tv_subtitle_priority": "\n".join(payload.tv_subtitle_priority),
         }
     )
     current = get_settings()
@@ -2048,6 +2071,159 @@ async def api_entry_episodes(entry_id: int) -> dict[str, Any]:
     }
 
 
+@app.post("/api/entries/{entry_id}/resources/import")
+async def api_import_entry_resources(entry_id: int, payload: EpisodeImportPayload) -> dict[str, Any]:
+    resource_lines = split_input_lines(payload.resources_text)
+    subtitle_lines = split_input_lines(payload.subtitles_text)
+    if not resource_lines:
+        raise HTTPException(status_code=400, detail="请至少填写一个资源链接")
+    ts = now()
+    created = 0
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            raise HTTPException(status_code=404, detail="媒体条目不存在")
+        for index, line in enumerate(resource_lines, start=1):
+            episode_number = parsed_episode_or_fallback(line, index)
+            conn.execute(
+                """
+                INSERT INTO episodes (series_id, entry_id, episode_number, title, status, created_at, updated_at)
+                VALUES (?, ?, ?, '', 'configured', ?, ?)
+                ON CONFLICT(series_id, episode_number) DO UPDATE SET
+                  entry_id=excluded.entry_id,
+                  status=excluded.status,
+                  updated_at=excluded.updated_at
+                """,
+                (entry_id, entry_id, episode_number, ts, ts),
+            )
+            episode = conn.execute(
+                "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
+                (entry_id, episode_number),
+            ).fetchone()
+            episode_id = int(episode["id"] or 0) if episode else 0
+            torrent_url = line if line.startswith("http") else ""
+            magnet = line if line.startswith("magnet:") else ""
+            digest = hashlib.sha1(line.encode("utf-8", errors="ignore")).hexdigest()[:20]
+            guid = f"manual:{entry_id}:{episode_number}:{digest}"
+            release_id = 0
+            if torrent_url or magnet:
+                conn.execute("UPDATE releases SET selected=0 WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+                conn.execute(
+                    """
+                    INSERT INTO releases
+                      (series_id, entry_id, episode_number, guid, title, language, subtitle_format,
+                       torrent_url, magnet, published_at, selected, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    ON CONFLICT(guid) DO UPDATE SET
+                      title=excluded.title,
+                      torrent_url=excluded.torrent_url,
+                      magnet=excluded.magnet,
+                      selected=1,
+                      updated_at=excluded.updated_at
+                    """,
+                    (entry_id, entry_id, episode_number, guid, line, payload.language.strip(), payload.subtitle_format.strip(), torrent_url, magnet, ts, ts, ts),
+                )
+                release = conn.execute("SELECT id FROM releases WHERE guid=?", (guid,)).fetchone()
+                release_id = int(release["id"] or 0) if release else 0
+            conn.execute("UPDATE episode_resources SET selected=0 WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+            conn.execute(
+                """
+                INSERT INTO episode_resources
+                  (entry_id, episode_id, episode_number, source_type, source_ref, release_id, title,
+                   language, subtitle_format, torrent_url, magnet, selected, status, created_at, updated_at)
+                VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, 1, 'available', ?, ?)
+                ON CONFLICT(entry_id, episode_number, source_type, source_ref) DO UPDATE SET
+                  episode_id=excluded.episode_id,
+                  release_id=excluded.release_id,
+                  title=excluded.title,
+                  language=excluded.language,
+                  subtitle_format=excluded.subtitle_format,
+                  torrent_url=excluded.torrent_url,
+                  magnet=excluded.magnet,
+                  selected=1,
+                  updated_at=excluded.updated_at
+                """,
+                (entry_id, episode_id, episode_number, line, release_id, line, payload.language.strip(), payload.subtitle_format.strip(), torrent_url, magnet, ts, ts),
+            )
+            created += 1
+        for index, line in enumerate(subtitle_lines, start=1):
+            episode_number = parsed_episode_or_fallback(line, index)
+            episode = conn.execute(
+                "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
+                (entry_id, episode_number),
+            ).fetchone()
+            if not episode:
+                continue
+            conn.execute("UPDATE episode_subtitles SET selected=0 WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+            conn.execute(
+                """
+                INSERT INTO episode_subtitles
+                  (episode_id, entry_id, episode_number, language, subtitle_format, subtitle_url,
+                   file_name, embedded, selected, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    int(episode["id"]),
+                    entry_id,
+                    episode_number,
+                    payload.language.strip(),
+                    payload.subtitle_format.strip() or "external",
+                    line if line.startswith("http") else "",
+                    "" if line.startswith("http") else Path(line).name,
+                    subtitle_embedded_value(payload.subtitle_format),
+                    ts,
+                    ts,
+                ),
+            )
+    log("info", f"手动导入集数资源: entry_id={entry_id} count={created}")
+    return {"status": "saved", "count": created, "detail": build_entry_response(entry_id)}
+
+
+@app.post("/api/entries/{entry_id}/subtitles/batch")
+async def api_batch_entry_subtitles(entry_id: int, payload: BatchSubtitlePayload) -> dict[str, Any]:
+    subtitle_items = split_input_lines(payload.subtitles_text) + [item.strip() for item in payload.file_names if item.strip()]
+    if not subtitle_items:
+        raise HTTPException(status_code=400, detail="请填写字幕链接或选择字幕文件")
+    ts = now()
+    saved = 0
+    with connect() as conn:
+        entry = conn.execute("SELECT id FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            raise HTTPException(status_code=404, detail="媒体条目不存在")
+        for index, item in enumerate(subtitle_items, start=1):
+            episode_number = parsed_episode_or_fallback(item, index)
+            episode = conn.execute(
+                "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
+                (entry_id, episode_number),
+            ).fetchone()
+            if not episode:
+                continue
+            conn.execute("UPDATE episode_subtitles SET selected=0 WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+            conn.execute(
+                """
+                INSERT INTO episode_subtitles
+                  (episode_id, entry_id, episode_number, language, subtitle_format, subtitle_url,
+                   file_name, embedded, selected, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    int(episode["id"]),
+                    entry_id,
+                    episode_number,
+                    payload.language.strip(),
+                    payload.subtitle_format.strip() or "external",
+                    item if item.startswith("http") else "",
+                    "" if item.startswith("http") else Path(item).name,
+                    subtitle_embedded_value(payload.subtitle_format),
+                    ts,
+                    ts,
+                ),
+            )
+            saved += 1
+    log("info", f"批量配置字幕: entry_id={entry_id} count={saved}")
+    return {"status": "saved", "count": saved, "detail": build_entry_response(entry_id)}
+
+
 @app.put("/api/episodes/{episode_id}/resource")
 async def api_update_episode_resource(episode_id: int, payload: EpisodeResourcePayload) -> dict[str, Any]:
     ts = now()
@@ -2189,6 +2365,55 @@ async def api_update_episode_subtitle(episode_id: int, payload: EpisodeSubtitleP
             )
             row = conn.execute("SELECT * FROM episode_subtitles WHERE id=last_insert_rowid()").fetchone()
     return {"status": "saved", "item": row_to_dict(row)}
+
+
+@app.post("/api/episodes/{episode_id}/refresh")
+async def api_refresh_episode_resource_state(episode_id: int) -> dict[str, Any]:
+    run_id = 0
+    refreshed = 0
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        resources = conn.execute(
+            "SELECT * FROM episode_resources WHERE episode_id=? OR (entry_id=? AND episode_number=?)",
+            (episode_id, episode["entry_id"], episode["episode_number"]),
+        ).fetchall()
+        for resource in resources:
+            local_path = str(resource["local_path"] or "")
+            exists = bool(local_path and Path(local_path).exists())
+            conn.execute(
+                "UPDATE episode_resources SET downloaded=?, updated_at=? WHERE id=?",
+                (1 if exists else int(resource["downloaded"] or 0), now(), resource["id"]),
+            )
+            refreshed += 1
+        selected = next((resource for resource in resources if int(resource["selected"] or 0)), resources[0] if resources else None)
+        if selected and not int(selected["downloaded"] or 0) and int(selected["release_id"] or 0) > 0:
+            run_id = start_pipeline(
+                "library_backfill",
+                trigger_source="episode_refresh",
+                first_step_key="download",
+                subject_type="release",
+                subject_id=int(selected["release_id"]),
+                payload={"entry_id": int(episode["entry_id"]), "release_id": int(selected["release_id"]), "domain_kind": "library"},
+                message=f"刷新集数资源后补下载: entry_id={episode['entry_id']} episode={episode['episode_number']}",
+            )
+            trigger_queue("processor", delay=0)
+    return {"status": "refreshed", "count": refreshed, "download_run_id": run_id}
+
+
+@app.post("/api/entries/{entry_id}/refresh-resources")
+async def api_refresh_entry_resource_state(entry_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        episodes = conn.execute("SELECT id FROM episodes WHERE entry_id=? ORDER BY episode_number", (entry_id,)).fetchall()
+    count = 0
+    runs: list[int] = []
+    for episode in episodes:
+        result = await api_refresh_episode_resource_state(int(episode["id"]))
+        count += int(result.get("count") or 0)
+        if int(result.get("download_run_id") or 0):
+            runs.append(int(result["download_run_id"]))
+    return {"status": "refreshed", "count": count, "download_run_ids": runs}
 
 
 @app.delete("/api/seasonal/{entry_id}")

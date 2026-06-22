@@ -505,6 +505,14 @@ h1 {
   width: 100%;
 }
 
+.resource-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
 .resource-expand {
   background: #f8fafc;
   border: 1px solid #e2e8f0;

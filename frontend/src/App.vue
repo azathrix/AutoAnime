@@ -547,17 +547,17 @@
                     </div>
                   </el-tab-pane>
                   <el-tab-pane label="电影">
-                    <div class="selection-rule-grid">
-                      <el-form-item label="优先画质"><el-input v-model="settings.movie_quality_priority" placeholder="2160p, 1080p, 720p" /></el-form-item>
-                      <el-form-item label="优先来源"><el-input v-model="settings.movie_source_priority" placeholder="BluRay, WEB-DL, WebRip" /></el-form-item>
-                      <el-form-item label="优先字幕"><el-input v-model="settings.movie_subtitle_priority" placeholder="简体, 繁体, 双语" /></el-form-item>
+                    <div class="priority-layout">
+                      <PriorityList title="画质优先级" v-model="settings.movie_quality_priority" placeholder="添加画质，如 2160p" />
+                      <PriorityList title="来源优先级" v-model="settings.movie_source_priority" placeholder="添加来源，如 BluRay" />
+                      <PriorityList title="字幕优先级" v-model="settings.movie_subtitle_priority" placeholder="添加字幕，如 简体" />
                     </div>
                   </el-tab-pane>
                   <el-tab-pane label="电视剧">
-                    <div class="selection-rule-grid">
-                      <el-form-item label="优先画质"><el-input v-model="settings.tv_quality_priority" placeholder="2160p, 1080p, 720p" /></el-form-item>
-                      <el-form-item label="优先来源"><el-input v-model="settings.tv_source_priority" placeholder="WEB-DL, WebRip, HDTV" /></el-form-item>
-                      <el-form-item label="优先字幕"><el-input v-model="settings.tv_subtitle_priority" placeholder="简体, 繁体, 双语" /></el-form-item>
+                    <div class="priority-layout">
+                      <PriorityList title="画质优先级" v-model="settings.tv_quality_priority" placeholder="添加画质，如 1080p" />
+                      <PriorityList title="来源优先级" v-model="settings.tv_source_priority" placeholder="添加来源，如 WEB-DL" />
+                      <PriorityList title="字幕优先级" v-model="settings.tv_subtitle_priority" placeholder="添加字幕，如 双语" />
                     </div>
                   </el-tab-pane>
                 </el-tabs>
@@ -708,6 +708,11 @@
             </div>
           </el-tab-pane>
           <el-tab-pane label="集数资源">
+            <div class="resource-toolbar">
+              <el-button plain @click="refreshCurrentEntryResources">刷新全部</el-button>
+              <el-button plain @click="openEpisodeImportDialog">手动导入集数</el-button>
+              <el-button type="primary" plain @click="openBatchSubtitleDialog">字幕批量配置</el-button>
+            </div>
             <el-table :data="entryResourceRows" height="620" class="episode-resource-table" empty-text="暂无集数资源">
               <el-table-column type="expand" width="44">
                 <template #default="{ row }">
@@ -734,9 +739,10 @@
                   <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">{{ row.downloaded ? '是' : '否' }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="120" fixed="right">
+              <el-table-column label="操作" width="170" fixed="right">
                 <template #default="{ row }">
                   <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
+                  <el-button size="small" link @click="refreshEpisodeResource(row)">刷新</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -836,6 +842,62 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="batchSubtitleDialogOpen" title="字幕批量配置" width="760px">
+      <el-form :model="batchSubtitleForm" label-position="top">
+        <div class="form-row">
+          <el-form-item label="字幕类型">
+            <el-select v-model="batchSubtitleForm.subtitle_format">
+              <el-option label="外挂" value="external" />
+              <el-option label="内封（软字幕）" value="muxed" />
+              <el-option label="内嵌（硬字幕）" value="embedded" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="语言"><el-input v-model="batchSubtitleForm.language" placeholder="简体 / 繁体 / 双语" /></el-form-item>
+        </div>
+        <el-form-item label="字幕链接">
+          <el-input v-model="batchSubtitleForm.subtitles_text" type="textarea" :rows="8" placeholder="一行一个字幕链接或文件名，系统按文件名里的集数匹配" />
+        </el-form-item>
+        <el-form-item label="本地字幕文件">
+          <el-upload action="#" :auto-upload="false" multiple :on-change="handleBatchSubtitlePicked">
+            <el-button plain>选择字幕文件</el-button>
+            <template #tip>
+              <div class="el-upload__tip">{{ batchSubtitleForm.file_names.length ? batchSubtitleForm.file_names.join('，') : '选择后会按文件名识别集数；真实上传文件后续接导入器。' }}</div>
+            </template>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchSubtitleDialogOpen = false">取消</el-button>
+        <el-button type="primary" @click="saveBatchSubtitles">保存字幕配置</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="episodeImportDialogOpen" title="手动导入集数资源" width="820px">
+      <el-form :model="episodeImportForm" label-position="top">
+        <el-alert type="info" show-icon :closable="false" title="每行一个磁链、种子链接或下载链接；系统会按链接/标题里的集数自动匹配，识别不到时按顺序填入。" class="settings-alert" />
+        <el-form-item label="资源链接">
+          <el-input v-model="episodeImportForm.resources_text" type="textarea" :rows="9" placeholder="magnet:?xt=...&#10;https://...torrent" />
+        </el-form-item>
+        <div class="form-row">
+          <el-form-item label="字幕类型">
+            <el-select v-model="episodeImportForm.subtitle_format">
+              <el-option label="外挂" value="external" />
+              <el-option label="内封（软字幕）" value="muxed" />
+              <el-option label="内嵌（硬字幕）" value="embedded" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="语言"><el-input v-model="episodeImportForm.language" placeholder="简体 / 繁体 / 双语" /></el-form-item>
+        </div>
+        <el-form-item label="字幕链接">
+          <el-input v-model="episodeImportForm.subtitles_text" type="textarea" :rows="5" placeholder="可选，一行一个字幕链接或字幕文件名" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="episodeImportDialogOpen = false">取消</el-button>
+        <el-button type="primary" @click="commitEpisodeImport">导入集数资源</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="rssDialogOpen" title="RSS 订阅" width="760px">
       <div class="rss-dialog-layout">
         <el-form :model="rssForm" label-position="top" class="rss-form">
@@ -874,20 +936,22 @@
 
     <el-dialog v-model="mediaWizardOpen" :title="mediaWizardTitle" width="760px">
       <el-steps :active="mediaWizardStep" finish-status="success" align-center>
-        <el-step title="选择来源" />
+        <el-step title="来源线索" />
         <el-step title="匹配作品" />
-        <el-step title="集数与字幕" />
+        <el-step title="首集资源" />
         <el-step title="收录" />
       </el-steps>
       <div class="wizard-panel">
         <template v-if="mediaWizardStep === 0">
+          <el-alert type="info" show-icon :closable="false" title="导入和添加共用这套流程：可以选本地文件，也可以直接填磁链、下载链接、Bangumi/TMDB ID 或作品名。" class="settings-alert" />
           <el-upload drag action="#" :auto-upload="false" multiple>
             <p>选择本地目录或文件</p>
-            <small>选择要收录的媒体文件，系统按集数与字幕整理。</small>
+            <small>浏览器会记录文件名；真实上传整理会在后续导入器接入。</small>
           </el-upload>
-          <el-input v-if="mediaWizardMode === 'add'" v-model="mediaWizardSeed" placeholder="Bangumi ID / TMDB ID / 作品名 / 磁力链接" />
+          <el-input v-model="mediaWizardSeed" type="textarea" :rows="3" placeholder="Bangumi ID / TMDB ID / 作品名 / 磁力链接 / 下载链接" />
         </template>
         <template v-else-if="mediaWizardStep === 1">
+          <el-alert type="info" show-icon :closable="false" title="先确认作品信息；不准的字段可以直接改，后续也能在详情页编辑。" class="settings-alert" />
           <div class="wizard-form-grid">
             <el-input v-model="mediaWizardDraft.title" placeholder="作品标题" />
             <el-input v-model="mediaWizardDraft.bangumi_id" placeholder="Bangumi ID" />
@@ -898,6 +962,7 @@
           </div>
         </template>
         <template v-else-if="mediaWizardStep === 2">
+          <el-alert type="info" show-icon :closable="false" title="这里可以先配置一个首集资源；批量集数和字幕建议收录后在详情页的集数资源里处理。" class="settings-alert" />
           <div class="wizard-form-grid">
             <el-input-number v-model="mediaWizardDraft.episode_number" :min="0" placeholder="集数" />
             <el-input v-model="mediaWizardDraft.resource_title" placeholder="资源标题 / 文件名" />
@@ -906,10 +971,11 @@
             <el-input v-model="mediaWizardDraft.resolution" placeholder="分辨率" />
             <el-input v-model="mediaWizardDraft.language" placeholder="语言" />
             <el-select v-model="mediaWizardDraft.subtitle_format" clearable placeholder="字幕类型">
-              <el-option label="内嵌" value="embedded" />
-              <el-option label="内封" value="muxed" />
+              <el-option label="内嵌（硬字幕）" value="embedded" />
+              <el-option label="内封（软字幕）" value="muxed" />
               <el-option label="外挂" value="external" />
             </el-select>
+            <el-input v-model="mediaWizardDraft.subtitle_url" placeholder="字幕链接，可选" />
             <el-input v-model="mediaWizardDraft.subtitle_path" placeholder="外挂字幕路径，可选" />
           </div>
         </template>
@@ -917,7 +983,7 @@
           <div class="wizard-confirm-panel">
             <strong>{{ mediaWizardDraft.title || currentMediaPageTitle }}</strong>
             <span>{{ mediaTypeLabel(currentMediaType) }} · {{ mediaWizardDraft.year || '年份未知' }}</span>
-            <span>第 {{ mediaWizardDraft.episode_number || '?' }} 集 · {{ mediaWizardDraft.resource_title || '未填写资源' }}</span>
+            <span>{{ mediaWizardDraft.episode_number ? `第 ${mediaWizardDraft.episode_number} 集` : '暂不配置集数' }} · {{ mediaWizardDraft.resource_title || mediaWizardDraft.source_ref || '未填写资源' }}</span>
           </div>
         </template>
       </div>
@@ -960,6 +1026,8 @@ const mediaWizardSeed = ref('')
 const mediaWizardSaving = ref(false)
 const episodeResourceDialogOpen = ref(false)
 const entryEditDialogOpen = ref(false)
+const batchSubtitleDialogOpen = ref(false)
+const episodeImportDialogOpen = ref(false)
 const metadataFetching = ref(false)
 const metadataFetchProgress = ref(0)
 let dashboardStream = null
@@ -1029,6 +1097,18 @@ const entryEditForm = reactive({
   tags_text: '',
   genres_text: '',
 })
+const batchSubtitleForm = reactive({
+  subtitles_text: '',
+  file_names: [],
+  subtitle_format: 'external',
+  language: '',
+})
+const episodeImportForm = reactive({
+  resources_text: '',
+  subtitles_text: '',
+  subtitle_format: 'external',
+  language: '',
+})
 const mediaWizardDraft = reactive({
   title: '',
   bangumi_id: '',
@@ -1044,6 +1124,8 @@ const mediaWizardDraft = reactive({
   language: '',
   subtitle_format: '',
   subtitle_path: '',
+  subtitle_url: '',
+  subtitle_file_name: '',
 })
 const scheduledJobForm = reactive({
   enabled: true,
@@ -1218,8 +1300,7 @@ const selectedEntryStats = computed(() => {
   return activeDetailRows.value.find(item => item.id === id) || {}
 })
 const mediaWizardTitle = computed(() => {
-  const action = mediaWizardMode.value === 'add' ? '添加' : '导入'
-  return `${action}${currentMediaPageTitle.value}`
+  return `收录${currentMediaPageTitle.value}`
 })
 const entryResourceRows = computed(() => {
   const detail = selectedEntryDetail.value || {}
@@ -1486,6 +1567,29 @@ function subtitleFormatText(value) {
 function handleSubtitleFilePicked(file) {
   episodeResourceForm.subtitle_file_name = file?.name || file?.raw?.name || ''
   if (!episodeResourceForm.subtitle_format) episodeResourceForm.subtitle_format = 'external'
+}
+
+function openBatchSubtitleDialog() {
+  batchSubtitleForm.subtitles_text = ''
+  batchSubtitleForm.file_names = []
+  batchSubtitleForm.subtitle_format = 'external'
+  batchSubtitleForm.language = ''
+  batchSubtitleDialogOpen.value = true
+}
+
+function handleBatchSubtitlePicked(file) {
+  const name = file?.name || file?.raw?.name || ''
+  if (name && !batchSubtitleForm.file_names.includes(name)) {
+    batchSubtitleForm.file_names = [...batchSubtitleForm.file_names, name]
+  }
+}
+
+function openEpisodeImportDialog() {
+  episodeImportForm.resources_text = ''
+  episodeImportForm.subtitles_text = ''
+  episodeImportForm.subtitle_format = 'external'
+  episodeImportForm.language = ''
+  episodeImportDialogOpen.value = true
 }
 
 function formatCountdown(seconds) {
@@ -1771,6 +1875,72 @@ async function saveEpisodeResource() {
   }
 }
 
+async function refreshEpisodeResource(row) {
+  const episodeId = Number(row?.episode_id || 0)
+  if (!episodeId) {
+    ElMessage.warning('缺少集数记录，无法刷新')
+    return
+  }
+  try {
+    const result = await postAction(`/episodes/${episodeId}/refresh`)
+    ElMessage.success(result.download_run_id ? '已刷新并重新加入下载队列' : '集数状态已刷新')
+    if (selectedEntry.value?.id) {
+      await openEntry(selectedEntry.value.id, selectedEntryDomain.value, selectedEntryMediaType.value)
+    }
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function refreshCurrentEntryResources() {
+  const entry = selectedEntry.value
+  if (!entry?.id) return
+  try {
+    const result = await postAction(`/entries/${entry.id}/refresh-resources`)
+    ElMessage.success(result.download_run_ids?.length ? '已刷新并补下载缺失资源' : '集数资源状态已刷新')
+    await openEntry(entry.id, selectedEntryDomain.value, selectedEntryMediaType.value)
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function saveBatchSubtitles() {
+  const entry = selectedEntry.value
+  if (!entry?.id) return
+  try {
+    const result = await postAction(`/entries/${entry.id}/subtitles/batch`, {
+      subtitles_text: batchSubtitleForm.subtitles_text,
+      file_names: batchSubtitleForm.file_names,
+      subtitle_format: batchSubtitleForm.subtitle_format,
+      language: batchSubtitleForm.language,
+    })
+    batchSubtitleDialogOpen.value = false
+    selectedEntryDetail.value = result.detail
+    ElMessage.success(`已配置 ${result.count || 0} 条字幕`)
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function commitEpisodeImport() {
+  const entry = selectedEntry.value
+  if (!entry?.id) return
+  try {
+    const result = await postAction(`/entries/${entry.id}/resources/import`, {
+      resources_text: episodeImportForm.resources_text,
+      subtitles_text: episodeImportForm.subtitles_text,
+      subtitle_format: episodeImportForm.subtitle_format,
+      language: episodeImportForm.language,
+    })
+    episodeImportDialogOpen.value = false
+    selectedEntryDetail.value = result.detail
+    ElMessage.success(`已导入 ${result.count || 0} 条集数资源`)
+    await reload()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
 function openMediaWizard(mode) {
   mediaWizardMode.value = mode
   mediaWizardStep.value = 0
@@ -1789,11 +1959,15 @@ function openMediaWizard(mode) {
   mediaWizardDraft.language = ''
   mediaWizardDraft.subtitle_format = ''
   mediaWizardDraft.subtitle_path = ''
+  mediaWizardDraft.subtitle_url = ''
+  mediaWizardDraft.subtitle_file_name = ''
   mediaWizardOpen.value = true
 }
 
 async function commitMediaWizard() {
-  const title = String(mediaWizardDraft.title || '').trim()
+  const seed = String(mediaWizardSeed.value || '').trim()
+  const seedLooksLikeLink = /^(magnet:|https?:\/\/)/i.test(seed)
+  const title = String(mediaWizardDraft.title || (!seedLooksLikeLink ? seed : '')).trim()
   if (!title) {
     ElMessage.warning('作品标题不能为空')
     mediaWizardStep.value = 1
@@ -1801,7 +1975,7 @@ async function commitMediaWizard() {
   }
   mediaWizardSaving.value = true
   try {
-    const sourceRef = String(mediaWizardDraft.source_ref || mediaWizardSeed.value || '').trim()
+    const sourceRef = String(mediaWizardDraft.source_ref || (seedLooksLikeLink ? seed : '')).trim()
     const result = await postAction(`/media/${currentMediaType.value}`, {
       mode: mediaWizardMode.value,
       title,
@@ -1818,6 +1992,8 @@ async function commitMediaWizard() {
       language: mediaWizardDraft.language,
       subtitle_format: mediaWizardDraft.subtitle_format,
       subtitle_path: mediaWizardDraft.subtitle_path,
+      subtitle_url: mediaWizardDraft.subtitle_url,
+      subtitle_file_name: mediaWizardDraft.subtitle_file_name,
     })
     ElMessage.success(result?.download_run_id ? '媒体条目已收录，下载任务已创建' : '媒体条目已收录')
     mediaWizardOpen.value = false
@@ -1974,6 +2150,25 @@ async function saveEntryEditForm() {
 
 function normalizeSettingsShape() {
   if (!Array.isArray(settings.downloaders)) settings.downloaders = []
+  for (const key of [
+    'subtitle_priority',
+    'resolution_priority',
+    'language_priority',
+    'secondary_language_priority',
+    'movie_quality_priority',
+    'movie_source_priority',
+    'movie_subtitle_priority',
+    'tv_quality_priority',
+    'tv_source_priority',
+    'tv_subtitle_priority',
+  ]) {
+    if (Array.isArray(settings[key])) continue
+    settings[key] = String(settings[key] || '')
+      .replace(/,/g, '\n')
+      .split('\n')
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
   settings.backfill_current_season = Boolean(settings.backfill_current_season)
   settings.auto_generate_nfo = settings.auto_generate_nfo !== false
   settings.movie_name_template = settings.movie_name_template || '{title_cn} ({year})/{title_cn} ({year})'
