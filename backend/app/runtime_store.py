@@ -298,6 +298,30 @@ class RuntimeStore:
                     run.updated_at = now_value
         await self.bump()
 
+    async def cancel_episode_tasks(self, entry_id: int, episode_number: int, processor_keys: set[str] | None = None) -> int:
+        cancelled = 0
+        async with self._lock:
+            now_value = utc_now()
+            for task in self.tasks.values():
+                if task.status in TASK_TERMINAL_STATUSES:
+                    continue
+                if processor_keys and task.processor_key not in processor_keys:
+                    continue
+                payload = task.payload or {}
+                if int(payload.get("entry_id") or 0) != int(entry_id):
+                    continue
+                if int(payload.get("episode_number") or 0) != int(episode_number):
+                    continue
+                task.status = "cancelled"
+                task.message = "用户取消该集任务"
+                task.error = ""
+                task.retry_at = ""
+                task.updated_at = now_value
+                cancelled += 1
+        if cancelled:
+            await self.bump()
+        return cancelled
+
     async def clear_all(self) -> None:
         async with self._lock:
             self._generation = utc_now()

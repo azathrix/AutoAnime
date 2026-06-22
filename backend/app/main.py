@@ -741,7 +741,13 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
             first_step_key="download",
             subject_type="release",
             subject_id=release_id,
-            payload={"entry_id": entry_id, "release_id": release_id, "domain_kind": "library"},
+            payload={
+                "_dedupe_key": f"download:entry:{entry_id}:episode:{int(payload.episode_number or 0)}",
+                "entry_id": entry_id,
+                "release_id": release_id,
+                "episode_number": int(payload.episode_number or 0),
+                "domain_kind": "library",
+            },
             message=f"媒体向导收录后下载: {title}",
         )
     log("info", f"媒体条目已收录: type={media_type} entry_id={entry_id} release_id={release_id} title={title}")
@@ -772,7 +778,39 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
             (entry_id,),
         ).fetchall()
         episode_resources = conn.execute(
-            "SELECT * FROM episode_resources WHERE entry_id=? ORDER BY episode_number ASC, selected DESC, id DESC",
+            """
+            SELECT er.*,
+              dj.id AS download_job_id,
+              dj.status AS download_status,
+              dj.retry_after AS download_retry_after,
+              dj.last_error AS download_error,
+              la.id AS local_asset_id,
+              la.nfo_status AS local_nfo_status
+            FROM episode_resources er
+            LEFT JOIN download_jobs dj ON dj.id=(
+              SELECT id
+              FROM download_jobs
+              WHERE entry_id=er.entry_id
+                AND episode_number=er.episode_number
+              ORDER BY CASE status
+                WHEN 'running' THEN 0
+                WHEN 'submitted' THEN 1
+                WHEN 'pending' THEN 2
+                WHEN 'paused' THEN 3
+                WHEN 'failed' THEN 4
+                WHEN 'cancelled' THEN 5
+                WHEN 'completed' THEN 6
+                ELSE 7
+              END, updated_at DESC, id DESC
+              LIMIT 1
+            )
+            LEFT JOIN local_assets la
+              ON la.entry_id=er.entry_id
+             AND la.episode_number=er.episode_number
+             AND la.status='synced'
+            WHERE er.entry_id=?
+            ORDER BY er.episode_number ASC, er.selected DESC, er.id DESC
+            """,
             (entry_id,),
         ).fetchall()
         episode_subtitles = conn.execute(
@@ -2399,11 +2437,133 @@ async def api_refresh_episode_resource_state(episode_id: int) -> dict[str, Any]:
                 first_step_key="download",
                 subject_type="release",
                 subject_id=int(selected["release_id"]),
-                payload={"entry_id": int(episode["entry_id"]), "release_id": int(selected["release_id"]), "domain_kind": "library"},
+                payload={
+                    "_dedupe_key": f"download:entry:{int(episode['entry_id'])}:episode:{int(episode['episode_number'])}",
+                    "entry_id": int(episode["entry_id"]),
+                    "release_id": int(selected["release_id"]),
+                    "episode_number": int(episode["episode_number"]),
+                    "domain_kind": "library",
+                },
                 message=f"刷新集数资源后补下载: entry_id={episode['entry_id']} episode={episode['episode_number']}",
             )
             trigger_queue("processor", delay=0)
     return {"status": "refreshed", "count": refreshed, "download_run_id": run_id}
+
+
+@app.post("/api/episodes/{episode_id}/download")
+async def api_download_episode_resource(episode_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        selected = conn.execute(
+            """
+            SELECT *
+            FROM episode_resources
+            WHERE episode_id=? OR (entry_id=? AND episode_number=?)
+            ORDER BY selected DESC, id DESC
+            LIMIT 1
+            """,
+            (episode_id, episode["entry_id"], episode["episode_number"]),
+        ).fetchone()
+        if not selected or int(selected["release_id"] or 0) <= 0:
+            raise HTTPException(status_code=400, detail="该集没有可下载资源")
+        ts = now()
+        conn.execute(
+            """
+            UPDATE episode_resources
+            SET status='queued', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND selected=1
+            """,
+            (ts, episode["entry_id"], episode["episode_number"]),
+        )
+        conn.execute(
+            """
+            UPDATE download_jobs
+            SET status='pending', retry_after='', last_error='', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND status IN ('cancelled','paused','failed')
+            """,
+            (ts, episode["entry_id"], episode["episode_number"]),
+        )
+    run_id = start_pipeline(
+        "library_backfill",
+        trigger_source="episode_download",
+        first_step_key="download",
+        subject_type="release",
+        subject_id=int(selected["release_id"]),
+        payload={
+            "_dedupe_key": f"download:entry:{int(episode['entry_id'])}:episode:{int(episode['episode_number'])}",
+            "entry_id": int(episode["entry_id"]),
+            "release_id": int(selected["release_id"]),
+            "episode_number": int(episode["episode_number"]),
+            "domain_kind": "library",
+        },
+        message=f"手动下载集数: entry_id={episode['entry_id']} episode={episode['episode_number']}",
+    )
+    trigger_queue("processor", delay=0)
+    return {"status": "started", "download_run_id": run_id, "message": "已加入下载队列"}
+
+
+@app.post("/api/episodes/{episode_id}/download/cancel")
+async def api_cancel_episode_download(episode_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        ts = now()
+        conn.execute(
+            """
+            UPDATE download_jobs
+            SET status='cancelled', retry_after='', last_error='用户取消下载', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND status IN ('pending','running','submitted','failed','paused')
+            """,
+            (ts, episode["entry_id"], episode["episode_number"]),
+        )
+        conn.execute(
+            """
+            UPDATE episode_resources
+            SET status='cancelled', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND selected=1 AND downloaded=0
+            """,
+            (ts, episode["entry_id"], episode["episode_number"]),
+        )
+    cancelled = await runtime_store.cancel_episode_tasks(
+        int(episode["entry_id"]),
+        int(episode["episode_number"]),
+        {"download", "nfo"},
+    )
+    return {"status": "cancelled", "runtime_cancelled": cancelled, "message": "已取消该集下载任务"}
+
+
+@app.post("/api/episodes/{episode_id}/download/pause")
+async def api_pause_episode_download(episode_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        ts = now()
+        conn.execute(
+            """
+            UPDATE download_jobs
+            SET status='paused', retry_after='', last_error='用户暂停下载', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND status IN ('pending','running','submitted')
+            """,
+            (ts, episode["entry_id"], episode["episode_number"]),
+        )
+        conn.execute(
+            """
+            UPDATE episode_resources
+            SET status='paused', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND selected=1 AND downloaded=0
+            """,
+            (ts, episode["entry_id"], episode["episode_number"]),
+        )
+    cancelled = await runtime_store.cancel_episode_tasks(
+        int(episode["entry_id"]),
+        int(episode["episode_number"]),
+        {"download"},
+    )
+    return {"status": "paused", "runtime_cancelled": cancelled, "message": "已暂停该集本地下载流程"}
 
 
 @app.post("/api/entries/{entry_id}/refresh-resources")

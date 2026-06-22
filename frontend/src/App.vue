@@ -743,6 +743,9 @@
                     <div><span>字幕文件路径</span><code>{{ row.subtitle_file || '-' }}</code></div>
                     <div><span>本地文件路径</span><code>{{ row.local_path || '-' }}</code></div>
                     <div><span>资源状态</span><code>{{ row.status || '-' }}</code></div>
+                    <div><span>下载状态</span><code>{{ episodeDownloadText(row) }}</code></div>
+                    <div><span>下载错误</span><code>{{ row.download_error || '-' }}</code></div>
+                    <div><span>NFO</span><code>{{ row.nfo_status || '-' }}</code></div>
                   </div>
                 </template>
               </el-table-column>
@@ -759,10 +762,18 @@
                   <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">{{ row.downloaded ? '已下' : '未下' }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="140">
+              <el-table-column label="状态" width="92">
+                <template #default="{ row }">
+                  <el-tag :type="episodeDownloadTag(row)" size="small">{{ episodeDownloadText(row) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="210">
                 <template #default="{ row }">
                   <div class="table-action-group">
                     <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
+                    <el-button size="small" plain :disabled="row.downloaded || !row.release_id" @click="downloadEpisodeResource(row)">下载</el-button>
+                    <el-button size="small" plain :disabled="!episodeCanPause(row)" @click="pauseEpisodeDownload(row)">暂停</el-button>
+                    <el-button size="small" plain :disabled="!episodeCanCancel(row)" @click="cancelEpisodeDownload(row)">取消</el-button>
                     <el-button size="small" plain @click="refreshEpisodeResource(row)">刷新</el-button>
                   </div>
                 </template>
@@ -1422,6 +1433,12 @@ const entryResourceRows = computed(() => {
       downloaded: Boolean(resource.downloaded) || Boolean(resource.local_path),
       local_path: resource.local_path || '',
       status: resource.status || '',
+      download_status: resource.download_status || '',
+      download_job_id: Number(resource.download_job_id || 0),
+      download_error: resource.download_error || '',
+      download_retry_after: resource.download_retry_after || '',
+      local_asset_id: Number(resource.local_asset_id || 0),
+      nfo_status: resource.local_nfo_status || '',
       selected: Boolean(resource.selected),
     })
   }
@@ -1670,6 +1687,46 @@ function subtitleFormatText(value) {
   if (key === 'muxed' || key === 'softsub' || key === 'internal') return '内封'
   if (key === 'external' || key === 'sidecar') return '外挂'
   return '-'
+}
+
+function episodeDownloadState(row) {
+  if (row?.downloaded) return 'downloaded'
+  return String(row?.download_status || row?.status || '').toLowerCase()
+}
+
+function episodeDownloadText(row) {
+  const state = episodeDownloadState(row)
+  return {
+    downloaded: '可观看',
+    synced: '可观看',
+    queued: '排队中',
+    pending: '排队中',
+    running: '下载中',
+    submitted: '下载中',
+    downloading: '下载中',
+    remote_completed: '整理中',
+    paused: '已暂停',
+    cancelled: '已取消',
+    failed: '失败',
+    available: '未下载',
+  }[state] || '未下载'
+}
+
+function episodeDownloadTag(row) {
+  const state = episodeDownloadState(row)
+  if (['downloaded', 'synced'].includes(state)) return 'success'
+  if (['queued', 'pending', 'running', 'submitted', 'downloading', 'remote_completed'].includes(state)) return 'warning'
+  if (state === 'failed') return 'danger'
+  if (state === 'cancelled' || state === 'paused') return 'info'
+  return 'info'
+}
+
+function episodeCanCancel(row) {
+  return ['queued', 'pending', 'running', 'submitted', 'downloading', 'failed', 'paused'].includes(episodeDownloadState(row))
+}
+
+function episodeCanPause(row) {
+  return ['queued', 'pending', 'running', 'submitted', 'downloading'].includes(episodeDownloadState(row))
 }
 
 function handleSubtitleFilePicked(file) {
@@ -1992,6 +2049,57 @@ async function refreshEpisodeResource(row) {
   try {
     const result = await postAction(`/episodes/${episodeId}/refresh`)
     ElMessage.success(result.download_run_id ? '已刷新并重新加入下载队列' : '集数状态已刷新')
+    if (selectedEntry.value?.id) {
+      await openEntry(selectedEntry.value.id, selectedEntryDomain.value, selectedEntryMediaType.value)
+    }
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function downloadEpisodeResource(row) {
+  const episodeId = Number(row?.episode_id || 0)
+  if (!episodeId) {
+    ElMessage.warning('缺少集数记录，无法下载')
+    return
+  }
+  try {
+    await postAction(`/episodes/${episodeId}/download`)
+    ElMessage.success('已加入下载队列')
+    if (selectedEntry.value?.id) {
+      await openEntry(selectedEntry.value.id, selectedEntryDomain.value, selectedEntryMediaType.value)
+    }
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function cancelEpisodeDownload(row) {
+  const episodeId = Number(row?.episode_id || 0)
+  if (!episodeId) {
+    ElMessage.warning('缺少集数记录，无法取消')
+    return
+  }
+  try {
+    await postAction(`/episodes/${episodeId}/download/cancel`)
+    ElMessage.success('已取消该集下载')
+    if (selectedEntry.value?.id) {
+      await openEntry(selectedEntry.value.id, selectedEntryDomain.value, selectedEntryMediaType.value)
+    }
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
+}
+
+async function pauseEpisodeDownload(row) {
+  const episodeId = Number(row?.episode_id || 0)
+  if (!episodeId) {
+    ElMessage.warning('缺少集数记录，无法暂停')
+    return
+  }
+  try {
+    await postAction(`/episodes/${episodeId}/download/pause`)
+    ElMessage.success('已暂停该集下载流程')
     if (selectedEntry.value?.id) {
       await openEntry(selectedEntry.value.id, selectedEntryDomain.value, selectedEntryMediaType.value)
     }

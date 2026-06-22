@@ -109,9 +109,9 @@ async def sync_download_artifact_to_local(
                 local_path=?,
                 status='downloaded',
                 updated_at=?
-            WHERE release_id=?
+            WHERE entry_id=? AND episode_number=?
             """,
-            (target, ts, int(row["release_id"] or 0)),
+            (target, ts, int(row["entry_id"] or 0), int(row["episode_number"] or 0)),
         )
     local_asset_id = int(local_asset["id"] or 0) if local_asset else 0
     log(
@@ -128,6 +128,7 @@ async def sync_download_artifact_to_local(
         next_payload={
             "_subject_type": "local_asset",
             "_subject_id": local_asset_id,
+            "_dedupe_key": f"nfo:local_asset:{local_asset_id}",
             "download_artifact_id": download_artifact_id,
             "local_asset_id": local_asset_id,
             "entry_id": int(row["entry_id"] or 0),

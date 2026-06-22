@@ -200,6 +200,8 @@ def start_pipeline(
         loop = __import__("asyncio").get_running_loop()
     except RuntimeError:
         return run_id
+    initial_payload = dict(payload or {})
+    initial_dedupe_key = str(initial_payload.pop("_dedupe_key", "")) or f"{run_id}:{step['step_key']}:{subject_type}:{subject_id}"
     loop.create_task(
         enqueue_processor_task_async(
             pipeline_id=pipeline_id,
@@ -207,9 +209,9 @@ def start_pipeline(
             step_key=str(step["step_key"]),
             subject_type=subject_type,
             subject_id=subject_id,
-            payload=payload,
-            domain_kind=str(payload.get("domain_kind", "") if payload else ""),
-            dedupe_key=f"{run_id}:{step['step_key']}:{subject_type}:{subject_id}",
+            payload=initial_payload,
+            domain_kind=str(initial_payload.get("domain_kind", "")),
+            dedupe_key=initial_dedupe_key,
         )
     )
     return run_id
@@ -254,7 +256,7 @@ async def dispatch_result(task: RuntimeTask, payload: dict[str, Any], result: Pr
             (task.pipeline_id, task.step_key, result.status),
         ).fetchall()
     if not transitions:
-        if result.status == "success":
+        if result.status in {"success", "skipped"}:
             finish_pipeline_run(int(task.run_id), "completed", result.message or "流水线执行完成", result.data)
         elif result.status in {"failed_terminal", "conflict"}:
             finish_pipeline_run(int(task.run_id), "failed", result.message, result.data)

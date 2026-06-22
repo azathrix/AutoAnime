@@ -21,15 +21,66 @@ async def process_candidate_metadata(context: ProcessorContext, payload: dict) -
         return ProcessorResult.retryable("缺少 Bangumi ID", task_retry_after(settings, context.attempts + 1))
 
     try:
-        log("info", f"元数据刷新开始: candidate_id={candidate_id} bangumi_id={bangumi_id} title={row['title']}")
-        metadata = await fetch_bangumi_metadata(bangumi_id, settings.get("rss_proxy", ""))
         release = candidate_to_parsed_release(row)
-        series_id, entry_id, release_id = upsert_release(release, metadata)
-        log(
-            "info",
-            f"元数据刷新完成: candidate_id={candidate_id} bangumi_id={bangumi_id} "
-            f"entry_id={entry_id} release_id={release_id} title={metadata.get('title_cn') or row['series_title']}",
-        )
+        metadata: dict = {}
+        with connect() as conn:
+            existing_entry = conn.execute(
+                """
+                SELECT *
+                FROM entries
+                WHERE bangumi_id=?
+                  AND media_type='anime'
+                  AND hidden=0
+                ORDER BY CASE domain_kind WHEN 'seasonal' THEN 0 ELSE 1 END, id DESC
+                LIMIT 1
+                """,
+                (bangumi_id,),
+            ).fetchone()
+            existing_resource = None
+            if existing_entry and int(row["episode_number"] or 0) > 0:
+                existing_resource = conn.execute(
+                    """
+                    SELECT id, selected, status, downloaded
+                    FROM episode_resources
+                    WHERE entry_id=? AND episode_number=?
+                    ORDER BY selected DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (int(existing_entry["id"]), int(row["episode_number"] or 0)),
+                ).fetchone()
+
+        if existing_entry and existing_resource:
+            series_id = 0
+            entry_id = int(existing_entry["id"] or 0)
+            release_id = 0
+            log(
+                "info",
+                f"RSS 集数已存在，跳过元数据刷新: candidate_id={candidate_id} entry_id={entry_id} "
+                f"episode={row['episode_number']} resource_id={existing_resource['id']}",
+            )
+        else:
+            if existing_entry:
+                metadata = {
+                    "title_cn": existing_entry["title_cn"] or existing_entry["display_title"],
+                    "year": int(existing_entry["year"] or 0),
+                    "month": int(existing_entry["month"] or 0),
+                    "poster_url": existing_entry["poster_url"] or "",
+                    "summary": existing_entry["summary"] or "",
+                }
+                log(
+                    "info",
+                    f"元数据复用已有条目: candidate_id={candidate_id} bangumi_id={bangumi_id} "
+                    f"entry_id={existing_entry['id']} title={row['title']}",
+                )
+            else:
+                log("info", f"元数据刷新开始: candidate_id={candidate_id} bangumi_id={bangumi_id} title={row['title']}")
+                metadata = await fetch_bangumi_metadata(bangumi_id, settings.get("rss_proxy", ""))
+            series_id, entry_id, release_id = upsert_release(release, metadata)
+            log(
+                "info",
+                f"元数据处理完成: candidate_id={candidate_id} bangumi_id={bangumi_id} "
+                f"entry_id={entry_id} release_id={release_id} title={metadata.get('title_cn') or row['series_title']}",
+            )
     except Exception as exc:
         error = str(exc)[:2000]
         with connect() as conn:

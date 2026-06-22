@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from ..database import connect
 from ..db import get_settings, log, now
@@ -81,6 +81,14 @@ def _upsert_submission(
 ) -> None:
     ts = now()
     provider = provider_key(settings)
+    resource_status = {
+        "pending": "queued",
+        "running": "queued",
+        "submitted": "downloading",
+        "completed": "remote_completed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+    }.get(status, "")
     with connect() as conn:
         conn.execute(
             """
@@ -122,6 +130,21 @@ def _upsert_submission(
                 ts,
             ),
         )
+        if resource_status:
+            conn.execute(
+                """
+                UPDATE episode_resources
+                SET status=?,
+                    updated_at=?
+                WHERE entry_id=? AND episode_number=? AND selected=1
+                """,
+                (
+                    resource_status,
+                    ts,
+                    int(release["entry_id"] or 0),
+                    int(release["episode_number"] or 0),
+                ),
+            )
 
 
 def _asset_item(target_directory: str, normalized_name: str, provider_file_id: str) -> dict:
@@ -131,6 +154,33 @@ def _asset_item(target_directory: str, normalized_name: str, provider_file_id: s
         "name": normalized_name,
         "remote_path": str(PurePosixPath(target_directory) / normalized_name),
     }
+
+
+def _local_asset_for_episode(entry_id: int, episode_number: int):
+    with connect() as conn:
+        return conn.execute(
+            """
+            SELECT id, local_path, nfo_status, status
+            FROM local_assets
+            WHERE entry_id=? AND episode_number=? AND status='synced'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (entry_id, episode_number),
+        ).fetchone()
+
+
+def _local_asset_exists(row) -> bool:
+    if not row:
+        return False
+    local_path = str(row["local_path"] or "")
+    if not local_path:
+        return False
+    try:
+        path = Path(local_path)
+        return path.exists() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 async def process_download_presence(context: ProcessorContext, payload: dict) -> ProcessorResult:
@@ -391,6 +441,39 @@ async def process_download(context: ProcessorContext, payload: dict) -> Processo
     release = _release_row(release_id)
     if not release:
         return ProcessorResult.terminal(f"发布不存在: {release_id}")
+
+    entry_id = int(release["entry_id"] or 0)
+    episode_number = int(release["episode_number"] or 0)
+    local_asset = _local_asset_for_episode(entry_id, episode_number)
+    if _local_asset_exists(local_asset):
+        local_asset_id = int(local_asset["id"] or 0)
+        if str(local_asset["nfo_status"] or "") == "generated":
+            log(
+                "info",
+                f"下载跳过: 本地文件和 NFO 已存在 entry_id={entry_id} episode={episode_number} "
+                f"local_asset_id={local_asset_id} target={local_asset['local_path']}",
+            )
+            return ProcessorResult.skipped(
+                "同集本地文件已存在，跳过重复下载",
+                data={"release_id": release_id, "entry_id": entry_id, "local_asset_id": local_asset_id},
+            )
+        log(
+            "info",
+            f"下载跳过: 本地文件已存在，进入 NFO 确认 entry_id={entry_id} episode={episode_number} "
+            f"local_asset_id={local_asset_id} target={local_asset['local_path']}",
+        )
+        return ProcessorResult.success(
+            "同集本地文件已存在，跳过重复下载",
+            data={"release_id": release_id, "entry_id": entry_id, "local_asset_id": local_asset_id},
+            next_payload={
+                "_subject_type": "local_asset",
+                "_subject_id": local_asset_id,
+                "_dedupe_key": f"nfo:local_asset:{local_asset_id}",
+                "release_id": release_id,
+                "entry_id": entry_id,
+                "local_asset_id": local_asset_id,
+            },
+        )
 
     submission = _submission_for_release(release_id)
     if not submission or str(submission["status"] or "") not in {"submitted", "running", "completed"}:
