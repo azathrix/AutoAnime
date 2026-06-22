@@ -15,7 +15,7 @@ from ..runtime_service import trigger_queue
 from ..schemas import LocalUploadImportPayload
 from ..utils import (
     is_valid_subtitle_reference,
-    parsed_episode_or_fallback,
+    parsed_episode_required,
     safe_upload_filename,
     subtitle_embedded_value,
     upload_root,
@@ -84,7 +84,9 @@ async def api_import_entry_subtitle_uploads(entry_id: int, payload: LocalUploadI
             file_name = safe_upload_filename(item.file_name or source.name)
             if not is_valid_subtitle_reference(file_name):
                 continue
-            episode_number = parsed_episode_or_fallback(file_name, index)
+            episode_number = parsed_episode_required(file_name)
+            if episode_number <= 0:
+                raise HTTPException(status_code=400, detail=f"字幕文件无法识别集数: {file_name}")
             episode = conn.execute(
                 "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
                 (entry_id, episode_number),
@@ -131,7 +133,9 @@ async def api_import_entry_uploads(entry_id: int, payload: LocalUploadImportPayl
         for index, item in enumerate(uploads, start=1):
             source = validate_upload_temp_path(item.temp_path)
             file_name = safe_upload_filename(item.file_name or source.name)
-            episode_number = parsed_episode_or_fallback(file_name, index)
+            episode_number = parsed_episode_required(file_name)
+            if episode_number <= 0:
+                raise HTTPException(status_code=400, detail=f"上传文件无法识别集数: {file_name}")
             conn.execute(
                 """
                 INSERT INTO episodes (series_id, entry_id, episode_number, title, status, created_at, updated_at)

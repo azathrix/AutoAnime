@@ -205,6 +205,21 @@ export function createAppActions(app, deps) {
     }
   }
 
+  async function deleteEpisodeResource(row) {
+    try {
+      const resourceId = Number(row?.resource_id || 0)
+      if (!resourceId) return
+      await deleteAction(`/episode-resources/${resourceId}`)
+      ElMessage.success('集数资源已删除')
+      if (app.selectedEntry?.id) {
+        await app.openEntry(app.selectedEntry.id, app.selectedEntryDomain, app.selectedEntryMediaType)
+      }
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
   async function refreshEpisodeResource(row) {
     try {
       const episodeId = Number(row?.episode_id || 0)
@@ -724,6 +739,7 @@ export function createAppActions(app, deps) {
     cancelEpisodeDownload,
     commitEpisodeImport,
     commitMediaWizard,
+    deleteEpisodeResource,
     deleteRssSubscription,
     downloadCurrentEntryResources,
     downloadEpisodeResource,

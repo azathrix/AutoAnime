@@ -277,3 +277,69 @@ def migrate_media_folders() -> dict[str, Any]:
     summary["status"] = "completed"
     summary["message"] = message
     return summary
+
+
+def cleanup_invalid_episode_data() -> dict[str, Any]:
+    summary = {
+        "episode_resources": 0,
+        "episode_subtitles": 0,
+        "releases": 0,
+        "episodes": 0,
+        "download_jobs": 0,
+        "download_artifacts": 0,
+        "local_assets": 0,
+        "rss_candidates": 0,
+    }
+
+    def count_changes(cursor) -> int:
+        return max(0, int(cursor.rowcount or 0))
+
+    with connect() as conn:
+        summary["episode_subtitles"] += count_changes(
+            conn.execute(
+                """
+                DELETE FROM episode_subtitles
+                WHERE episode_number <= 0
+                   OR NOT EXISTS (
+                     SELECT 1 FROM episodes ep
+                     WHERE ep.entry_id=episode_subtitles.entry_id
+                       AND ep.episode_number=episode_subtitles.episode_number
+                   )
+                """
+            )
+        )
+        summary["episode_resources"] += count_changes(
+            conn.execute(
+                """
+                DELETE FROM episode_resources
+                WHERE episode_number <= 0
+                   OR NOT EXISTS (
+                     SELECT 1 FROM episodes ep
+                     WHERE ep.entry_id=episode_resources.entry_id
+                       AND ep.episode_number=episode_resources.episode_number
+                   )
+                """
+            )
+        )
+        summary["download_jobs"] += count_changes(conn.execute("DELETE FROM download_jobs WHERE episode_number <= 0"))
+        summary["download_artifacts"] += count_changes(conn.execute("DELETE FROM download_artifacts WHERE episode_number <= 0"))
+        summary["local_assets"] += count_changes(conn.execute("DELETE FROM local_assets WHERE episode_number <= 0"))
+        summary["releases"] += count_changes(conn.execute("DELETE FROM releases WHERE episode_number <= 0"))
+        summary["episodes"] += count_changes(conn.execute("DELETE FROM episodes WHERE episode_number <= 0"))
+        summary["rss_candidates"] += count_changes(
+            conn.execute(
+                """
+                UPDATE rss_candidates
+                SET status='ignored', reason='未识别集数，已跳过入库', updated_at=?
+                WHERE episode_number <= 0 AND status != 'ignored'
+                """,
+                (_now(),),
+            )
+        )
+    message = (
+        f"无效集数数据清理完成: 资源 {summary['episode_resources']} 条，"
+        f"发布 {summary['releases']} 条，字幕 {summary['episode_subtitles']} 条，"
+        f"下载记录 {summary['download_jobs'] + summary['download_artifacts'] + summary['local_assets']} 条"
+    )
+    log("info", message)
+    return {"status": "completed", "message": message, **summary}

@@ -82,6 +82,9 @@ def parsed_episode_or_fallback(text: str, fallback: int) -> int:
     parsed = parse_episode(text)
     return parsed if parsed > 0 else max(1, fallback)
 
+def parsed_episode_required(text: str) -> int:
+    return max(0, parse_episode(text))
+
 def rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 

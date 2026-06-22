@@ -16,7 +16,7 @@ from ..schemas import BatchSubtitlePayload, EpisodeImportPayload, EpisodeResourc
 from ..utils import (
     is_valid_resource_reference,
     is_valid_subtitle_reference,
-    parsed_episode_or_fallback,
+    parsed_episode_required,
     row_to_dict,
     split_input_lines,
     subtitle_embedded_value,
@@ -38,6 +38,12 @@ async def api_import_entry_resources(entry_id: int, payload: EpisodeImportPayloa
     invalid_subtitles = [line for line in subtitle_lines if not is_valid_subtitle_reference(line)]
     if invalid_subtitles:
         raise HTTPException(status_code=400, detail=f"字幕链接或文件名格式无效: {invalid_subtitles[0]}")
+    invalid_episode_resources = [line for line in resource_lines if parsed_episode_required(line) <= 0]
+    if invalid_episode_resources:
+        raise HTTPException(status_code=400, detail=f"资源无法识别集数: {invalid_episode_resources[0]}")
+    invalid_episode_subtitles = [line for line in subtitle_lines if parsed_episode_required(line) <= 0]
+    if invalid_episode_subtitles:
+        raise HTTPException(status_code=400, detail=f"字幕无法识别集数: {invalid_episode_subtitles[0]}")
     ts = now()
     created = 0
     with connect() as conn:
@@ -45,7 +51,7 @@ async def api_import_entry_resources(entry_id: int, payload: EpisodeImportPayloa
         if not entry:
             raise HTTPException(status_code=404, detail="媒体条目不存在")
         for index, line in enumerate(resource_lines, start=1):
-            episode_number = parsed_episode_or_fallback(line, index)
+            episode_number = parsed_episode_required(line)
             conn.execute(
                 """
                 INSERT INTO episodes (series_id, entry_id, episode_number, title, status, created_at, updated_at)
@@ -108,7 +114,7 @@ async def api_import_entry_resources(entry_id: int, payload: EpisodeImportPayloa
             )
             created += 1
         for index, line in enumerate(subtitle_lines, start=1):
-            episode_number = parsed_episode_or_fallback(line, index)
+            episode_number = parsed_episode_required(line)
             episode = conn.execute(
                 "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
                 (entry_id, episode_number),
@@ -148,6 +154,9 @@ async def api_batch_entry_subtitles(entry_id: int, payload: BatchSubtitlePayload
     invalid_subtitles = [item for item in subtitle_items if not is_valid_subtitle_reference(item)]
     if invalid_subtitles:
         raise HTTPException(status_code=400, detail=f"字幕链接或文件名格式无效: {invalid_subtitles[0]}")
+    invalid_episode_subtitles = [item for item in subtitle_items if parsed_episode_required(item) <= 0]
+    if invalid_episode_subtitles:
+        raise HTTPException(status_code=400, detail=f"字幕无法识别集数: {invalid_episode_subtitles[0]}")
     ts = now()
     saved = 0
     with connect() as conn:
@@ -155,7 +164,7 @@ async def api_batch_entry_subtitles(entry_id: int, payload: BatchSubtitlePayload
         if not entry:
             raise HTTPException(status_code=404, detail="媒体条目不存在")
         for index, item in enumerate(subtitle_items, start=1):
-            episode_number = parsed_episode_or_fallback(item, index)
+            episode_number = parsed_episode_required(item)
             episode = conn.execute(
                 "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
                 (entry_id, episode_number),
@@ -281,6 +290,65 @@ async def api_update_episode_subtitle(episode_id: int, payload: EpisodeSubtitleP
             )
             row = conn.execute("SELECT * FROM episode_subtitles WHERE id=last_insert_rowid()").fetchone()
     return {"status": "saved", "item": row_to_dict(row)}
+
+
+@router.delete("/api/episode-resources/{resource_id}")
+async def api_delete_episode_resource(resource_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM episode_resources WHERE id=?", (resource_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="集数资源不存在")
+        entry_id = int(row["entry_id"] or 0)
+        episode_number = int(row["episode_number"] or 0)
+        synced = conn.execute(
+            """
+            SELECT 1 FROM local_assets
+            WHERE entry_id=? AND episode_number=? AND status='synced'
+            LIMIT 1
+            """,
+            (entry_id, episode_number),
+        ).fetchone()
+        if synced:
+            raise HTTPException(status_code=400, detail="该集已有本地文件，请先取消/清理本地资源")
+        active = conn.execute(
+            """
+            SELECT 1 FROM download_jobs
+            WHERE entry_id=? AND episode_number=?
+              AND status IN ('pending','running','submitted','downloading')
+            LIMIT 1
+            """,
+            (entry_id, episode_number),
+        ).fetchone()
+        if active:
+            raise HTTPException(status_code=400, detail="该集仍有下载任务，请先取消任务")
+        release_id = int(row["release_id"] or 0)
+        conn.execute("DELETE FROM episode_subtitles WHERE episode_resource_id=?", (resource_id,))
+        conn.execute("DELETE FROM episode_resources WHERE id=?", (resource_id,))
+        if release_id > 0:
+            downstream = conn.execute(
+                """
+                SELECT 1
+                WHERE EXISTS (SELECT 1 FROM download_jobs WHERE release_id=?)
+                   OR EXISTS (SELECT 1 FROM download_artifacts WHERE release_id=?)
+                   OR EXISTS (SELECT 1 FROM local_assets WHERE release_id=?)
+                """,
+                (release_id, release_id, release_id),
+            ).fetchone()
+            if not downstream:
+                conn.execute("DELETE FROM releases WHERE id=?", (release_id,))
+        remaining = conn.execute(
+            """
+            SELECT 1
+            WHERE EXISTS (SELECT 1 FROM episode_resources WHERE entry_id=? AND episode_number=?)
+               OR EXISTS (SELECT 1 FROM episode_subtitles WHERE entry_id=? AND episode_number=?)
+               OR EXISTS (SELECT 1 FROM local_assets WHERE entry_id=? AND episode_number=?)
+               OR EXISTS (SELECT 1 FROM releases WHERE entry_id=? AND episode_number=?)
+            """,
+            (entry_id, episode_number, entry_id, episode_number, entry_id, episode_number, entry_id, episode_number),
+        ).fetchone()
+        if episode_number > 0 and not remaining:
+            conn.execute("DELETE FROM episodes WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+    return {"status": "deleted", "message": "集数资源已删除"}
 
 
 @router.post("/api/episodes/{episode_id}/refresh")

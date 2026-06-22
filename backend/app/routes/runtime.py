@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from ..db import log
-from ..maintenance import clear_runtime_data, migrate_media_folders
+from ..maintenance import cleanup_invalid_episode_data, clear_runtime_data, migrate_media_folders
 from ..pipeline_orchestrator import run_ready_tasks, start_pipeline
 from ..pipeline_runtime import pipeline_overview
 from ..runtime_service import (
@@ -158,6 +158,11 @@ async def api_runtime_clear_logs() -> dict[str, str]:
 @router.post("/api/maintenance/migrate-media-folders")
 async def api_migrate_media_folders() -> dict:
     return migrate_media_folders()
+
+
+@router.post("/api/maintenance/cleanup-invalid-episodes")
+async def api_cleanup_invalid_episodes() -> dict:
+    return cleanup_invalid_episode_data()
 
 
 @router.post("/api/system/clear-data")

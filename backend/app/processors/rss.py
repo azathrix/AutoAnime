@@ -75,6 +75,9 @@ async def process_rss_candidate_persist(_context: ProcessorContext, payload: dic
     item = release_from_payload(payload)
     if not item.guid or not item.title:
         return ProcessorResult.terminal("RSS 候选缺少 guid 或 title")
+    if int(item.episode_number or 0) <= 0:
+        log("warn", f"RSS 候选跳过: 未识别集数 title={item.title[:180]}")
+        return ProcessorResult.skipped("未识别集数，跳过资源入库")
     candidate_id = upsert_rss_candidate(item, "pipeline:rss")
     return ProcessorResult.success(
         "RSS 候选已写入",

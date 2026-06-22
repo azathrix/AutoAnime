@@ -57,6 +57,11 @@ export default appContextComponent()
                   <el-button type="primary">迁移媒体目录</el-button>
                 </template>
               </el-popconfirm>
+              <el-popconfirm title="会清理无法识别集数的发布、资源、字幕和下载记录。确定执行？" @confirm="runAction('/maintenance/cleanup-invalid-episodes')">
+                <template #reference>
+                  <el-button type="warning">清理无效集数</el-button>
+                </template>
+              </el-popconfirm>
               <el-popconfirm title="会清空番剧、候选、任务、下载记录、本地资源记录和日志。确定？" @confirm="runAction('/system/clear-data')">
                 <template #reference>
                   <el-button type="danger" plain>清除所有数据</el-button>

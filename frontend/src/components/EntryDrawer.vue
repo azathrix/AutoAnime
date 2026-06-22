@@ -91,6 +91,11 @@ export default appContextComponent()
                         <el-button size="small" plain :disabled="!episodeCanPause(row)" @click="pauseEpisodeDownload(row)">暂停</el-button>
                         <el-button size="small" plain :disabled="!episodeCanCancel(row)" @click="cancelEpisodeDownload(row)">取消</el-button>
                         <el-button size="small" plain @click="refreshEpisodeResource(row)">刷新</el-button>
+                        <el-popconfirm title="删除该资源配置？已下载或正在下载的资源需要先清理任务。" @confirm="deleteEpisodeResource(row)">
+                          <template #reference>
+                            <el-button size="small" type="danger">删除</el-button>
+                          </template>
+                        </el-popconfirm>
                       </div>
                     </section>
                   </div>

@@ -432,7 +432,8 @@ const entryResourceRows = computed(() => {
   }
   for (const resource of detail.episode_resources || []) {
     const episode = Number(resource.episode_number || 0)
-    const key = episode > 0 ? `episode:${episode}` : `resource:${resource.id}`
+    if (episode <= 0) continue
+    const key = `episode:${episode}`
     rows.set(key, {
       key,
       episode_id: Number(resource.episode_id || episodeIds.get(episode) || 0),
@@ -465,7 +466,8 @@ const entryResourceRows = computed(() => {
   }
   for (const subtitle of detail.episode_subtitles || []) {
     const episode = Number(subtitle.episode_number || 0)
-    const key = episode > 0 ? `episode:${episode}` : `subtitle:${subtitle.id}`
+    if (episode <= 0) continue
+    const key = `episode:${episode}`
     const row = rows.get(key)
     if (!row) continue
     row.subtitle_id = Number(subtitle.id || 0)

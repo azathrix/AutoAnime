@@ -13,7 +13,7 @@ from .pipeline_orchestrator import start_pipeline
 from .runtime_service import ACTIVE_DOWNLOAD_STATUSES, DOWNLOAD_RUNTIME_PROCESSORS, trigger_queue
 from .runtime_store import runtime_store
 from .schemas import EntryPayload, MediaCreatePayload
-from .utils import normalize_json_list_text, row_to_dict, subtitle_embedded_value, rows_to_dicts, enrich_catalog_entry
+from .utils import normalize_json_list_text, parsed_episode_required, row_to_dict, subtitle_embedded_value, rows_to_dicts, enrich_catalog_entry
 
 def normalize_api_media_type(value: str) -> str:
     key = str(value or "anime").strip().lower()
@@ -140,8 +140,11 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
             (entry_id, payload.mode.strip() or "manual", source_ref, ts, ts),
         )
         episode_number = max(0, int(payload.episode_number or 0))
-        if episode_number > 0 or payload.resource_title.strip() or source_ref:
-            episode_number = episode_number or 1
+        resource_text = source_ref or payload.resource_title.strip()
+        if resource_text:
+            episode_number = episode_number or parsed_episode_required(resource_text)
+            if episode_number <= 0:
+                raise HTTPException(status_code=400, detail="资源无法识别集数，请先在向导里填写集数或修改文件名/链接")
             conn.execute(
                 """
                 INSERT INTO episodes (series_id, entry_id, episode_number, title, status, created_at, updated_at)
@@ -290,10 +293,10 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
             subject_type="release",
             subject_id=release_id,
             payload={
-                "_dedupe_key": f"download:entry:{entry_id}:episode:{int(payload.episode_number or 0)}",
+                "_dedupe_key": f"download:entry:{entry_id}:episode:{episode_number}",
                 "entry_id": entry_id,
                 "release_id": release_id,
-                "episode_number": int(payload.episode_number or 0),
+                "episode_number": episode_number,
                 "domain_kind": "library",
             },
             message=f"媒体向导收录后下载: {title}",
@@ -399,7 +402,7 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
         if not entry:
             return empty_entry_response()
         episodes = conn.execute(
-            "SELECT * FROM episodes WHERE entry_id=? ORDER BY episode_number ASC, id ASC",
+            "SELECT * FROM episodes WHERE entry_id=? AND episode_number > 0 ORDER BY episode_number ASC, id ASC",
             (entry_id,),
         ).fetchall()
         episode_resources = conn.execute(
@@ -433,13 +436,27 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
               ON la.entry_id=er.entry_id
              AND la.episode_number=er.episode_number
              AND la.status='synced'
-            WHERE er.entry_id=?
+            WHERE er.entry_id=? AND er.episode_number > 0
+              AND EXISTS (
+                SELECT 1 FROM episodes ep
+                WHERE ep.entry_id=er.entry_id
+                  AND ep.episode_number=er.episode_number
+              )
             ORDER BY er.episode_number ASC, er.selected DESC, er.id DESC
             """,
             (entry_id,),
         ).fetchall()
         episode_subtitles = conn.execute(
-            "SELECT * FROM episode_subtitles WHERE entry_id=? ORDER BY episode_number ASC, selected DESC, id DESC",
+            """
+            SELECT * FROM episode_subtitles
+            WHERE entry_id=? AND episode_number > 0
+              AND EXISTS (
+                SELECT 1 FROM episodes ep
+                WHERE ep.entry_id=episode_subtitles.entry_id
+                  AND ep.episode_number=episode_subtitles.episode_number
+              )
+            ORDER BY episode_number ASC, selected DESC, id DESC
+            """,
             (entry_id,),
         ).fetchall()
     groups = sorted({r["subtitle_group"] for r in episode_resources if r["subtitle_group"]})

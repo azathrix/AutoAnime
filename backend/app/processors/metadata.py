@@ -16,6 +16,14 @@ async def process_candidate_metadata(context: ProcessorContext, payload: dict) -
         row = conn.execute("SELECT * FROM rss_candidates WHERE id=?", (candidate_id,)).fetchone()
     if not row:
         return ProcessorResult.terminal(f"RSS 候选不存在: {candidate_id}")
+    if int(row["episode_number"] or 0) <= 0:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE rss_candidates SET status='ignored', reason=?, updated_at=? WHERE id=?",
+                ("未识别集数，已跳过入库", now(), candidate_id),
+            )
+        log("warn", f"元数据跳过: RSS 候选未识别集数 candidate_id={candidate_id} title={row['title']}")
+        return ProcessorResult.skipped("未识别集数，跳过入库")
     bangumi_id = str(row["bangumi_id"] or payload.get("bangumi_id") or "")
     if not bangumi_id:
         return ProcessorResult.retryable("缺少 Bangumi ID", task_retry_after(settings, context.attempts + 1))

@@ -304,6 +304,9 @@ def sync_episode_resource_for_release(conn, release_id: int, ts: str | None = No
     release = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
     if not release:
         return
+    if int(release["episode_number"] or 0) <= 0:
+        log("warn", f"集数资源跳过: release_id={release_id} 未识别集数")
+        return
     episode_id = 0
     episode = conn.execute(
         "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
@@ -431,6 +434,9 @@ def coalesce_episode_release(conn, entry_id: int, episode_number: int, item: Par
 
 
 def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[int, int, int]:
+    if int(item.episode_number or 0) <= 0:
+        log("warn", f"RSS 发布跳过入库: 未识别集数 title={item.title[:180]}")
+        return 0, 0, 0
     fp = fingerprint(item.series_title or item.title, item.bangumi_id)
     metadata = metadata or {}
     month = int(metadata.get("month") or 0) or parse_month_value(item.published_at)
@@ -902,7 +908,7 @@ def resolve_entry_choice(entry_id: int, settings: dict[str, str]) -> tuple[list[
             """
             SELECT id, episode_number, subtitle_group, resolution, language
             FROM releases
-            WHERE entry_id=?
+            WHERE entry_id=? AND episode_number > 0
             ORDER BY episode_number ASC, published_at DESC, id DESC
             """,
             (entry_id,),
