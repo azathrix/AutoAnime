@@ -2,7 +2,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-mark" src="/anitrack-logo.png" alt="AniTrack" />
+        <img class="brand-mark" src="/anitrack-icon.png" alt="AniTrack" />
         <div>
           <strong class="brand-wordmark">Ani<span>Track</span></strong>
           <span>Anime tracking</span>
@@ -433,8 +433,7 @@
           <el-input v-model="keyword" clearable :placeholder="`搜索${currentMediaPageTitle}、Bangumi ID、TMDB ID、标题`" />
           <div class="toolbar-spacer"></div>
           <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
-          <el-button plain @click="openMediaWizard('import')">导入</el-button>
-          <el-button type="primary" @click="openMediaWizard('add')">添加</el-button>
+          <el-button type="primary" @click="openMediaWizard">收录{{ currentMediaPageTitle }}</el-button>
         </div>
         <div v-if="advancedFilterOpen" class="filter-board">
           <div class="filter-row">
@@ -539,6 +538,13 @@
               <el-tab-pane label="自动选择">
                 <el-tabs tab-position="left" class="nested-settings-tabs">
                   <el-tab-pane label="动画">
+                    <div class="settings-section-toolbar">
+                      <div>
+                        <strong>动画自动选集</strong>
+                        <span>用于新番和番剧的资源优先级</span>
+                      </div>
+                      <el-button plain @click="resetSelectionRules('anime')">重置动画规则</el-button>
+                    </div>
                     <div class="priority-layout">
                       <PriorityList title="字幕组优先级" v-model="settings.subtitle_priority" placeholder="添加字幕组" />
                       <PriorityList title="分辨率优先级" v-model="settings.resolution_priority" placeholder="添加分辨率" />
@@ -547,6 +553,13 @@
                     </div>
                   </el-tab-pane>
                   <el-tab-pane label="电影">
+                    <div class="settings-section-toolbar">
+                      <div>
+                        <strong>电影自动选集</strong>
+                        <span>只影响电影页面和电影导入资源</span>
+                      </div>
+                      <el-button plain @click="resetSelectionRules('movie')">重置电影规则</el-button>
+                    </div>
                     <div class="priority-layout">
                       <PriorityList title="画质优先级" v-model="settings.movie_quality_priority" placeholder="添加画质，如 2160p" />
                       <PriorityList title="来源优先级" v-model="settings.movie_source_priority" placeholder="添加来源，如 BluRay" />
@@ -554,6 +567,13 @@
                     </div>
                   </el-tab-pane>
                   <el-tab-pane label="电视剧">
+                    <div class="settings-section-toolbar">
+                      <div>
+                        <strong>电视剧自动选集</strong>
+                        <span>只影响电视剧页面和电视剧导入资源</span>
+                      </div>
+                      <el-button plain @click="resetSelectionRules('tv')">重置电视剧规则</el-button>
+                    </div>
                     <div class="priority-layout">
                       <PriorityList title="画质优先级" v-model="settings.tv_quality_priority" placeholder="添加画质，如 1080p" />
                       <PriorityList title="来源优先级" v-model="settings.tv_source_priority" placeholder="添加来源，如 WEB-DL" />
@@ -726,23 +746,25 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="episode_number" label="集" width="72" />
-              <el-table-column prop="resource_title" label="当前选中资源" min-width="340" show-overflow-tooltip />
-              <el-table-column prop="subtitle_group" label="字幕组" min-width="150" show-overflow-tooltip />
-              <el-table-column prop="resolution" label="分辨率" width="100" />
-              <el-table-column prop="language" label="语言" width="100" />
-              <el-table-column label="字幕" width="110">
+              <el-table-column prop="episode_number" label="集" width="58" />
+              <el-table-column prop="resource_title" label="当前选中资源" min-width="230" show-overflow-tooltip />
+              <el-table-column prop="subtitle_group" label="字幕组" width="122" show-overflow-tooltip />
+              <el-table-column prop="resolution" label="分辨率" width="82" />
+              <el-table-column prop="language" label="语言" width="82" />
+              <el-table-column label="字幕" width="86">
                 <template #default="{ row }">{{ subtitleFormatText(row.subtitle_format) }}</template>
               </el-table-column>
-              <el-table-column label="已下载" width="90">
+              <el-table-column label="下载" width="76">
                 <template #default="{ row }">
-                  <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">{{ row.downloaded ? '是' : '否' }}</el-tag>
+                  <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">{{ row.downloaded ? '已下' : '未下' }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="170" fixed="right">
+              <el-table-column label="操作" width="140">
                 <template #default="{ row }">
-                  <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
-                  <el-button size="small" link @click="refreshEpisodeResource(row)">刷新</el-button>
+                  <div class="table-action-group">
+                    <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
+                    <el-button size="small" plain @click="refreshEpisodeResource(row)">刷新</el-button>
+                  </div>
                 </template>
               </el-table-column>
             </el-table>
@@ -936,61 +958,125 @@
 
     <el-dialog v-model="mediaWizardOpen" :title="mediaWizardTitle" width="760px">
       <el-steps :active="mediaWizardStep" finish-status="success" align-center>
-        <el-step title="来源线索" />
-        <el-step title="匹配作品" />
-        <el-step title="首集资源" />
-        <el-step title="收录" />
+        <el-step title="选择来源" />
+        <el-step title="作品信息" />
+        <el-step title="集数资源" />
+        <el-step title="确认收录" />
       </el-steps>
       <div class="wizard-panel">
         <template v-if="mediaWizardStep === 0">
-          <el-alert type="info" show-icon :closable="false" title="导入和添加共用这套流程：可以选本地文件，也可以直接填磁链、下载链接、Bangumi/TMDB ID 或作品名。" class="settings-alert" />
-          <el-upload drag action="#" :auto-upload="false" multiple>
-            <p>选择本地目录或文件</p>
-            <small>浏览器会记录文件名；真实上传整理会在后续导入器接入。</small>
+          <div class="wizard-intro">
+            <strong>选择这次收录的来源</strong>
+            <span>本地文件、磁链下载和纯作品登记共用同一个入口，后续都整理成作品、集数和资源。</span>
+          </div>
+          <el-radio-group v-model="mediaWizardDraft.source_mode" class="wizard-source-grid">
+            <el-radio-button label="local">
+              <div class="wizard-source-card">
+                <strong>本地文件</strong>
+                <span>选择文件或目录，后续上传/整理到媒体库</span>
+              </div>
+            </el-radio-button>
+            <el-radio-button label="link">
+              <div class="wizard-source-card">
+                <strong>磁链 / 下载链接</strong>
+                <span>记录资源链接，并交给下载器处理</span>
+              </div>
+            </el-radio-button>
+            <el-radio-button label="metadata">
+              <div class="wizard-source-card">
+                <strong>只登记作品</strong>
+                <span>先建作品卡片，稍后再补集数资源</span>
+              </div>
+            </el-radio-button>
+          </el-radio-group>
+          <el-upload v-if="mediaWizardDraft.source_mode === 'local'" drag action="#" :auto-upload="false" multiple>
+            <p>选择本地文件或目录</p>
+            <small>第一版只记录文件信息，真实上传整理会在导入器接入后启用。</small>
           </el-upload>
-          <el-input v-model="mediaWizardSeed" type="textarea" :rows="3" placeholder="Bangumi ID / TMDB ID / 作品名 / 磁力链接 / 下载链接" />
+          <el-form label-position="top" class="wizard-form">
+            <el-form-item :label="mediaWizardDraft.source_mode === 'metadata' ? '作品线索' : '资源线索'">
+              <el-input
+                v-model="mediaWizardSeed"
+                type="textarea"
+                :rows="4"
+                placeholder="可以填 Bangumi ID、TMDB ID、作品名、磁力链接或下载链接。系统会尽量自动带入后面的字段。"
+              />
+            </el-form-item>
+          </el-form>
         </template>
         <template v-else-if="mediaWizardStep === 1">
-          <el-alert type="info" show-icon :closable="false" title="先确认作品信息；不准的字段可以直接改，后续也能在详情页编辑。" class="settings-alert" />
-          <div class="wizard-form-grid">
-            <el-input v-model="mediaWizardDraft.title" placeholder="作品标题" />
-            <el-input v-model="mediaWizardDraft.bangumi_id" placeholder="Bangumi ID" />
-            <el-input v-model="mediaWizardDraft.tmdb_id" placeholder="TMDB ID" />
-            <el-input-number v-model="mediaWizardDraft.year" :min="0" placeholder="年份" />
-            <el-input-number v-model="mediaWizardDraft.month" :min="0" :max="12" placeholder="月份" />
-            <el-input-number v-model="mediaWizardDraft.season_number" :min="1" placeholder="季" />
+          <div class="wizard-intro">
+            <strong>确认作品信息</strong>
+            <span>这里是媒体卡片的基础信息。不确定的字段可以先留空，收录后还能在详情页编辑。</span>
           </div>
+          <el-form :model="mediaWizardDraft" label-position="top" class="wizard-form">
+            <div class="wizard-form-grid labeled">
+              <el-form-item label="作品标题"><el-input v-model="mediaWizardDraft.title" placeholder="例如 欢迎来到实力至上主义的教室 第四季" /></el-form-item>
+              <el-form-item label="别名 / 原名"><el-input v-model="mediaWizardDraft.alias" placeholder="可选，例如 Youkoso Jitsuryoku..." /></el-form-item>
+              <el-form-item label="Bangumi ID"><el-input v-model="mediaWizardDraft.bangumi_id" placeholder="动画优先使用 Bangumi ID" /></el-form-item>
+              <el-form-item label="TMDB ID"><el-input v-model="mediaWizardDraft.tmdb_id" placeholder="电影/电视剧可填 TMDB ID" /></el-form-item>
+              <el-form-item label="年份"><el-input v-model="mediaWizardDraft.year" placeholder="例如 2026" /></el-form-item>
+              <el-form-item label="月份"><el-input v-model="mediaWizardDraft.month" placeholder="例如 4，未知可留空" /></el-form-item>
+              <el-form-item label="季 / 篇章"><el-input v-model="mediaWizardDraft.season_number" placeholder="例如 1、2，电影可留空" /></el-form-item>
+              <el-form-item label="国家 / 地区">
+                <el-select v-model="mediaWizardDraft.region" clearable placeholder="可选">
+                  <el-option label="日本" value="jp" />
+                  <el-option label="中国" value="cn" />
+                  <el-option label="欧美" value="us" />
+                  <el-option label="韩国" value="kr" />
+                  <el-option label="其他" value="other" />
+                </el-select>
+              </el-form-item>
+            </div>
+          </el-form>
         </template>
         <template v-else-if="mediaWizardStep === 2">
-          <el-alert type="info" show-icon :closable="false" title="这里可以先配置一个首集资源；批量集数和字幕建议收录后在详情页的集数资源里处理。" class="settings-alert" />
-          <div class="wizard-form-grid">
-            <el-input-number v-model="mediaWizardDraft.episode_number" :min="0" placeholder="集数" />
-            <el-input v-model="mediaWizardDraft.resource_title" placeholder="资源标题 / 文件名" />
-            <el-input v-model="mediaWizardDraft.source_ref" placeholder="磁力链接 / 下载链接 / 文件标识" />
-            <el-input v-model="mediaWizardDraft.subtitle_group" placeholder="字幕组" />
-            <el-input v-model="mediaWizardDraft.resolution" placeholder="分辨率" />
-            <el-input v-model="mediaWizardDraft.language" placeholder="语言" />
-            <el-select v-model="mediaWizardDraft.subtitle_format" clearable placeholder="字幕类型">
-              <el-option label="内嵌（硬字幕）" value="embedded" />
-              <el-option label="内封（软字幕）" value="muxed" />
-              <el-option label="外挂" value="external" />
-            </el-select>
-            <el-input v-model="mediaWizardDraft.subtitle_url" placeholder="字幕链接，可选" />
-            <el-input v-model="mediaWizardDraft.subtitle_path" placeholder="外挂字幕路径，可选" />
+          <div class="wizard-intro">
+            <strong>配置第一条集数资源</strong>
+            <span>如果只是先登记作品，可以跳过这里。批量集数和字幕在详情页的“集数资源”里继续配置。</span>
           </div>
+          <el-form :model="mediaWizardDraft" label-position="top" class="wizard-form">
+            <div class="wizard-form-grid labeled">
+              <el-form-item label="集数"><el-input v-model="mediaWizardDraft.episode_number" placeholder="例如 1、05、S01E05；不填则只收录作品" /></el-form-item>
+              <el-form-item label="资源标题 / 文件名"><el-input v-model="mediaWizardDraft.resource_title" placeholder="资源发布标题或本地文件名" /></el-form-item>
+              <el-form-item label="资源链接"><el-input v-model="mediaWizardDraft.source_ref" placeholder="磁力链接、下载链接或文件标识" /></el-form-item>
+              <el-form-item label="字幕组"><el-input v-model="mediaWizardDraft.subtitle_group" placeholder="例如 LoliHouse" /></el-form-item>
+              <el-form-item label="分辨率"><el-input v-model="mediaWizardDraft.resolution" placeholder="例如 1080p、2160p" /></el-form-item>
+              <el-form-item label="语言"><el-input v-model="mediaWizardDraft.language" placeholder="例如 简繁、简体、双语" /></el-form-item>
+              <el-form-item label="字幕类型">
+                <el-select v-model="mediaWizardDraft.subtitle_format" clearable placeholder="可选">
+                  <el-option label="内嵌（硬字幕）" value="embedded" />
+                  <el-option label="内封（软字幕）" value="muxed" />
+                  <el-option label="外挂" value="external" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="字幕链接"><el-input v-model="mediaWizardDraft.subtitle_url" placeholder="外挂字幕下载链接，可选" /></el-form-item>
+              <el-form-item label="上传字幕文件名"><el-input v-model="mediaWizardDraft.subtitle_file_name" placeholder="选择文件后记录文件名，可选" /></el-form-item>
+              <el-form-item label="字幕路径"><el-input v-model="mediaWizardDraft.subtitle_path" placeholder="服务端整理后的字幕路径，可选" /></el-form-item>
+            </div>
+          </el-form>
         </template>
         <template v-else>
           <div class="wizard-confirm-panel">
-            <strong>{{ mediaWizardDraft.title || currentMediaPageTitle }}</strong>
-            <span>{{ mediaTypeLabel(currentMediaType) }} · {{ mediaWizardDraft.year || '年份未知' }}</span>
-            <span>{{ mediaWizardDraft.episode_number ? `第 ${mediaWizardDraft.episode_number} 集` : '暂不配置集数' }} · {{ mediaWizardDraft.resource_title || mediaWizardDraft.source_ref || '未填写资源' }}</span>
+            <div class="confirm-hero">
+              <strong>{{ mediaWizardDraft.title || currentMediaPageTitle }}</strong>
+              <span>{{ mediaTypeLabel(currentMediaType) }} · {{ mediaWizardDraft.year || '年份未知' }} · {{ regionLabel(mediaWizardDraft.region) || '地区未填' }}</span>
+            </div>
+            <div class="confirm-grid">
+              <div><span>Bangumi</span><code>{{ mediaWizardDraft.bangumi_id || '-' }}</code></div>
+              <div><span>TMDB</span><code>{{ mediaWizardDraft.tmdb_id || '-' }}</code></div>
+              <div><span>首条集数</span><code>{{ mediaWizardDraft.episode_number ? `第 ${mediaWizardDraft.episode_number} 集` : '暂不配置' }}</code></div>
+              <div><span>资源</span><code>{{ mediaWizardDraft.resource_title || mediaWizardDraft.source_ref || '未填写资源' }}</code></div>
+              <div><span>字幕</span><code>{{ subtitleFormatText(mediaWizardDraft.subtitle_format) || '-' }} · {{ mediaWizardDraft.language || '-' }}</code></div>
+              <div><span>来源</span><code>{{ sourceModeText(mediaWizardDraft.source_mode) }}</code></div>
+            </div>
           </div>
         </template>
       </div>
       <template #footer>
         <el-button @click="mediaWizardOpen = false">关闭</el-button>
         <el-button :disabled="mediaWizardStep <= 0" @click="mediaWizardStep -= 1">上一步</el-button>
-        <el-button v-if="mediaWizardStep < 3" type="primary" @click="mediaWizardStep += 1">下一步</el-button>
+        <el-button v-if="mediaWizardStep < 3" type="primary" @click="advanceMediaWizard">下一步</el-button>
         <el-button v-else type="primary" :loading="mediaWizardSaving" @click="commitMediaWizard">收录</el-button>
       </template>
     </el-dialog>
@@ -1110,12 +1196,15 @@ const episodeImportForm = reactive({
   language: '',
 })
 const mediaWizardDraft = reactive({
+  source_mode: 'link',
   title: '',
+  alias: '',
   bangumi_id: '',
   tmdb_id: '',
   year: 0,
   month: 0,
   season_number: 1,
+  region: '',
   episode_number: 0,
   resource_title: '',
   source_ref: '',
@@ -1410,6 +1499,25 @@ function regionLabel(value) {
     kr: '韩国',
     other: '其他',
   }[key] || key || '未知'
+}
+
+function sourceModeText(value) {
+  const key = String(value || 'link')
+  return {
+    local: '本地文件',
+    link: '磁链 / 下载链接',
+    metadata: '只登记作品',
+    collect: '收录',
+    add: '添加',
+    import: '导入',
+  }[key] || key
+}
+
+function numberFromInput(value, fallback = 0) {
+  const matches = String(value ?? '').match(/\d+/g)
+  if (!matches?.length) return fallback
+  const parsed = Number.parseInt(matches[matches.length - 1], 10)
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
 function entryMediaType(item) {
@@ -1941,16 +2049,19 @@ async function commitEpisodeImport() {
   }
 }
 
-function openMediaWizard(mode) {
+function openMediaWizard(mode = 'collect') {
   mediaWizardMode.value = mode
   mediaWizardStep.value = 0
   mediaWizardSeed.value = ''
+  mediaWizardDraft.source_mode = 'link'
   mediaWizardDraft.title = ''
+  mediaWizardDraft.alias = ''
   mediaWizardDraft.bangumi_id = ''
   mediaWizardDraft.tmdb_id = ''
   mediaWizardDraft.year = 0
   mediaWizardDraft.month = 0
   mediaWizardDraft.season_number = 1
+  mediaWizardDraft.region = ''
   mediaWizardDraft.episode_number = 0
   mediaWizardDraft.resource_title = ''
   mediaWizardDraft.source_ref = ''
@@ -1962,6 +2073,24 @@ function openMediaWizard(mode) {
   mediaWizardDraft.subtitle_url = ''
   mediaWizardDraft.subtitle_file_name = ''
   mediaWizardOpen.value = true
+}
+
+function advanceMediaWizard() {
+  if (mediaWizardStep.value === 0) {
+    const seed = String(mediaWizardSeed.value || '').trim()
+    const firstLine = seed.split(/\r?\n/).map(item => item.trim()).filter(Boolean)[0] || ''
+    const bangumiMatch = seed.match(/(?:bangumi|bgm|subject)[^\d]*(\d{2,})/i)
+    const tmdbMatch = seed.match(/tmdb[^\d]*(\d{2,})/i)
+    if (bangumiMatch && !mediaWizardDraft.bangumi_id) mediaWizardDraft.bangumi_id = bangumiMatch[1]
+    if (tmdbMatch && !mediaWizardDraft.tmdb_id) mediaWizardDraft.tmdb_id = tmdbMatch[1]
+    if (/^(magnet:|https?:\/\/)/i.test(firstLine) && !mediaWizardDraft.source_ref) {
+      mediaWizardDraft.source_ref = firstLine
+      if (!mediaWizardDraft.resource_title) mediaWizardDraft.resource_title = firstLine.slice(0, 80)
+    } else if (firstLine && !bangumiMatch && !tmdbMatch && !mediaWizardDraft.title) {
+      mediaWizardDraft.title = firstLine
+    }
+  }
+  mediaWizardStep.value += 1
 }
 
 async function commitMediaWizard() {
@@ -1976,15 +2105,20 @@ async function commitMediaWizard() {
   mediaWizardSaving.value = true
   try {
     const sourceRef = String(mediaWizardDraft.source_ref || (seedLooksLikeLink ? seed : '')).trim()
+    const year = Math.max(0, numberFromInput(mediaWizardDraft.year, 0))
+    const month = Math.max(0, Math.min(12, numberFromInput(mediaWizardDraft.month, 0)))
+    const seasonNumber = Math.max(1, numberFromInput(mediaWizardDraft.season_number, 1))
+    const episodeNumber = Math.max(0, numberFromInput(mediaWizardDraft.episode_number, 0))
     const result = await postAction(`/media/${currentMediaType.value}`, {
-      mode: mediaWizardMode.value,
+      mode: mediaWizardDraft.source_mode || mediaWizardMode.value,
       title,
       bangumi_id: mediaWizardDraft.bangumi_id,
       tmdb_id: mediaWizardDraft.tmdb_id,
-      year: mediaWizardDraft.year,
-      month: mediaWizardDraft.month,
-      season_number: mediaWizardDraft.season_number || 1,
-      episode_number: mediaWizardDraft.episode_number || 0,
+      year,
+      month,
+      season_number: seasonNumber,
+      region: mediaWizardDraft.region || '',
+      episode_number: episodeNumber,
       resource_title: mediaWizardDraft.resource_title,
       source_ref: sourceRef,
       subtitle_group: mediaWizardDraft.subtitle_group,
@@ -2174,6 +2308,29 @@ function normalizeSettingsShape() {
   settings.movie_name_template = settings.movie_name_template || '{title_cn} ({year})/{title_cn} ({year})'
   settings.tv_name_template = settings.tv_name_template || '{title_cn} ({year})/Season {season:02d}/{title_cn} - S{season:02d}E{episode:02d}'
   settings.episode_name_template = settings.episode_name_template || '{title_cn} - S{season:02d}E{episode:02d} - {episode_title}'
+}
+
+function resetSelectionRules(type) {
+  normalizeSettingsShape()
+  if (type === 'movie') {
+    settings.movie_quality_priority = ['2160p', '1080p', '720p']
+    settings.movie_source_priority = ['BluRay', 'WEB-DL', 'WebRip', 'HDTV']
+    settings.movie_subtitle_priority = ['简繁', '简体', '繁体', '双语', '中字']
+    ElMessage.success('已重置电影自动选集规则，保存设置后生效')
+    return
+  }
+  if (type === 'tv') {
+    settings.tv_quality_priority = ['2160p', '1080p', '720p']
+    settings.tv_source_priority = ['WEB-DL', 'WebRip', 'HDTV']
+    settings.tv_subtitle_priority = ['简繁', '简体', '繁体', '双语', '中字']
+    ElMessage.success('已重置电视剧自动选集规则，保存设置后生效')
+    return
+  }
+  settings.subtitle_priority = ['LoliHouse', '喵萌奶茶屋', '猎户压制部', '百冬练习组']
+  settings.resolution_priority = ['2160p', '1080p', '720p']
+  settings.language_priority = ['简繁', '简体', '繁体']
+  settings.secondary_language_priority = ['内封', '内嵌', '外挂']
+  ElMessage.success('已重置动画自动选集规则，保存设置后生效')
 }
 
 function addDownloader() {

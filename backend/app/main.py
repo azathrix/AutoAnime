@@ -111,6 +111,7 @@ class MediaCreatePayload(BaseModel):
     year: int = 0
     month: int = 0
     season_number: int = 1
+    region: str = "jp"
     episode_number: int = 0
     resource_title: str = ""
     source_ref: str = ""
@@ -510,6 +511,7 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
     season_number = max(1, int(payload.season_number or 1))
     year = max(0, int(payload.year or 0))
     month = max(0, min(12, int(payload.month or 0)))
+    region = payload.region.strip() or "jp"
     source_ref = payload.source_ref.strip()
     ts = now()
     work_key = fingerprint(title, bangumi_id or tmdb_id)
@@ -539,9 +541,10 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
               (work_id, fingerprint, domain_kind, media_type, region, source_provider, metadata_provider,
                external_id, target_library_id, display_title, title_root, title_raw, title_cn,
                bangumi_id, tmdb_id, year, month, season_number, created_at, updated_at)
-            VALUES (?, ?, 'library', ?, 'jp', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, 'library', ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               media_type=excluded.media_type,
+              region=excluded.region,
               target_library_id=excluded.target_library_id,
               display_title=excluded.display_title,
               title_root=excluded.title_root,
@@ -556,6 +559,7 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
                 work_id,
                 entry_key,
                 media_type,
+                region,
                 payload.mode.strip() or "manual",
                 bangumi_id or tmdb_id,
                 target_library_id,
