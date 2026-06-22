@@ -1077,48 +1077,6 @@ const currentTagOptions = computed(() => {
     .slice(0, 36)
     .map(item => item[0])
 })
-const libraryMediaTypeOptions = computed(() => {
-  const values = new Set()
-  for (const item of libraryRows.value) {
-    if (item.media_type) values.add(item.media_type)
-  }
-  return Array.from(values).sort((a, b) => mediaTypeLabel(a).localeCompare(mediaTypeLabel(b)))
-})
-const libraryRegionOptions = computed(() => {
-  const values = new Set()
-  for (const item of libraryRows.value) {
-    if (item.region) values.add(item.region)
-  }
-  return Array.from(values).sort((a, b) => regionLabel(a).localeCompare(regionLabel(b)))
-})
-const libraryYearOptions = computed(() => {
-  const values = new Set()
-  for (const item of libraryRows.value) {
-    const year = Number(item.year || 0)
-    if (year > 0) values.add(year)
-  }
-  return Array.from(values).sort((a, b) => b - a)
-})
-const libraryScopeOptions = computed(() => {
-  const values = new Set()
-  for (const item of libraryRows.value) {
-    const scope = item.entry_scope_label || item.entry_badge_text || ''
-    if (scope) values.add(scope)
-  }
-  return Array.from(values).sort((a, b) => String(a).localeCompare(String(b)))
-})
-const libraryTagOptions = computed(() => {
-  const counts = new Map()
-  for (const item of libraryRows.value) {
-    for (const tag of entryTags(item)) {
-      counts.set(tag, (counts.get(tag) || 0) + 1)
-    }
-  }
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 36)
-    .map(item => item[0])
-})
 const activeDetailRows = computed(() => selectedEntryDomain.value === 'library' ? libraryRows.value : seasonalRows.value)
 const localAssetTotal = computed(() => seasonalRows.value.reduce((sum, item) => sum + Number(item.local_asset_count || 0), 0))
 const watchableTotal = computed(() => localAssetTotal.value)

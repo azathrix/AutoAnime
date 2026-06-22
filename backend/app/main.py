@@ -261,7 +261,7 @@ def first_enabled_downloader(downloaders: list[dict[str, Any]]) -> dict[str, Any
     return next((item for item in downloaders if item.get("enabled", True)), downloaders[0] if downloaders else {})
 
 
-def legacy_downloader_settings(downloaders: list[dict[str, Any]], previous: dict[str, str]) -> dict[str, str]:
+def derived_downloader_settings(downloaders: list[dict[str, Any]], previous: dict[str, str]) -> dict[str, str]:
     active = first_enabled_downloader(downloaders)
     backend = SUPPORTED_DOWNLOADER_TYPES.get(str(active.get("type") or "").strip().lower(), previous.get("download_backend") or "rclone")
     result = {
@@ -1743,7 +1743,7 @@ async def api_system_diagnostics() -> dict[str, Any]:
 async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
     previous = get_settings()
     downloaders = clean_downloader_items(payload.downloaders)
-    derived_downloader_settings = legacy_downloader_settings(downloaders, previous)
+    downloader_settings = derived_downloader_settings(downloaders, previous)
     save_settings(
         {
             "rss_url": payload.rss_url.strip(),
@@ -1761,7 +1761,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "resolution_priority": "\n".join(payload.resolution_priority),
             "language_priority": "\n".join(payload.language_priority),
             "secondary_language_priority": "\n".join(payload.secondary_language_priority),
-            **derived_downloader_settings,
+            **downloader_settings,
             "local_library_root": str(MEDIA_ROOT),
             "auto_sync_following": "true",
             "nfo_output_root": "",
@@ -1789,8 +1789,6 @@ async def api_update_settings(payload: SettingsPayload) -> dict[str, Any]:
             "episode_name_template",
             "movie_name_template",
             "tv_name_template",
-            "local_library_root",
-            "auto_sync_following",
         ]
     ):
         with connect() as conn:
