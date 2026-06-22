@@ -941,7 +941,6 @@ exposeAppContext({
   queueTag,
   queueTaskCanCancel,
   queueTaskProgressText,
-  refreshEpisodeResource,
   regionLabel,
   reload,
   reloadDiagnostics,
