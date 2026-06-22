@@ -99,6 +99,8 @@ class MediaContractTests(unittest.TestCase):
         self.assertNotIn("download_artifacts", detail)
         self.assertNotIn("local_assets", detail)
         self.assertNotIn("tasks", detail)
+        for key in ["auto_download", "selected_group", "selected_resolution", "backfill_mode"]:
+            self.assertNotIn(key, detail["entry"])
 
     def test_media_lists_do_not_expose_card_status_summaries(self) -> None:
         detail = create_media_entry(
@@ -124,6 +126,10 @@ class MediaContractTests(unittest.TestCase):
             "status_level",
             "needs_attention",
             "has_failed_task",
+            "auto_download",
+            "selected_group",
+            "selected_resolution",
+            "backfill_mode",
         ]:
             self.assertNotIn(key, row)
 

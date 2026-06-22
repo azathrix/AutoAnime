@@ -85,10 +85,6 @@ class EntryPayload(BaseModel):
     tmdb_id: str = ""
     year: int = 0
     season_number: int = 1
-    auto_download: str = "inherit"
-    selected_group: str = ""
-    selected_resolution: str = ""
-    backfill_mode: str = "inherit"
 
 
 class MediaCreatePayload(BaseModel):
@@ -708,6 +704,8 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
     resolutions = sorted({r["resolution"] for r in episode_resources if r["resolution"]})
     languages = sorted({r["language"] for r in episode_resources if r["language"]})
     entry_payload = enrich_catalog_entry({**row_to_dict(entry), "domain_kind": entry["domain_kind"]})
+    for legacy_key in ("auto_download", "selected_group", "selected_resolution", "backfill_mode"):
+        entry_payload.pop(legacy_key, None)
     return {
         "entry": entry_payload,
         "episodes": rows_to_dicts(episodes),
@@ -730,9 +728,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
         conn.execute(
             """
             UPDATE entries
-            SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?,
-                auto_download=?, selected_group=?, selected_resolution=?,
-                backfill_mode=?, updated_at=?
+            SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?, updated_at=?
             WHERE id=?
             """,
             (
@@ -741,10 +737,6 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 payload.tmdb_id.strip(),
                 payload.year,
                 payload.season_number,
-                payload.auto_download,
-                payload.selected_group.strip(),
-                payload.selected_resolution.strip(),
-                payload.backfill_mode,
                 now(),
                 entry_id,
             ),
@@ -1464,9 +1456,6 @@ def dashboard_data() -> dict[str, Any]:
               e.bangumi_id,
               e.year,
               e.season_number,
-              e.auto_download,
-              e.selected_group,
-              e.selected_resolution,
               w.title_root AS work_title,
               COUNT(DISTINCT ep.id) AS episode_count,
               COUNT(DISTINCT r.id) AS release_count,
