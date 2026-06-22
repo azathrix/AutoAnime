@@ -43,14 +43,10 @@ body {
 }
 
 .brand-mark {
-  align-items: center;
-  background: linear-gradient(135deg, #2dd4bf, #2563eb);
   border-radius: 9px;
   box-shadow: 0 12px 28px rgba(37, 99, 235, .24);
-  display: flex;
-  font-weight: 800;
   height: 42px;
-  justify-content: center;
+  object-fit: cover;
   width: 42px;
 }
 
@@ -102,49 +98,6 @@ nav button:hover {
   color: #1d4ed8;
 }
 
-.sidebar-status {
-  align-items: center;
-  border-top: 1px solid #e2e8f0;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 42px minmax(0, 1fr);
-  margin-top: auto;
-  padding-top: 14px;
-}
-
-.sidebar-avatar {
-  align-items: center;
-  background: radial-gradient(circle at 35% 30%, #bae6fd, #2563eb 74%);
-  border: 2px solid #dbeafe;
-  border-radius: 50%;
-  color: #eff6ff;
-  display: flex;
-  font-weight: 900;
-  height: 40px;
-  justify-content: center;
-  width: 40px;
-}
-
-.sidebar-status strong,
-.sidebar-status small {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-status strong {
-  color: #1f2937;
-  font-size: 13px;
-}
-
-.sidebar-status small {
-  color: #64748b;
-  font-size: 11px;
-  margin-top: 3px;
-}
-
 .main {
   margin-left: 236px;
   min-width: 0;
@@ -161,6 +114,10 @@ nav button:hover {
   justify-content: space-between;
   margin-bottom: 16px;
   padding: 18px 20px;
+}
+
+.hero > div:first-child {
+  min-width: 0;
 }
 
 .eyebrow {

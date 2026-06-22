@@ -2,7 +2,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">A</div>
+        <img class="brand-mark" src="/logo.svg" alt="AutoAnime" />
         <div>
           <strong class="brand-wordmark">Auto<span>Anime</span></strong>
           <span>Media automation</span>
@@ -20,13 +20,6 @@
         <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon> 日志</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
-      <div class="sidebar-status">
-        <span class="sidebar-avatar">A</span>
-        <div>
-          <strong>{{ liveConnected ? '动态连接' : '本地服务' }}</strong>
-          <small>{{ dashboard.console_overview?.pending_task_count || 0 }} 个待处理任务</small>
-        </div>
-      </div>
     </aside>
 
     <main class="main">
@@ -35,17 +28,6 @@
           <p class="eyebrow">RSS · Downloader · Media Library</p>
           <h1>{{ pageTitle }}</h1>
           <p class="hero-sub">扫描订阅、自动选集并整理到本地媒体库。<span class="build-version">v{{ appVersion }} · {{ appBuild }}</span></p>
-        </div>
-        <div class="hero-actions">
-          <el-switch
-            v-model="autoRefresh"
-            inline-prompt
-            active-text="实时"
-            inactive-text="手动"
-          />
-          <el-tag :type="liveConnected ? 'success' : 'info'">{{ liveConnected ? '动态连接' : '轮询刷新' }}</el-tag>
-          <el-button :icon="Refresh" @click="reload" :loading="loading">刷新状态</el-button>
-          <el-button v-if="view === 'dashboard' || view === 'seasonal'" type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
         </div>
       </header>
 
@@ -299,7 +281,6 @@
               <div><span>运行队列</span><strong>{{ dashboard.console_overview?.running_queue_count || 0 }}</strong></div>
             </div>
             <div class="maintenance-actions maintenance-pane">
-              <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
               <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理任务队列</el-button>
               <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载状态</el-button>
               <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
@@ -318,6 +299,7 @@
           <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
           <div class="toolbar-spacer"></div>
           <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
+          <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
           <el-button type="primary" @click="openRssDialog">添加 RSS 订阅</el-button>
         </div>
         <div v-if="advancedFilterOpen" class="filter-board">
@@ -917,7 +899,6 @@ const selectedConsoleSection = ref('')
 const logKeyword = ref('')
 const loading = ref(false)
 const savingSettings = ref(false)
-const autoRefresh = ref(true)
 const liveConnected = ref(false)
 const consoleNavMode = ref('队列')
 const calendarWeek = ref('')
@@ -931,7 +912,6 @@ const mediaWizardStep = ref(0)
 const mediaWizardSeed = ref('')
 const mediaWizardSaving = ref(false)
 const episodeResourceDialogOpen = ref(false)
-let refreshTimer = null
 let dashboardStream = null
 let streamRetryTimer = null
 const keyword = ref('')
@@ -1436,7 +1416,7 @@ function queueState(queue) {
 function queuePendingHint(queue) {
   const key = String(queue?.key || '')
   if (key === 'rss') return '这里只显示最近的 RSS 候选；Mikan、元数据、选集、下载到本地由任务链推进。'
-  if (key === 'download') return '待处理表示已选中发布，等待下载器提交、轮询完成并整理到本地媒体库。'
+  if (key === 'download') return '待处理表示已选中发布，等待下载器完成并整理到本地媒体库。'
   if (key === 'local_sync') return '待处理表示下载已完成，等待整理到本地媒体库。'
   if (key === 'selection') return '待处理表示元数据已完成，等待按规则自动选择发布。'
   if (key === 'processor') return '这里显示流水线统一处理器任务，扫描后可直接看每条数据卡在 RSS、匹配、元数据、整合、下载还是 NFO。'
@@ -1501,13 +1481,6 @@ async function reloadDiagnostics() {
   Object.assign(diagnostics, await getDiagnostics())
 }
 
-function stopAutoRefresh() {
-  if (refreshTimer) {
-    window.clearInterval(refreshTimer)
-    refreshTimer = null
-  }
-}
-
 function stopDashboardStream() {
   if (dashboardStream) {
     dashboardStream.close()
@@ -1522,14 +1495,10 @@ function stopDashboardStream() {
 
 function startDashboardStream() {
   stopDashboardStream()
-  if (!autoRefresh.value || !window.EventSource) {
-    startAutoRefresh()
-    return
-  }
+  if (!window.EventSource) return
   dashboardStream = new EventSource('/api/dashboard/stream')
   dashboardStream.onopen = () => {
     liveConnected.value = true
-    stopAutoRefresh()
   }
   dashboardStream.onmessage = event => {
     try {
@@ -1540,18 +1509,8 @@ function startDashboardStream() {
   }
   dashboardStream.onerror = () => {
     stopDashboardStream()
-    startAutoRefresh()
     streamRetryTimer = window.setTimeout(startDashboardStream, 5000)
   }
-}
-
-function startAutoRefresh() {
-  stopAutoRefresh()
-  if (!autoRefresh.value || liveConnected.value) return
-  refreshTimer = window.setInterval(() => {
-    if (view.value === 'settings' || entryDrawerOpen.value) return
-    reload()
-  }, 5000)
 }
 
 async function runAction(path) {
@@ -1936,15 +1895,6 @@ const PriorityList = {
   `
 }
 
-watch(autoRefresh, () => {
-  if (autoRefresh.value) {
-    startDashboardStream()
-  } else {
-    stopDashboardStream()
-    stopAutoRefresh()
-  }
-})
-watch(entryDrawerOpen, startAutoRefresh)
 watch(consoleNavMode, value => {
   selectedConsoleSection.value = ''
 })
@@ -1972,7 +1922,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopDashboardStream()
-  stopAutoRefresh()
 })
 </script>
 
