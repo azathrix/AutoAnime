@@ -548,10 +548,15 @@ export function createAppActions(app, deps) {
   }
 
   async function openEntry(id, domain = 'seasonal', mediaType = '') {
-    app.selectedEntryDomain = domain
-    app.selectedEntryMediaType = mediaType || (domain === 'library' ? app.currentMediaType : 'anime')
-    app.selectedEntryDetail = await getMediaItem(domain, id, app.selectedEntryMediaType)
-    app.entryDrawerOpen = true
+    try {
+      app.selectedEntryDomain = domain
+      app.selectedEntryMediaType = mediaType || (domain === 'library' ? app.currentMediaType : 'anime')
+      const apiMediaType = app.selectedEntryMediaType || 'anime'
+      app.selectedEntryDetail = await getMediaItem(apiMediaType, id)
+      app.entryDrawerOpen = true
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
   }
 
   async function openQueueEntry(row) {
@@ -650,7 +655,7 @@ export function createAppActions(app, deps) {
     const entryId = Number(app.selectedEntry?.id || 0)
     if (!entryId) return
     try {
-      app.selectedEntryDetail = await saveMediaItem(app.selectedEntryDomain, entryId, entryEditPayload(), app.selectedEntryMediaType)
+      app.selectedEntryDetail = await saveMediaItem(app.selectedEntryMediaType || 'anime', entryId, entryEditPayload())
       app.entryEditDialogOpen = false
       ElMessage.success('作品信息已保存')
       await app.reload()
