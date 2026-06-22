@@ -33,7 +33,6 @@ async def process_selection(context: ProcessorContext, payload: dict) -> Process
                     WHERE la.entry_id=r.entry_id
                       AND la.episode_number=r.episode_number
                       AND la.status='synced'
-                      AND la.nfo_status='generated'
                     LIMIT 1
                   ) AS completed_local,
                   EXISTS(

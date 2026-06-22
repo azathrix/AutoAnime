@@ -72,7 +72,7 @@ class SettingsPayload(BaseModel):
     auto_scan: bool = False
     queue_dispatch_enabled: bool = True
     queue_dispatch_interval_minutes: int = 1
-    auto_generate_nfo: bool = True
+    auto_generate_nfo: bool = False
     backfill_current_season: bool = False
     subtitle_priority: list[str] = Field(default_factory=list)
     resolution_priority: list[str] = Field(default_factory=list)
@@ -472,7 +472,7 @@ def settings_response() -> dict[str, Any]:
         "auto_scan": bool_setting(settings.get("auto_scan", "false")),
         "queue_dispatch_enabled": bool_setting(settings.get("queue_dispatch_enabled", "true")),
         "queue_dispatch_interval_minutes": int(settings.get("queue_dispatch_interval_minutes") or 1),
-        "auto_generate_nfo": bool_setting(settings.get("auto_generate_nfo", "true")),
+        "auto_generate_nfo": bool_setting(settings.get("auto_generate_nfo", "false")),
         "backfill_current_season": bool_setting(settings.get("backfill_current_season", "false")),
         "subtitle_priority": split_setting(settings.get("subtitle_priority", "")),
         "resolution_priority": split_setting(settings.get("resolution_priority", "")),
@@ -1393,7 +1393,6 @@ def queue_summary(settings: dict[str, str]) -> list[dict[str, Any]]:
         runtime_item("selection", "自动选集", "根据全局优先级选择唯一发布"),
         runtime_item("backfill", "整季补全", "补抓当季历史条目"),
         runtime_item("download", "下载到本地", "提交下载器、轮询完成并整理到本地媒体库"),
-        runtime_item("nfo", "NFO", "本地整理完成后生成 NFO"),
         runtime_item("local_presence", "本地存在性检查", "检查本地最终文件状态"),
     ]
 
@@ -1604,7 +1603,6 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:selection", "name": "自动选集", "kind": "queue", "queue_key": "selection"},
         {"key": "queue:backfill", "name": "整季补全", "kind": "queue", "queue_key": "backfill"},
         {"key": "queue:download", "name": "下载到本地", "kind": "queue", "queue_key": "download"},
-        {"key": "queue:nfo", "name": "NFO", "kind": "queue", "queue_key": "nfo"},
         {"key": "queue:local_presence", "name": "本地存在性检查", "kind": "queue", "queue_key": "local_presence"},
         {"key": "queue:cleanup", "name": "清理", "kind": "queue", "queue_key": "cleanup"},
         {"key": "scheduler", "name": "定时任务", "kind": "group"},
@@ -2651,7 +2649,7 @@ async def api_cancel_episode_download(episode_id: int) -> dict[str, Any]:
     cancelled = await runtime_store.cancel_episode_tasks(
         int(episode["entry_id"]),
         int(episode["episode_number"]),
-        {"download", "nfo"},
+        {"download"},
     )
     return {"status": "cancelled", "runtime_cancelled": cancelled, "message": "已取消该集下载任务"}
 

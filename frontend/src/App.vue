@@ -516,13 +516,12 @@
                   type="info"
                   show-icon
                   :closable="false"
-                  title="RSS 订阅入口在新番页；这里保留代理、补全、NFO 和命名规则等全局行为。"
+                  title="RSS 订阅入口在新番页；这里保留代理、补全和命名规则等全局行为。"
                   class="settings-alert"
                 />
                 <el-form-item label="RSS 代理"><el-input v-model="settings.rss_proxy" placeholder="http://NAS_IP:20171" /></el-form-item>
                 <div class="form-row">
                   <el-form-item label="补全本季"><el-switch v-model="settings.backfill_current_season" /></el-form-item>
-                  <el-form-item label="自动生成 NFO"><el-switch v-model="settings.auto_generate_nfo" /></el-form-item>
                 </div>
               </el-tab-pane>
               <el-tab-pane label="自动选择">
@@ -747,7 +746,6 @@
                       <div><span>资源状态</span><code>{{ row.status || '-' }}</code></div>
                       <div><span>下载状态</span><code>{{ episodeDownloadText(row) }}</code></div>
                       <div><span>下载错误</span><code>{{ row.download_error || '-' }}</code></div>
-                      <div><span>NFO</span><code>{{ row.nfo_status || '-' }}</code></div>
                       <div class="resource-expand-actions">
                         <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
                         <el-button size="small" plain :disabled="row.downloaded || !row.release_id" @click="downloadEpisodeResource(row)">下载</el-button>
@@ -1977,7 +1975,7 @@ function queuePendingHint(queue) {
   if (key === 'download') return '待处理表示已选中发布，等待下载器完成并整理到本地媒体库。'
   if (key === 'local_sync') return '待处理表示下载已完成，等待整理到本地媒体库。'
   if (key === 'selection') return '待处理表示元数据已完成，等待按规则自动选择发布。'
-  if (key === 'processor') return '这里显示流水线统一处理器任务，扫描后可直接看每条数据卡在 RSS、匹配、元数据、整合、下载还是 NFO。'
+  if (key === 'processor') return '这里显示流水线统一处理器任务，扫描后可直接看每条数据卡在 RSS、匹配、元数据、整合还是下载。'
   if (key === 'backfill') return '待处理表示番剧已入库，等待去 Mikan 番组页补抓历史条目。'
   if (key === 'metadata') return '待处理表示已拿到 Bangumi 线索，等待补全正式元数据。'
   if (key === 'mikan_match') return '待处理表示 RSS 候选已入队，等待解析对应的 Mikan/Bangumi 关联。'
@@ -2615,7 +2613,7 @@ function normalizeSettingsShape() {
       .filter(Boolean)
   }
   settings.backfill_current_season = Boolean(settings.backfill_current_season)
-  settings.auto_generate_nfo = settings.auto_generate_nfo !== false
+  settings.auto_generate_nfo = false
   settings.movie_name_template = settings.movie_name_template || '{title_cn} ({year})/{title_cn} ({year})'
   settings.tv_name_template = settings.tv_name_template || '{title_cn} ({year})/Season {season:02d}/{title_cn} - S{season:02d}E{episode:02d}'
   settings.episode_name_template = settings.episode_name_template || '{title_cn} - S{season:02d}E{episode:02d} - {episode_title}'

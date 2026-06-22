@@ -19,7 +19,7 @@ DEFAULT_SETTINGS = {
     "queue_dispatch_interval_minutes": "1",
     "auto_download_unique": "true",
     "auto_download_by_priority": "true",
-    "auto_generate_nfo": "true",
+    "auto_generate_nfo": "false",
     "backfill_current_season": "false",
     "default_backfill": "none",
     "subtitle_priority": "LoliHouse\n喵萌奶茶屋\nNekomoe kissaten\nANi\n猎户压制部\n百冬练习组\n桜都字幕组\n动漫国字幕组\n悠哈璃羽字幕社\n北宇治字幕组\n豌豆字幕组\n幻樱字幕组\n千夏字幕组\n雪飘工作室\n织梦字幕组\nSweetSub\nVCB-Studio",

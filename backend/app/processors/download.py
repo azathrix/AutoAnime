@@ -447,32 +447,14 @@ async def process_download(context: ProcessorContext, payload: dict) -> Processo
     local_asset = _local_asset_for_episode(entry_id, episode_number)
     if _local_asset_exists(local_asset):
         local_asset_id = int(local_asset["id"] or 0)
-        if str(local_asset["nfo_status"] or "") == "generated":
-            log(
-                "info",
-                f"下载跳过: 本地文件和 NFO 已存在 entry_id={entry_id} episode={episode_number} "
-                f"local_asset_id={local_asset_id} target={local_asset['local_path']}",
-            )
-            return ProcessorResult.skipped(
-                "同集本地文件已存在，跳过重复下载",
-                data={"release_id": release_id, "entry_id": entry_id, "local_asset_id": local_asset_id},
-            )
         log(
             "info",
-            f"下载跳过: 本地文件已存在，进入 NFO 确认 entry_id={entry_id} episode={episode_number} "
+            f"下载跳过: 本地文件已存在 entry_id={entry_id} episode={episode_number} "
             f"local_asset_id={local_asset_id} target={local_asset['local_path']}",
         )
-        return ProcessorResult.success(
+        return ProcessorResult.skipped(
             "同集本地文件已存在，跳过重复下载",
             data={"release_id": release_id, "entry_id": entry_id, "local_asset_id": local_asset_id},
-            next_payload={
-                "_subject_type": "local_asset",
-                "_subject_id": local_asset_id,
-                "_dedupe_key": f"nfo:local_asset:{local_asset_id}",
-                "release_id": release_id,
-                "entry_id": entry_id,
-                "local_asset_id": local_asset_id,
-            },
         )
 
     submission = _submission_for_release(release_id)

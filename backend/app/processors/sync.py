@@ -125,14 +125,6 @@ async def sync_download_artifact_to_local(
             "local_asset_id": local_asset_id,
             "entry_id": int(row["entry_id"] or 0),
         },
-        next_payload={
-            "_subject_type": "local_asset",
-            "_subject_id": local_asset_id,
-            "_dedupe_key": f"nfo:local_asset:{local_asset_id}",
-            "download_artifact_id": download_artifact_id,
-            "local_asset_id": local_asset_id,
-            "entry_id": int(row["entry_id"] or 0),
-        },
     )
 
 

@@ -139,7 +139,6 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
             ("season_backfill", "backfill"),
             ("release_selection", "selection"),
             ("download", "download"),
-            ("nfo_generate", "nfo"),
             ("local_presence", "local_presence"),
         ],
         "library_backfill": [
@@ -150,7 +149,6 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
             ("season_backfill", "backfill"),
             ("release_selection", "selection"),
             ("download", "download"),
-            ("nfo_generate", "nfo"),
         ],
     }
     conn.execute("UPDATE pipelines SET enabled=0, updated_at=? WHERE key='media_import'", (ts,))
@@ -165,7 +163,6 @@ def ensure_pipeline_runtime(conn: sqlite3.Connection) -> None:
         "selection": 3,
         "download": 2,
         "local_sync": 2,
-        "nfo": 1,
         "local_presence": 2,
     }
     for pipeline_key, steps in step_map.items():

@@ -65,7 +65,7 @@ def processor_concurrency_limits() -> dict[str, int]:
             """
         ).fetchall()
     limits = {str(row["processor_key"]): max(1, int(row["max_concurrency"] or 1)) for row in rows}
-    return limits or {"metadata": 4, "mikan_match": 4, "download": 2, "nfo": 1}
+    return limits or {"metadata": 4, "mikan_match": 4, "download": 2}
 
 
 def pipeline_step(pipeline_id: int, step_key: str) -> dict[str, Any]:
