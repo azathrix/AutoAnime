@@ -34,6 +34,16 @@ from .scanner import language_tokens, priority_match, priority_pick
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 QUEUE_DEBOUNCE_SECONDS = 10.0
+ACTIVE_DOWNLOAD_STATUSES = {"pending", "running", "submitted", "downloading"}
+DOWNLOAD_RUNTIME_PROCESSORS = {
+    "download",
+    "download_presence",
+    "download_submit",
+    "download_poll",
+    "download_artifact_register",
+    "sync_plan",
+    "local_sync",
+}
 QueueHandler = Callable[[], Awaitable[None]]
 queue_handlers: dict[str, QueueHandler] = {}
 queue_debounce_tasks: dict[str, asyncio.Task] = {}
@@ -784,8 +794,89 @@ def empty_entry_response() -> dict[str, Any]:
     }
 
 
+def reset_orphaned_download_jobs_in_conn(conn, entry_id: int = 0, episode_number: int = 0) -> int:
+    conditions = [f"status IN ({','.join('?' for _ in ACTIVE_DOWNLOAD_STATUSES)})"]
+    params: list[Any] = list(ACTIVE_DOWNLOAD_STATUSES)
+    if entry_id > 0:
+        conditions.append("entry_id=?")
+        params.append(entry_id)
+    if episode_number > 0:
+        conditions.append("episode_number=?")
+        params.append(episode_number)
+    rows = conn.execute(
+        f"""
+        SELECT id, entry_id, episode_number, status
+        FROM download_jobs
+        WHERE {' AND '.join(conditions)}
+        """,
+        tuple(params),
+    ).fetchall()
+    ts = now()
+    reset_count = 0
+    for row in rows:
+        row_entry_id = int(row["entry_id"] or 0)
+        row_episode_number = int(row["episode_number"] or 0)
+        if runtime_store.has_active_episode_task(row_entry_id, row_episode_number, DOWNLOAD_RUNTIME_PROCESSORS):
+            continue
+        local_asset = conn.execute(
+            """
+            SELECT local_path
+            FROM local_assets
+            WHERE entry_id=? AND episode_number=? AND status='synced'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (row_entry_id, row_episode_number),
+        ).fetchone()
+        local_path = str(local_asset["local_path"] or "") if local_asset else ""
+        local_exists = bool(local_path and Path(local_path).exists())
+        if local_exists:
+            conn.execute(
+                """
+                UPDATE download_jobs
+                SET status='completed', retry_after='', last_error='', updated_at=?, last_seen_at=?
+                WHERE id=?
+                """,
+                (ts, ts, row["id"]),
+            )
+            conn.execute(
+                """
+                UPDATE episode_resources
+                SET downloaded=1, local_path=?, status='downloaded', updated_at=?
+                WHERE entry_id=? AND episode_number=?
+                """,
+                (local_path, ts, row_entry_id, row_episode_number),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE download_jobs
+                SET status='failed', retry_after='', last_error='下载流程已中断，请重新下载', updated_at=?
+                WHERE id=?
+                """,
+                (ts, row["id"]),
+            )
+            conn.execute(
+                """
+                UPDATE episode_resources
+                SET status='available', updated_at=?
+                WHERE entry_id=? AND episode_number=? AND selected=1 AND downloaded=0
+                  AND status IN ('queued','downloading','remote_completed')
+                """,
+                (ts, row_entry_id, row_episode_number),
+            )
+        reset_count += 1
+    return reset_count
+
+
+def reset_orphaned_download_jobs(entry_id: int = 0, episode_number: int = 0) -> int:
+    with connect() as conn:
+        return reset_orphaned_download_jobs_in_conn(conn, entry_id, episode_number)
+
+
 def build_entry_response(entry_id: int) -> dict[str, Any]:
     with connect() as conn:
+        reset_orphaned_download_jobs_in_conn(conn, entry_id=entry_id)
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
         if not entry:
             return empty_entry_response()
@@ -1527,6 +1618,9 @@ def console_sections() -> list[dict[str, Any]]:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    recovered = reset_orphaned_download_jobs()
+    if recovered:
+        log("warn", f"已恢复中断下载状态: {recovered} 个")
     register_builtin_processors()
     reschedule()
     scheduler.start()
@@ -2442,6 +2536,7 @@ async def api_refresh_episode_resource_state(episode_id: int) -> dict[str, Any]:
         episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
         if not episode:
             raise HTTPException(status_code=404, detail="集数不存在")
+        reset_orphaned_download_jobs_in_conn(conn, int(episode["entry_id"]), int(episode["episode_number"]))
         resources = conn.execute(
             "SELECT * FROM episode_resources WHERE episode_id=? OR (entry_id=? AND episode_number=?)",
             (episode_id, episode["entry_id"], episode["episode_number"]),
@@ -2481,6 +2576,7 @@ async def api_download_episode_resource(episode_id: int) -> dict[str, Any]:
         episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
         if not episode:
             raise HTTPException(status_code=404, detail="集数不存在")
+        reset_orphaned_download_jobs_in_conn(conn, int(episode["entry_id"]), int(episode["episode_number"]))
         selected = conn.execute(
             """
             SELECT *

@@ -130,7 +130,27 @@
                   <div><span>运行队列</span><strong>{{ selectedQueue.runtime_queue_key || selectedQueue.key || '-' }}</strong></div>
                 </div>
                 <p class="queue-note queue-detail-note">{{ selectedQueue.state_reason || queuePendingHint(selectedQueue) }}</p>
-                <el-table :data="selectedQueueItems" height="520" class="candidate-table" empty-text="当前队列没有任务明细">
+                <el-table :data="selectedQueueItems" height="520" class="candidate-table queue-task-table" empty-text="当前队列没有任务明细">
+                  <el-table-column type="expand" width="44">
+                    <template #default="{ row }">
+                      <div class="queue-task-expand">
+                        <section>
+                          <strong>任务信息</strong>
+                          <div><span>处理器</span><code>{{ row.processor_key || '-' }}</code></div>
+                          <div><span>步骤</span><code>{{ row.step_key || '-' }}</code></div>
+                          <div><span>对象类型</span><code>{{ row.subject_type || '-' }}</code></div>
+                          <div><span>更新时间</span><code>{{ row.updated_at || '-' }}</code></div>
+                        </section>
+                        <section>
+                          <strong>执行状态</strong>
+                          <div><span>尝试</span><code>{{ row.attempts || 0 }}</code></div>
+                          <div><span>等待</span><code>{{ row.waiting_retry ? formatCountdown(row.retry_seconds) : '-' }}</code></div>
+                          <div><span>进度</span><code>{{ queueTaskProgressText(row) }}</code></div>
+                          <div><span>错误</span><code>{{ row.last_error || '-' }}</code></div>
+                        </section>
+                      </div>
+                    </template>
+                  </el-table-column>
                   <el-table-column prop="status" label="状态" width="110">
                     <template #default="{ row }"><el-tag :type="taskTag(row.status)">{{ taskStatusText(row) }}</el-tag></template>
                   </el-table-column>
@@ -141,40 +161,11 @@
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column
-                    v-if="selectedQueue.key === 'processor'"
-                    prop="processor_key"
-                    label="处理器"
-                    width="160"
-                    show-overflow-tooltip
-                  />
-                  <el-table-column
-                    v-if="selectedQueue.key === 'processor'"
-                    prop="step_key"
-                    label="步骤"
-                    width="160"
-                    show-overflow-tooltip
-                  />
-                  <el-table-column
-                    v-if="selectedQueue.key === 'processor'"
-                    prop="subject_type"
-                    label="对象类型"
-                    width="120"
-                    show-overflow-tooltip
-                  />
-                  <el-table-column prop="display_title" label="对象" min-width="240" show-overflow-tooltip />
+                  <el-table-column prop="display_title" label="对象" min-width="300" show-overflow-tooltip />
                   <el-table-column prop="episode_number" label="集" width="70" />
-                  <el-table-column prop="display_reason" label="说明" min-width="260" show-overflow-tooltip />
-                  <el-table-column prop="attempts" label="尝试" width="80" />
-                  <el-table-column prop="updated_at" label="更新时间" width="190" show-overflow-tooltip />
-                  <el-table-column prop="last_error" label="错误" min-width="280" show-overflow-tooltip />
-                  <el-table-column label="进度" width="140">
+                  <el-table-column label="说明" min-width="240" show-overflow-tooltip>
                     <template #default="{ row }">
-                      <span v-if="Number(row.progress || 0) > 0 || row.progress_text">
-                        {{ Number(row.progress || 0) > 0 ? `${row.progress}%` : '-' }}
-                        <span v-if="row.progress_text"> · {{ row.progress_text }}</span>
-                      </span>
-                      <span v-else>-</span>
+                      {{ row.display_reason || row.progress_text || row.message || '-' }}
                     </template>
                   </el-table-column>
                   <el-table-column label="等待" width="120">
@@ -1873,6 +1864,14 @@ function taskStatusText(row) {
   if (row?.status === 'failed') return '失败'
   if (row?.status === 'superseded') return '已替代'
   return row?.status || ''
+}
+
+function queueTaskProgressText(row) {
+  const parts = []
+  if (Number(row?.progress || 0) > 0) parts.push(`${Number(row.progress)}%`)
+  if (row?.progress_text) parts.push(String(row.progress_text))
+  if (row?.message && row.message !== row.progress_text) parts.push(String(row.message))
+  return parts.length ? parts.join(' · ') : '-'
 }
 
 function subtitleFormatText(value) {

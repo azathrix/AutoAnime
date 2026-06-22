@@ -1807,6 +1807,67 @@ h1 {
   margin-bottom: 14px;
 }
 
+.queue-task-table .el-table__body-wrapper,
+.queue-task-table .el-scrollbar__wrap {
+  overflow-x: hidden;
+}
+
+.queue-task-table .cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-task-expand {
+  background: linear-gradient(180deg, #fff, #f8fbff);
+  border: 1px solid var(--ani-line);
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 12px;
+}
+
+.queue-task-expand section {
+  background: rgba(255, 255, 255, .86);
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.queue-task-expand strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.queue-task-expand div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.queue-task-expand span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.queue-task-expand code {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #334155;
+  display: block;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 28px;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+}
+
 .maintenance-actions {
   display: flex;
   flex-wrap: wrap;

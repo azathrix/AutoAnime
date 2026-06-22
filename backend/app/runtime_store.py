@@ -322,6 +322,20 @@ class RuntimeStore:
             await self.bump()
         return cancelled
 
+    def has_active_episode_task(self, entry_id: int, episode_number: int, processor_keys: set[str] | None = None) -> bool:
+        for task in self.tasks.values():
+            if task.status in TASK_TERMINAL_STATUSES:
+                continue
+            if processor_keys and task.processor_key not in processor_keys:
+                continue
+            payload = task.payload or {}
+            if int(payload.get("entry_id") or 0) != int(entry_id):
+                continue
+            if int(payload.get("episode_number") or 0) != int(episode_number):
+                continue
+            return True
+        return False
+
     async def clear_all(self) -> None:
         async with self._lock:
             self._generation = utc_now()
