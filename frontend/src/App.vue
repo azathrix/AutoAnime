@@ -4,8 +4,7 @@
       <div class="brand">
         <img class="brand-mark" src="/anitrack-icon.png" alt="AniTrack" />
         <div>
-          <strong class="brand-wordmark">Ani<span>Track</span></strong>
-          <span>Anime tracking</span>
+          <strong class="brand-wordmark">AniTrack</strong>
         </div>
       </div>
       <nav>

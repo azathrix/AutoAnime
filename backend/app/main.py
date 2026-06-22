@@ -2716,6 +2716,23 @@ if frontend_dir.exists():
     app.mount("/assets", StaticFiles(directory=frontend_dir / "assets"), name="assets")
 
 
+def frontend_asset_response(filename: str) -> FileResponse:
+    asset_file = frontend_dir / filename
+    if not asset_file.exists():
+        raise HTTPException(status_code=404, detail="前端静态资源不存在")
+    return FileResponse(asset_file)
+
+
+@app.get("/anitrack-icon.png", include_in_schema=False)
+async def anitrack_icon() -> FileResponse:
+    return frontend_asset_response("anitrack-icon.png")
+
+
+@app.get("/anitrack-logo.png", include_in_schema=False)
+async def anitrack_logo() -> FileResponse:
+    return frontend_asset_response("anitrack-logo.png")
+
+
 @app.get("/{full_path:path}")
 async def spa(full_path: str) -> FileResponse:
     index_file = frontend_dir / "index.html"

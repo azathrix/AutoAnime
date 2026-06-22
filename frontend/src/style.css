@@ -68,23 +68,11 @@ body {
   width: 46px;
 }
 
-.brand-wordmark span {
-  color: var(--ani-pink);
-}
-
 .brand-wordmark {
   color: var(--ani-ink);
   font-size: 18px;
-}
-
-.brand strong,
-.brand span {
   display: block;
-}
-
-.brand span {
-  color: #64748b;
-  font-size: 12px;
+  white-space: nowrap;
 }
 
 nav {
