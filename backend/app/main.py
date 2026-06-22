@@ -198,11 +198,27 @@ def normalize_json_list_text(value: str) -> str:
 
 
 def subtitle_embedded_value(format_value: str) -> int:
-    return 1 if str(format_value or "").strip().lower() in {"embedded", "hardsub", "burned", "muxed", "softsub", "internal"} else 0
+    return 1 if str(format_value or "").strip().lower() in {"embedded", "hardsub", "burned"} else 0
 
 
 def split_input_lines(value: str) -> list[str]:
     return [line.strip() for line in str(value or "").splitlines() if line.strip()]
+
+
+def is_valid_resource_reference(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    return text.startswith(("magnet:?", "http://", "https://", "ftp://", "thunder://", "ed2k://"))
+
+
+def is_valid_subtitle_reference(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    if text.startswith(("http://", "https://")):
+        return True
+    return text.endswith((".ass", ".srt", ".ssa", ".vtt", ".sup", ".sub"))
 
 
 def parsed_episode_or_fallback(text: str, fallback: int) -> int:
@@ -2119,6 +2135,12 @@ async def api_import_entry_resources(entry_id: int, payload: EpisodeImportPayloa
     subtitle_lines = split_input_lines(payload.subtitles_text)
     if not resource_lines:
         raise HTTPException(status_code=400, detail="请至少填写一个资源链接")
+    invalid_resources = [line for line in resource_lines if not is_valid_resource_reference(line)]
+    if invalid_resources:
+        raise HTTPException(status_code=400, detail=f"资源链接格式无效: {invalid_resources[0]}")
+    invalid_subtitles = [line for line in subtitle_lines if not is_valid_subtitle_reference(line)]
+    if invalid_subtitles:
+        raise HTTPException(status_code=400, detail=f"字幕链接或文件名格式无效: {invalid_subtitles[0]}")
     ts = now()
     created = 0
     with connect() as conn:
@@ -2226,6 +2248,9 @@ async def api_batch_entry_subtitles(entry_id: int, payload: BatchSubtitlePayload
     subtitle_items = split_input_lines(payload.subtitles_text) + [item.strip() for item in payload.file_names if item.strip()]
     if not subtitle_items:
         raise HTTPException(status_code=400, detail="请填写字幕链接或选择字幕文件")
+    invalid_subtitles = [item for item in subtitle_items if not is_valid_subtitle_reference(item)]
+    if invalid_subtitles:
+        raise HTTPException(status_code=400, detail=f"字幕链接或文件名格式无效: {invalid_subtitles[0]}")
     ts = now()
     saved = 0
     with connect() as conn:

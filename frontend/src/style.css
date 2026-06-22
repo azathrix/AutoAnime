@@ -56,16 +56,16 @@ body {
   min-width: 0;
 }
 
-.brand-mark {
+.brand-logo {
   background: #fff;
   border: 1px solid rgba(255, 122, 182, .24);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: 0 12px 28px rgba(255, 122, 182, .22);
   display: block;
-  height: 46px;
+  height: 58px;
   object-fit: contain;
-  padding: 3px;
-  width: 46px;
+  padding: 4px;
+  width: 58px;
 }
 
 .brand-wordmark {
@@ -582,18 +582,32 @@ h1 {
   padding: 12px;
 }
 
-.resource-expand div {
+.resource-expand-section {
+  background: rgba(255, 255, 255, .78);
+  border: 1px solid rgba(226, 232, 240, .86);
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.resource-expand-section > strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.resource-expand-section > div {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
-.resource-expand span {
+.resource-expand-section span {
   color: #64748b;
   font-size: 12px;
 }
 
-.resource-expand code {
+.resource-expand-section code {
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
@@ -605,6 +619,98 @@ h1 {
   min-height: 28px;
   overflow-wrap: anywhere;
   padding: 6px 8px;
+}
+
+.resource-expand-actions {
+  align-items: center;
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.resource-expand-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.guided-dialog {
+  display: grid;
+  gap: 16px;
+}
+
+.guided-step {
+  display: grid;
+  gap: 14px;
+}
+
+.guide-preview {
+  background: #f8fbff;
+  border: 1px solid var(--ani-line);
+  border-radius: 12px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.guide-preview > strong {
+  color: #1f2a44;
+  font-size: 13px;
+}
+
+.guide-preview-row {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 86px minmax(0, 1fr) auto;
+  padding: 8px 10px;
+}
+
+.guide-preview-row.invalid {
+  border-color: rgba(239, 68, 68, .28);
+  background: #fff7f7;
+}
+
+.guide-preview-row span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.guide-preview-row code {
+  color: #334155;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guide-summary-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.guide-summary-grid div {
+  background: #fff;
+  border: 1px solid var(--ani-line);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.guide-summary-grid span {
+  color: #64748b;
+  display: block;
+  font-size: 12px;
+}
+
+.guide-summary-grid strong {
+  color: #0f172a;
+  display: block;
+  font-size: 15px;
+  margin-top: 5px;
 }
 
 .queue-monitor-grid {

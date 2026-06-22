@@ -2,7 +2,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-mark" src="/anitrack-icon.png" alt="AniTrack" />
+        <img class="brand-logo" src="/anitrack-logo.png" alt="AniTrack logo" />
         <div>
           <strong class="brand-wordmark">AniTrack</strong>
         </div>
@@ -730,51 +730,49 @@
             <div class="resource-toolbar">
               <el-button plain @click="refreshCurrentEntryResources">刷新全部</el-button>
               <el-button plain @click="openEpisodeImportDialog">手动导入集数</el-button>
-              <el-button type="primary" plain @click="openBatchSubtitleDialog">字幕批量配置</el-button>
+              <el-button type="primary" @click="openBatchSubtitleDialog">字幕批量配置</el-button>
             </div>
             <el-table :data="entryResourceRows" height="620" class="episode-resource-table" empty-text="暂无集数资源">
               <el-table-column type="expand" width="44">
                 <template #default="{ row }">
                   <div class="resource-expand">
-                    <div><span>资源链接</span><code>{{ row.source_ref || row.magnet || row.torrent_url || '-' }}</code></div>
-                    <div><span>字幕链接</span><code>{{ row.subtitle_url || '-' }}</code></div>
-                    <div><span>上传字幕</span><code>{{ row.subtitle_file_name || '-' }}</code></div>
-                    <div><span>字幕文件路径</span><code>{{ row.subtitle_file || '-' }}</code></div>
-                    <div><span>本地文件路径</span><code>{{ row.local_path || '-' }}</code></div>
-                    <div><span>资源状态</span><code>{{ row.status || '-' }}</code></div>
-                    <div><span>下载状态</span><code>{{ episodeDownloadText(row) }}</code></div>
-                    <div><span>下载错误</span><code>{{ row.download_error || '-' }}</code></div>
-                    <div><span>NFO</span><code>{{ row.nfo_status || '-' }}</code></div>
+                    <section class="resource-expand-section">
+                      <strong>资源信息</strong>
+                      <div><span>字幕组</span><code>{{ row.subtitle_group || '-' }}</code></div>
+                      <div><span>分辨率</span><code>{{ row.resolution || '-' }}</code></div>
+                      <div><span>语言</span><code>{{ row.language || '-' }}</code></div>
+                      <div><span>字幕类型</span><code>{{ subtitleFormatText(row.subtitle_format) }}</code></div>
+                      <div><span>资源链接</span><code>{{ row.source_ref || row.magnet || row.torrent_url || '-' }}</code></div>
+                    </section>
+                    <section class="resource-expand-section">
+                      <strong>字幕与本地文件</strong>
+                      <div><span>字幕链接</span><code>{{ row.subtitle_url || '-' }}</code></div>
+                      <div><span>上传字幕</span><code>{{ row.subtitle_file_name || '-' }}</code></div>
+                      <div><span>字幕文件路径</span><code>{{ row.subtitle_file || '-' }}</code></div>
+                      <div><span>本地文件路径</span><code>{{ row.local_path || '-' }}</code></div>
+                    </section>
+                    <section class="resource-expand-section">
+                      <strong>状态与操作</strong>
+                      <div><span>资源状态</span><code>{{ row.status || '-' }}</code></div>
+                      <div><span>下载状态</span><code>{{ episodeDownloadText(row) }}</code></div>
+                      <div><span>下载错误</span><code>{{ row.download_error || '-' }}</code></div>
+                      <div><span>NFO</span><code>{{ row.nfo_status || '-' }}</code></div>
+                      <div class="resource-expand-actions">
+                        <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
+                        <el-button size="small" plain :disabled="row.downloaded || !row.release_id" @click="downloadEpisodeResource(row)">下载</el-button>
+                        <el-button size="small" plain :disabled="!episodeCanPause(row)" @click="pauseEpisodeDownload(row)">暂停</el-button>
+                        <el-button size="small" plain :disabled="!episodeCanCancel(row)" @click="cancelEpisodeDownload(row)">取消</el-button>
+                        <el-button size="small" plain @click="refreshEpisodeResource(row)">刷新</el-button>
+                      </div>
+                    </section>
                   </div>
                 </template>
               </el-table-column>
               <el-table-column prop="episode_number" label="集" width="58" />
-              <el-table-column prop="resource_title" label="当前选中资源" min-width="230" show-overflow-tooltip />
-              <el-table-column prop="subtitle_group" label="字幕组" width="122" show-overflow-tooltip />
-              <el-table-column prop="resolution" label="分辨率" width="82" />
-              <el-table-column prop="language" label="语言" width="82" />
-              <el-table-column label="字幕" width="86">
-                <template #default="{ row }">{{ subtitleFormatText(row.subtitle_format) }}</template>
-              </el-table-column>
-              <el-table-column label="下载" width="76">
+              <el-table-column prop="resource_title" label="当前选中资源" min-width="420" show-overflow-tooltip />
+              <el-table-column label="可观看" width="94">
                 <template #default="{ row }">
-                  <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">{{ row.downloaded ? '已下' : '未下' }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="状态" width="92">
-                <template #default="{ row }">
-                  <el-tag :type="episodeDownloadTag(row)" size="small">{{ episodeDownloadText(row) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="210">
-                <template #default="{ row }">
-                  <div class="table-action-group">
-                    <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
-                    <el-button size="small" plain :disabled="row.downloaded || !row.release_id" @click="downloadEpisodeResource(row)">下载</el-button>
-                    <el-button size="small" plain :disabled="!episodeCanPause(row)" @click="pauseEpisodeDownload(row)">暂停</el-button>
-                    <el-button size="small" plain :disabled="!episodeCanCancel(row)" @click="cancelEpisodeDownload(row)">取消</el-button>
-                    <el-button size="small" plain @click="refreshEpisodeResource(row)">刷新</el-button>
-                  </div>
+                  <el-tag :type="episodeDownloadTag(row)" size="small">{{ row.downloaded ? '可观看' : '未缓存' }}</el-tag>
                 </template>
               </el-table-column>
             </el-table>
@@ -875,58 +873,143 @@
     </el-dialog>
 
     <el-dialog v-model="batchSubtitleDialogOpen" title="字幕批量配置" width="760px">
-      <el-form :model="batchSubtitleForm" label-position="top">
-        <div class="form-row">
-          <el-form-item label="字幕类型">
-            <el-select v-model="batchSubtitleForm.subtitle_format">
-              <el-option label="外挂" value="external" />
-              <el-option label="内封（软字幕）" value="muxed" />
-              <el-option label="内嵌（硬字幕）" value="embedded" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="语言"><el-input v-model="batchSubtitleForm.language" placeholder="简体 / 繁体 / 双语" /></el-form-item>
+      <div class="guided-dialog">
+        <el-steps :active="batchSubtitleStep" simple>
+          <el-step title="提供字幕" />
+          <el-step title="匹配规则" />
+          <el-step title="确认写入" />
+        </el-steps>
+        <div v-if="batchSubtitleStep === 0" class="guided-step">
+          <el-alert type="info" show-icon :closable="false" title="粘贴字幕下载链接，或选择本地字幕文件；文件名里包含集数时会自动匹配到对应集。" />
+          <el-form :model="batchSubtitleForm" label-position="top">
+            <el-form-item label="字幕链接 / 文件名">
+              <el-input v-model="batchSubtitleForm.subtitles_text" type="textarea" :rows="8" placeholder="https://example.com/show.05.ass&#10;[Subtitle] Show - 06.srt" />
+            </el-form-item>
+            <el-form-item label="本地字幕文件">
+              <el-upload action="#" :auto-upload="false" multiple :on-change="handleBatchSubtitlePicked">
+                <el-button plain>选择字幕文件</el-button>
+                <template #tip>
+                  <div class="el-upload__tip">{{ batchSubtitleForm.file_names.length ? batchSubtitleForm.file_names.join('，') : '当前版本先记录文件名，真实上传由后续导入器接入。' }}</div>
+                </template>
+              </el-upload>
+            </el-form-item>
+          </el-form>
         </div>
-        <el-form-item label="字幕链接">
-          <el-input v-model="batchSubtitleForm.subtitles_text" type="textarea" :rows="8" placeholder="一行一个字幕链接或文件名，系统按文件名里的集数匹配" />
-        </el-form-item>
-        <el-form-item label="本地字幕文件">
-          <el-upload action="#" :auto-upload="false" multiple :on-change="handleBatchSubtitlePicked">
-            <el-button plain>选择字幕文件</el-button>
-            <template #tip>
-              <div class="el-upload__tip">{{ batchSubtitleForm.file_names.length ? batchSubtitleForm.file_names.join('，') : '选择后会按文件名识别集数；真实上传文件后续接导入器。' }}</div>
-            </template>
-          </el-upload>
-        </el-form-item>
-      </el-form>
+        <div v-else-if="batchSubtitleStep === 1" class="guided-step">
+          <el-alert type="warning" show-icon :closable="false" title="外挂字幕需要下载链接或字幕文件；内封/内嵌通常来自视频资源本身，不需要单独文件。" />
+          <el-form :model="batchSubtitleForm" label-position="top">
+            <div class="form-row">
+              <el-form-item label="字幕类型">
+                <el-select v-model="batchSubtitleForm.subtitle_format">
+                  <el-option label="外挂" value="external" />
+                  <el-option label="内封（软字幕）" value="muxed" />
+                  <el-option label="内嵌（硬字幕）" value="embedded" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="语言"><el-input v-model="batchSubtitleForm.language" placeholder="简体 / 繁体 / 双语" /></el-form-item>
+            </div>
+          </el-form>
+          <div class="guide-preview">
+            <strong>识别预览</strong>
+            <div v-for="item in batchSubtitlePreviewRows" :key="item.key" :class="['guide-preview-row', { invalid: !item.valid }]">
+              <span>第 {{ item.episode }} 集</span>
+              <code>{{ item.text }}</code>
+              <el-tag size="small" :type="item.valid ? 'success' : 'danger'">{{ item.valid ? '可导入' : item.reason }}</el-tag>
+            </div>
+          </div>
+        </div>
+        <div v-else class="guided-step">
+          <el-alert
+            :type="batchSubtitleInvalidRows.length ? 'error' : 'success'"
+            show-icon
+            :closable="false"
+            :title="batchSubtitleInvalidRows.length ? `还有 ${batchSubtitleInvalidRows.length} 条字幕无法识别，请返回修改` : `准备写入 ${batchSubtitlePreviewRows.length} 条字幕配置`"
+          />
+          <div class="guide-summary-grid">
+            <div><span>字幕类型</span><strong>{{ subtitleFormatText(batchSubtitleForm.subtitle_format) }}</strong></div>
+            <div><span>语言</span><strong>{{ batchSubtitleForm.language || '未指定' }}</strong></div>
+            <div><span>目标条数</span><strong>{{ batchSubtitlePreviewRows.length }}</strong></div>
+          </div>
+        </div>
+      </div>
       <template #footer>
         <el-button @click="batchSubtitleDialogOpen = false">取消</el-button>
-        <el-button type="primary" @click="saveBatchSubtitles">保存字幕配置</el-button>
+        <el-button :disabled="batchSubtitleStep <= 0" @click="batchSubtitleStep -= 1">上一步</el-button>
+        <el-button v-if="batchSubtitleStep < 2" type="primary" :disabled="!batchSubtitleCanAdvance" @click="batchSubtitleStep += 1">下一步</el-button>
+        <el-button v-else type="primary" :disabled="!batchSubtitleCanSave" @click="saveBatchSubtitles">保存字幕配置</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="episodeImportDialogOpen" title="手动导入集数资源" width="820px">
-      <el-form :model="episodeImportForm" label-position="top">
-        <el-alert type="info" show-icon :closable="false" title="每行一个磁链、种子链接或下载链接；系统会按链接/标题里的集数自动匹配，识别不到时按顺序填入。" class="settings-alert" />
-        <el-form-item label="资源链接">
-          <el-input v-model="episodeImportForm.resources_text" type="textarea" :rows="9" placeholder="magnet:?xt=...&#10;https://...torrent" />
-        </el-form-item>
-        <div class="form-row">
-          <el-form-item label="字幕类型">
-            <el-select v-model="episodeImportForm.subtitle_format">
-              <el-option label="外挂" value="external" />
-              <el-option label="内封（软字幕）" value="muxed" />
-              <el-option label="内嵌（硬字幕）" value="embedded" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="语言"><el-input v-model="episodeImportForm.language" placeholder="简体 / 繁体 / 双语" /></el-form-item>
+      <div class="guided-dialog">
+        <el-steps :active="episodeImportStep" simple>
+          <el-step title="资源链接" />
+          <el-step title="字幕配置" />
+          <el-step title="确认导入" />
+        </el-steps>
+        <div v-if="episodeImportStep === 0" class="guided-step">
+          <el-alert type="info" show-icon :closable="false" title="每行一个磁链、种子链接或下载链接。明显不是链接的内容会被拦截，避免误把备注写成资源。" />
+          <el-form :model="episodeImportForm" label-position="top">
+            <el-form-item label="资源链接">
+              <el-input v-model="episodeImportForm.resources_text" type="textarea" :rows="9" placeholder="magnet:?xt=urn:btih:...&#10;https://example.com/show.S01E05.torrent&#10;https://example.com/download/show-06.mkv" />
+            </el-form-item>
+          </el-form>
+          <div class="guide-preview">
+            <strong>资源识别</strong>
+            <div v-for="item in episodeImportResourceRows" :key="item.key" :class="['guide-preview-row', { invalid: !item.valid }]">
+              <span>第 {{ item.episode }} 集</span>
+              <code>{{ item.text }}</code>
+              <el-tag size="small" :type="item.valid ? 'success' : 'danger'">{{ item.valid ? item.kind : item.reason }}</el-tag>
+            </div>
+          </div>
         </div>
-        <el-form-item label="字幕链接">
-          <el-input v-model="episodeImportForm.subtitles_text" type="textarea" :rows="5" placeholder="可选，一行一个字幕链接或字幕文件名" />
-        </el-form-item>
-      </el-form>
+        <div v-else-if="episodeImportStep === 1" class="guided-step">
+          <el-alert type="warning" show-icon :closable="false" title="如果资源本身已经内封或内嵌字幕，可以只设置字幕类型；外挂字幕可以在下面批量粘贴链接或文件名。" />
+          <el-form :model="episodeImportForm" label-position="top">
+            <div class="form-row">
+              <el-form-item label="字幕类型">
+                <el-select v-model="episodeImportForm.subtitle_format">
+                  <el-option label="无字幕 / 未配置" value="" />
+                  <el-option label="外挂" value="external" />
+                  <el-option label="内封（软字幕）" value="muxed" />
+                  <el-option label="内嵌（硬字幕）" value="embedded" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="语言"><el-input v-model="episodeImportForm.language" placeholder="简体 / 繁体 / 双语" /></el-form-item>
+            </div>
+            <el-form-item label="外挂字幕链接 / 文件名">
+              <el-input v-model="episodeImportForm.subtitles_text" type="textarea" :rows="5" placeholder="可选，一行一个字幕链接或字幕文件名；系统按集数自动匹配" />
+            </el-form-item>
+          </el-form>
+          <div class="guide-preview" v-if="episodeImportSubtitleRows.length">
+            <strong>字幕识别</strong>
+            <div v-for="item in episodeImportSubtitleRows" :key="item.key" :class="['guide-preview-row', { invalid: !item.valid }]">
+              <span>第 {{ item.episode }} 集</span>
+              <code>{{ item.text }}</code>
+              <el-tag size="small" :type="item.valid ? 'success' : 'danger'">{{ item.valid ? '可导入' : item.reason }}</el-tag>
+            </div>
+          </div>
+        </div>
+        <div v-else class="guided-step">
+          <el-alert
+            :type="episodeImportInvalidCount ? 'error' : 'success'"
+            show-icon
+            :closable="false"
+            :title="episodeImportInvalidCount ? `还有 ${episodeImportInvalidCount} 条内容无法导入，请返回修改` : `准备导入 ${episodeImportResourceRows.length} 条集数资源`"
+          />
+          <div class="guide-summary-grid">
+            <div><span>资源条数</span><strong>{{ episodeImportResourceRows.length }}</strong></div>
+            <div><span>字幕条数</span><strong>{{ episodeImportSubtitleRows.length }}</strong></div>
+            <div><span>字幕类型</span><strong>{{ subtitleFormatText(episodeImportForm.subtitle_format) }}</strong></div>
+            <div><span>语言</span><strong>{{ episodeImportForm.language || '未指定' }}</strong></div>
+          </div>
+        </div>
+      </div>
       <template #footer>
         <el-button @click="episodeImportDialogOpen = false">取消</el-button>
-        <el-button type="primary" @click="commitEpisodeImport">导入集数资源</el-button>
+        <el-button :disabled="episodeImportStep <= 0" @click="episodeImportStep -= 1">上一步</el-button>
+        <el-button v-if="episodeImportStep < 2" type="primary" :disabled="!episodeImportCanAdvance" @click="episodeImportStep += 1">下一步</el-button>
+        <el-button v-else type="primary" :disabled="!episodeImportCanSave" @click="commitEpisodeImport">导入集数资源</el-button>
       </template>
     </el-dialog>
 
@@ -1124,6 +1207,8 @@ const episodeResourceDialogOpen = ref(false)
 const entryEditDialogOpen = ref(false)
 const batchSubtitleDialogOpen = ref(false)
 const episodeImportDialogOpen = ref(false)
+const batchSubtitleStep = ref(0)
+const episodeImportStep = ref(0)
 const metadataFetching = ref(false)
 const metadataFetchProgress = ref(0)
 let dashboardStream = null
@@ -1455,6 +1540,63 @@ const entryResourceRows = computed(() => {
   }
   return Array.from(rows.values()).sort((a, b) => Number(a.episode_number || 0) - Number(b.episode_number || 0))
 })
+const batchSubtitlePreviewRows = computed(() => {
+  return [
+    ...splitTextLines(batchSubtitleForm.subtitles_text),
+    ...batchSubtitleForm.file_names,
+  ].map((text, index) => {
+    const valid = isValidSubtitleReference(text)
+    return {
+      key: `subtitle:${index}:${text}`,
+      text,
+      episode: inferEpisodeFromText(text, index + 1),
+      valid,
+      reason: valid ? '' : '格式无效',
+    }
+  })
+})
+const batchSubtitleInvalidRows = computed(() => batchSubtitlePreviewRows.value.filter(item => !item.valid))
+const batchSubtitleCanAdvance = computed(() => {
+  if (batchSubtitleStep.value === 0) return batchSubtitlePreviewRows.value.length > 0
+  if (batchSubtitleStep.value === 1) return batchSubtitlePreviewRows.value.length > 0 && batchSubtitleInvalidRows.value.length === 0
+  return true
+})
+const batchSubtitleCanSave = computed(() => batchSubtitlePreviewRows.value.length > 0 && batchSubtitleInvalidRows.value.length === 0)
+const episodeImportResourceRows = computed(() => splitTextLines(episodeImportForm.resources_text).map((text, index) => {
+  const valid = isValidResourceReference(text)
+  return {
+    key: `resource:${index}:${text}`,
+    text,
+    episode: inferEpisodeFromText(text, index + 1),
+    valid,
+    kind: resourceReferenceKind(text),
+    reason: valid ? '' : '不是下载链接',
+  }
+}))
+const episodeImportSubtitleRows = computed(() => splitTextLines(episodeImportForm.subtitles_text).map((text, index) => {
+  const valid = isValidSubtitleReference(text)
+  return {
+    key: `episode-subtitle:${index}:${text}`,
+    text,
+    episode: inferEpisodeFromText(text, index + 1),
+    valid,
+    reason: valid ? '' : '格式无效',
+  }
+}))
+const episodeImportInvalidCount = computed(() => {
+  return episodeImportResourceRows.value.filter(item => !item.valid).length
+    + episodeImportSubtitleRows.value.filter(item => !item.valid).length
+})
+const episodeImportCanAdvance = computed(() => {
+  if (episodeImportStep.value === 0) {
+    return episodeImportResourceRows.value.length > 0 && episodeImportResourceRows.value.every(item => item.valid)
+  }
+  if (episodeImportStep.value === 1) {
+    return episodeImportSubtitleRows.value.every(item => item.valid)
+  }
+  return true
+})
+const episodeImportCanSave = computed(() => episodeImportResourceRows.value.length > 0 && episodeImportInvalidCount.value === 0)
 
 const filteredSeries = computed(() => {
   const text = keyword.value.toLowerCase()
@@ -1534,6 +1676,59 @@ function numberFromInput(value, fallback = 0) {
   if (!matches?.length) return fallback
   const parsed = Number.parseInt(matches[matches.length - 1], 10)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function splitTextLines(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function inferEpisodeFromText(value, fallback = 1) {
+  const text = String(value || '')
+  const patterns = [
+    /S\d{1,2}E(\d{1,4})/i,
+    /(?:第|EP|E|episode)[\s._-]*(\d{1,4})/i,
+    /[\s._\-[【(](\d{1,4})[\])】)\s._-]/,
+  ]
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      const valueNumber = Number.parseInt(match[1], 10)
+      if (Number.isFinite(valueNumber) && valueNumber > 0) return valueNumber
+    }
+  }
+  return Math.max(1, fallback)
+}
+
+function isValidResourceReference(value) {
+  const text = String(value || '').trim().toLowerCase()
+  if (!text || /\s/.test(text.replace(/^magnet:\?xt=[^&]+/i, ''))) return false
+  return text.startsWith('magnet:?')
+    || text.startsWith('http://')
+    || text.startsWith('https://')
+    || text.startsWith('ftp://')
+    || text.startsWith('thunder://')
+    || text.startsWith('ed2k://')
+}
+
+function resourceReferenceKind(value) {
+  const text = String(value || '').trim().toLowerCase()
+  if (text.startsWith('magnet:?')) return '磁链'
+  if (text.endsWith('.torrent')) return '种子'
+  if (text.startsWith('http://') || text.startsWith('https://')) return '下载链接'
+  if (text.startsWith('ftp://')) return 'FTP'
+  if (text.startsWith('thunder://')) return '迅雷'
+  if (text.startsWith('ed2k://')) return 'ED2K'
+  return '资源'
+}
+
+function isValidSubtitleReference(value) {
+  const text = String(value || '').trim().toLowerCase()
+  if (!text) return false
+  if (text.startsWith('http://') || text.startsWith('https://')) return true
+  return /\.(ass|srt|ssa|vtt|sup|sub)(\?.*)?$/.test(text)
 }
 
 function entryMediaType(item) {
@@ -1738,6 +1933,7 @@ function openBatchSubtitleDialog() {
   batchSubtitleForm.file_names = []
   batchSubtitleForm.subtitle_format = 'external'
   batchSubtitleForm.language = ''
+  batchSubtitleStep.value = 0
   batchSubtitleDialogOpen.value = true
 }
 
@@ -1753,6 +1949,7 @@ function openEpisodeImportDialog() {
   episodeImportForm.subtitles_text = ''
   episodeImportForm.subtitle_format = 'external'
   episodeImportForm.language = ''
+  episodeImportStep.value = 0
   episodeImportDialogOpen.value = true
 }
 
@@ -2122,6 +2319,10 @@ async function refreshCurrentEntryResources() {
 async function saveBatchSubtitles() {
   const entry = selectedEntry.value
   if (!entry?.id) return
+  if (!batchSubtitleCanSave.value) {
+    ElMessage.warning('请先补全可识别的字幕链接或字幕文件')
+    return
+  }
   try {
     const result = await postAction(`/entries/${entry.id}/subtitles/batch`, {
       subtitles_text: batchSubtitleForm.subtitles_text,
@@ -2140,6 +2341,10 @@ async function saveBatchSubtitles() {
 async function commitEpisodeImport() {
   const entry = selectedEntry.value
   if (!entry?.id) return
+  if (!episodeImportCanSave.value) {
+    ElMessage.warning('请先补全有效的资源链接')
+    return
+  }
   try {
     const result = await postAction(`/entries/${entry.id}/resources/import`, {
       resources_text: episodeImportForm.resources_text,
