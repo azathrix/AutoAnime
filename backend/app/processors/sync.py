@@ -6,6 +6,7 @@ from ..database import connect
 from ..db import get_settings, log, now
 from ..downloader_service import settings_for_provider
 from ..pipeline_models import ProcessorContext, ProcessorResult
+from ..runtime_store import runtime_store
 from ..sync_service import (
     download_remote_file_to_local,
     local_episode_path,
@@ -61,11 +62,40 @@ async def sync_download_artifact_to_local(
                 f"本地整理下载: download_artifact_id={download_artifact_id} entry_id={row['entry_id']} "
                 f"episode={row['episode_number']} source={row['remote_path']} target={target}",
             )
+
+            async def progress_cb(percent: int, text: str) -> None:
+                value = max(0, min(100, int(percent or 0)))
+                message = text or f"本地下载 {value}%"
+                ts = now()
+                with connect() as progress_conn:
+                    progress_conn.execute(
+                        """
+                        UPDATE download_jobs
+                        SET status='downloading',
+                            progress=?,
+                            progress_text=?,
+                            updated_at=?,
+                            last_seen_at=?
+                        WHERE entry_id=? AND episode_number=? AND provider=?
+                        """,
+                        (
+                            value,
+                            message[:500],
+                            ts,
+                            ts,
+                            int(row["entry_id"] or 0),
+                            int(row["episode_number"] or 0),
+                            str(row["provider"] or ""),
+                        ),
+                    )
+                await runtime_store.update_task_progress(context.task_id, value, message)
+
             await download_remote_file_to_local(
                 str(row["provider_file_id"] or ""),
                 str(row["remote_path"] or ""),
                 target,
                 settings,
+                progress_cb=progress_cb,
             )
     except Exception as exc:
         return ProcessorResult.retryable(str(exc)[:2000], task_retry_after(settings, context.attempts + 1))
@@ -112,6 +142,24 @@ async def sync_download_artifact_to_local(
             WHERE entry_id=? AND episode_number=?
             """,
             (target, ts, int(row["entry_id"] or 0), int(row["episode_number"] or 0)),
+        )
+        conn.execute(
+            """
+            UPDATE download_jobs
+            SET status='completed',
+                progress=100,
+                progress_text='本地下载完成',
+                updated_at=?,
+                last_seen_at=?
+            WHERE entry_id=? AND episode_number=? AND provider=?
+            """,
+            (
+                ts,
+                ts,
+                int(row["entry_id"] or 0),
+                int(row["episode_number"] or 0),
+                str(row["provider"] or ""),
+            ),
         )
     local_asset_id = int(local_asset["id"] or 0) if local_asset else 0
     log(

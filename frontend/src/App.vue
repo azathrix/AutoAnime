@@ -456,6 +456,8 @@ const entryResourceRows = computed(() => {
       local_path: resource.local_path || '',
       status: resource.status || '',
       download_status: resource.download_status || '',
+      download_progress: Number(resource.download_progress || 0),
+      download_progress_text: resource.download_progress_text || '',
       download_job_id: Number(resource.download_job_id || 0),
       download_error: resource.download_error || '',
       download_retry_after: resource.download_retry_after || '',

@@ -315,6 +315,8 @@ def init_db() -> None:
                 normalized_name TEXT NOT NULL DEFAULT '',
                 retry_after TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
+                progress INTEGER NOT NULL DEFAULT 0,
+                progress_text TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL DEFAULT '',
@@ -649,6 +651,8 @@ def migrate(conn: sqlite3.Connection) -> None:
             normalized_name TEXT NOT NULL DEFAULT '',
             retry_after TEXT NOT NULL DEFAULT '',
             last_error TEXT NOT NULL DEFAULT '',
+            progress INTEGER NOT NULL DEFAULT 0,
+            progress_text TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL DEFAULT '',
@@ -766,6 +770,11 @@ def migrate(conn: sqlite3.Connection) -> None:
         }
         if "entry_id" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN entry_id INTEGER NOT NULL DEFAULT 0")
+        if table == "download_jobs":
+            if "progress" not in columns:
+                conn.execute("ALTER TABLE download_jobs ADD COLUMN progress INTEGER NOT NULL DEFAULT 0")
+            if "progress_text" not in columns:
+                conn.execute("ALTER TABLE download_jobs ADD COLUMN progress_text TEXT NOT NULL DEFAULT ''")
     ensure_pipeline_runtime(conn)
     merge_duplicate_series(conn)
 

@@ -265,18 +265,29 @@ async def run_rclone_streaming(settings: dict[str, str], args: list[str], progre
     chunks: list[str] = []
 
     async def consume(stream) -> None:
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            text = line.decode("utf-8", errors="replace").strip()
+        buffer = ""
+
+        async def handle_segment(segment: str) -> None:
+            text = segment.strip()
             if not text:
-                continue
+                return
             chunks.append(text)
             match = re.search(r"(\d{1,3})%", text)
             if match and progress_cb:
                 percent = max(0, min(100, int(match.group(1))))
                 await progress_cb(percent, text[:500])
+
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                break
+            buffer += chunk.decode("utf-8", errors="replace")
+            parts = re.split(r"[\r\n]+", buffer)
+            buffer = parts.pop() if parts else ""
+            for part in parts:
+                await handle_segment(part)
+        if buffer:
+            await handle_segment(buffer)
 
     await asyncio.gather(consume(process.stdout), consume(process.stderr))
     return_code = await process.wait()

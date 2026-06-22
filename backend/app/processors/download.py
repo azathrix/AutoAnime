@@ -81,6 +81,15 @@ def _upsert_submission(
 ) -> None:
     ts = now()
     provider = provider_key(settings)
+    progress = 100 if status == "completed" else 0
+    progress_text = {
+        "pending": "等待提交下载器",
+        "running": "正在提交下载器",
+        "submitted": "下载器已提交，等待完成",
+        "completed": "下载器产物已完成",
+        "failed": last_error or "下载失败",
+        "cancelled": "已取消",
+    }.get(status, "")
     resource_status = {
         "pending": "queued",
         "running": "queued",
@@ -95,8 +104,8 @@ def _upsert_submission(
             INSERT INTO download_jobs
               (series_id, entry_id, episode_number, release_id, provider, download_task_id, status,
                attempts, submission_id, provider_file_id, target_dir, normalized_name,
-               retry_after, last_error, created_at, updated_at, last_seen_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               retry_after, last_error, progress, progress_text, created_at, updated_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(entry_id, episode_number, provider) DO UPDATE SET
               release_id=excluded.release_id,
               series_id=excluded.series_id,
@@ -108,6 +117,8 @@ def _upsert_submission(
               normalized_name=excluded.normalized_name,
               retry_after=excluded.retry_after,
               last_error=excluded.last_error,
+              progress=excluded.progress,
+              progress_text=excluded.progress_text,
               updated_at=excluded.updated_at,
               last_seen_at=excluded.last_seen_at
             """,
@@ -125,6 +136,8 @@ def _upsert_submission(
                 normalized_name,
                 retry_after,
                 last_error[:2000],
+                progress,
+                progress_text[:500],
                 ts,
                 ts,
                 ts,

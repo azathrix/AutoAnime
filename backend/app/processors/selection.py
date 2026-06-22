@@ -40,7 +40,7 @@ async def process_selection(context: ProcessorContext, payload: dict) -> Process
                     FROM download_jobs dj
                     WHERE dj.entry_id=r.entry_id
                       AND dj.episode_number=r.episode_number
-                      AND dj.status IN ('pending','running','submitted')
+                      AND dj.status IN ('pending','running','submitted','downloading')
                     LIMIT 1
                   ) AS active_download,
                   EXISTS(

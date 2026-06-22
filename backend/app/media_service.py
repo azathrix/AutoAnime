@@ -410,6 +410,8 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
             SELECT er.*,
               dj.id AS download_job_id,
               dj.status AS download_status,
+              dj.progress AS download_progress,
+              dj.progress_text AS download_progress_text,
               dj.retry_after AS download_retry_after,
               dj.last_error AS download_error,
               la.id AS local_asset_id,

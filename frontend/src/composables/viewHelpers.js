@@ -196,6 +196,10 @@ export function episodeDownloadState(row) {
 
 export function episodeDownloadText(row) {
   const state = episodeDownloadState(row)
+  const progress = Number(row?.download_progress || 0)
+  if (progress > 0 && progress < 100 && ['queued', 'pending', 'running', 'submitted', 'downloading'].includes(state)) {
+    return `下载中 ${progress}%`
+  }
   return {
     downloaded: '可观看',
     synced: '可观看',

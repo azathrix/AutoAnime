@@ -47,6 +47,7 @@ class RuntimeTask:
     payload: dict[str, Any]
     parent_task_id: int = 0
     status: str = "pending"
+    progress: int = 0
     attempts: int = 0
     retry_at: str = ""
     message: str = ""
@@ -278,10 +279,23 @@ class RuntimeStore:
             if task.status == "cancelled":
                 return
             task.status = status
+            if status in {"completed", "skipped"}:
+                task.progress = 100
             task.message = message[:2000]
             task.result = result or {}
             task.retry_at = retry
             task.error = "" if status in {"completed", "skipped"} else message[:2000]
+            task.updated_at = utc_now()
+        await self.bump()
+
+    async def update_task_progress(self, task_id: int, progress: int, message: str = "") -> None:
+        async with self._lock:
+            task = self.tasks.get(task_id)
+            if not task or task.status == "cancelled":
+                return
+            task.progress = max(0, min(100, int(progress or 0)))
+            if message:
+                task.message = message[:2000]
             task.updated_at = utc_now()
         await self.bump()
 
@@ -504,6 +518,7 @@ class RuntimeStore:
             "subject_type": task.subject_type,
             "subject_id": task.subject_id,
             "status": task.status,
+            "progress": task.progress,
             "attempts": task.attempts,
             "retry_after": task.retry_at,
             "last_error": task.error,

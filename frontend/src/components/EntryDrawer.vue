@@ -84,6 +84,8 @@ export default appContextComponent()
                       <strong>状态与操作</strong>
                       <div><span>资源状态</span><code>{{ row.status || '-' }}</code></div>
                       <div><span>下载状态</span><code>{{ episodeDownloadText(row) }}</code></div>
+                      <div><span>下载进度</span><code>{{ row.download_progress ? `${row.download_progress}%` : '-' }}</code></div>
+                      <div><span>进度详情</span><code>{{ row.download_progress_text || '-' }}</code></div>
                       <div><span>下载错误</span><code>{{ row.download_error || '-' }}</code></div>
                       <div class="resource-expand-actions">
                         <el-button size="small" plain @click="openEpisodeResourceEditor(row)">配置</el-button>
