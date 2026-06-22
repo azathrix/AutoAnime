@@ -40,6 +40,7 @@ async def fetch_bangumi_metadata(subject_id: str, proxy: str = "") -> dict[str, 
         "poster_url": images.get("large") or images.get("common") or images.get("medium") or "",
         "summary": subject.get("summary") or "",
         "year": subject_year(subject),
+        "month": subject_month(subject),
     }
 
 
@@ -72,6 +73,15 @@ def subject_year(subject: dict[str, Any]) -> int:
     return int(match.group(1)) if match else 0
 
 
+def subject_month(subject: dict[str, Any]) -> int:
+    date = subject.get("date") or ""
+    match = re.match(r"\d{4}-(\d{1,2})", date)
+    if not match:
+        return 0
+    value = int(match.group(1))
+    return value if 1 <= value <= 12 else 0
+
+
 async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
     with connect() as conn:
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
@@ -99,26 +109,27 @@ async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
     poster = images.get("large") or images.get("common") or images.get("medium") or ""
     summary = subject.get("summary") or ""
     year = subject_year(subject) or entry["year"]
+    month = subject_month(subject) or entry["month"]
     with connect() as conn:
         conn.execute(
             """
             UPDATE entries
             SET title_cn=?, display_title=CASE WHEN display_title='' THEN ? ELSE display_title END,
-                bangumi_id=?, poster_url=?, summary=?, year=?,
+                bangumi_id=?, poster_url=?, summary=?, year=?, month=?,
                 metadata_source='bangumi', updated_at=?
             WHERE id=?
             """,
-            (title_cn, title_cn, bangumi_id, poster, summary, year, now(), entry_id),
+            (title_cn, title_cn, bangumi_id, poster, summary, year, month, now(), entry_id),
         )
         if series:
             conn.execute(
                 """
                 UPDATE series
-                SET title_cn=?, bangumi_id=?, poster_url=?, summary=?, year=?,
+                SET title_cn=?, bangumi_id=?, poster_url=?, summary=?, year=?, month=?,
                     metadata_source='bangumi', updated_at=?
                 WHERE id=?
                 """,
-                (title_cn, bangumi_id, poster, summary, year, now(), series["id"]),
+                (title_cn, bangumi_id, poster, summary, year, month, now(), series["id"]),
             )
             merge_duplicate_series(conn)
     log("info", f"已刷新 Bangumi 元数据: {title_cn}")

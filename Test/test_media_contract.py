@@ -71,6 +71,7 @@ class MediaContractTests(unittest.TestCase):
                 title="Contract Movie",
                 tmdb_id="tmdb-contract",
                 year=2026,
+                month=4,
                 episode_number=1,
                 resource_title="Contract Movie 2026 1080p",
                 source_ref="magnet:?xt=urn:btih:contractmovie",
@@ -82,6 +83,7 @@ class MediaContractTests(unittest.TestCase):
         )
 
         self.assertEqual(detail["entry"]["media_type"], "movie")
+        self.assertEqual(detail["entry"]["month"], 4)
         self.assertEqual(len(detail["episode_resources"]), 1)
         self.assertEqual(detail["episode_resources"][0]["selected"], 1)
         self.assertGreater(int(detail["episode_resources"][0]["release_id"]), 0)
@@ -110,6 +112,7 @@ class MediaContractTests(unittest.TestCase):
                 title="Slim Card Movie",
                 tmdb_id="tmdb-slim-card",
                 year=2026,
+                month=7,
                 episode_number=1,
                 resource_title="Slim Card Movie 2026 1080p",
                 source_ref="",
@@ -118,6 +121,7 @@ class MediaContractTests(unittest.TestCase):
 
         payload = dashboard_data()
         row = next(item for item in payload["library_items"] if int(item["id"]) == int(detail["entry"]["id"]))
+        self.assertEqual(row["month"], 7)
         for key in [
             "watch_status",
             "watch_status_label",
@@ -154,6 +158,7 @@ class MediaContractTests(unittest.TestCase):
                 title="Contract TV",
                 tmdb_id="tmdb-contract-tv",
                 year=2026,
+                month=10,
                 episode_number=2,
                 resource_title="Contract TV S01E02 1080p",
                 source_ref="magnet:?xt=urn:btih:contracttv",
@@ -166,6 +171,7 @@ class MediaContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["entry"]["media_type"], "tv")
+        self.assertEqual(payload["entry"]["month"], 10)
         self.assertEqual(payload["episode_resources"][0]["episode_number"], 2)
         self.assertEqual(client.get(f"/api/media/movie/{int(detail['entry']['id'])}").status_code, 404)
         self.assertEqual(client.get("/api/media/anime/999999").status_code, 404)

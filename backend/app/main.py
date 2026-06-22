@@ -84,6 +84,7 @@ class EntryPayload(BaseModel):
     bangumi_id: str = ""
     tmdb_id: str = ""
     year: int = 0
+    month: int = 0
     season_number: int = 1
 
 
@@ -93,6 +94,7 @@ class MediaCreatePayload(BaseModel):
     bangumi_id: str = ""
     tmdb_id: str = ""
     year: int = 0
+    month: int = 0
     season_number: int = 1
     episode_number: int = 0
     resource_title: str = ""
@@ -448,6 +450,7 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
     tmdb_id = payload.tmdb_id.strip()
     season_number = max(1, int(payload.season_number or 1))
     year = max(0, int(payload.year or 0))
+    month = max(0, min(12, int(payload.month or 0)))
     source_ref = payload.source_ref.strip()
     ts = now()
     work_key = fingerprint(title, bangumi_id or tmdb_id)
@@ -476,8 +479,8 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
             INSERT INTO entries
               (work_id, fingerprint, domain_kind, media_type, region, source_provider, metadata_provider,
                external_id, target_library_id, display_title, title_root, title_raw, title_cn,
-               bangumi_id, tmdb_id, year, season_number, created_at, updated_at)
-            VALUES (?, ?, 'library', ?, 'jp', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               bangumi_id, tmdb_id, year, month, season_number, created_at, updated_at)
+            VALUES (?, ?, 'library', ?, 'jp', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               media_type=excluded.media_type,
               target_library_id=excluded.target_library_id,
@@ -487,6 +490,7 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
               bangumi_id=CASE WHEN entries.bangumi_id='' THEN excluded.bangumi_id ELSE entries.bangumi_id END,
               tmdb_id=CASE WHEN entries.tmdb_id='' THEN excluded.tmdb_id ELSE entries.tmdb_id END,
               year=CASE WHEN excluded.year>0 THEN excluded.year ELSE entries.year END,
+              month=CASE WHEN excluded.month>0 THEN excluded.month ELSE entries.month END,
               updated_at=excluded.updated_at
             """,
             (
@@ -503,6 +507,7 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
                 bangumi_id,
                 tmdb_id,
                 year,
+                month,
                 season_number,
                 ts,
                 ts,
@@ -728,7 +733,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
         conn.execute(
             """
             UPDATE entries
-            SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?, updated_at=?
+            SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, month=?, season_number=?, updated_at=?
             WHERE id=?
             """,
             (
@@ -736,6 +741,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 payload.bangumi_id.strip(),
                 payload.tmdb_id.strip(),
                 payload.year,
+                max(0, min(12, int(payload.month or 0))),
                 payload.season_number,
                 now(),
                 entry_id,
@@ -746,7 +752,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
             conn.execute(
                 """
                 UPDATE series
-                SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, season_number=?, updated_at=?
+                SET title_cn=?, bangumi_id=?, tmdb_id=?, year=?, month=?, season_number=?, updated_at=?
                 WHERE bangumi_id=?
                 """,
                 (
@@ -754,6 +760,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                     payload.bangumi_id.strip(),
                     payload.tmdb_id.strip(),
                     payload.year,
+                    max(0, min(12, int(payload.month or 0))),
                     payload.season_number,
                     now(),
                     payload.bangumi_id.strip(),
@@ -1455,6 +1462,7 @@ def dashboard_data() -> dict[str, Any]:
               e.poster_url,
               e.bangumi_id,
               e.year,
+              e.month,
               e.season_number,
               w.title_root AS work_title,
               COUNT(DISTINCT ep.id) AS episode_count,
@@ -1507,6 +1515,7 @@ def dashboard_data() -> dict[str, Any]:
               e.title_cn,
               e.bangumi_id,
               e.year,
+              e.month,
               e.season_number,
               w.title_root AS work_title,
               COUNT(DISTINCT ep.id) AS episode_count,

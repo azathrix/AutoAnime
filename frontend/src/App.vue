@@ -332,6 +332,16 @@
             >{{ year }}</button>
           </div>
           <div class="filter-row">
+            <span>月份</span>
+            <button :class="{ active: !libraryMonthFilter }" @click="libraryMonthFilter = ''">全部</button>
+            <button
+              v-for="month in currentMonthOptions"
+              :key="month"
+              :class="{ active: Number(libraryMonthFilter || 0) === Number(month) }"
+              @click="libraryMonthFilter = Number(month)"
+            >{{ month }} 月</button>
+          </div>
+          <div class="filter-row">
             <span>类型</span>
             <button :class="{ active: !libraryMediaTypeFilter }" @click="libraryMediaTypeFilter = ''">全部</button>
             <button
@@ -454,6 +464,16 @@
               :class="{ active: Number(libraryYearFilter || 0) === Number(year) }"
               @click="libraryYearFilter = Number(year)"
             >{{ year }}</button>
+          </div>
+          <div class="filter-row">
+            <span>月份</span>
+            <button :class="{ active: !libraryMonthFilter }" @click="libraryMonthFilter = ''">全部</button>
+            <button
+              v-for="month in currentMonthOptions"
+              :key="month"
+              :class="{ active: Number(libraryMonthFilter || 0) === Number(month) }"
+              @click="libraryMonthFilter = Number(month)"
+            >{{ month }} 月</button>
           </div>
           <div class="filter-row">
             <span>类型</span>
@@ -672,10 +692,11 @@
               </div>
             </div>
             <el-form :model="selectedEntry" label-position="top">
-              <div class="form-row">
-                <el-form-item label="中文标题"><el-input v-model="selectedEntry.title_cn" /></el-form-item>
-                <el-form-item label="年份"><el-input-number v-model="selectedEntry.year" /></el-form-item>
-              </div>
+                <div class="form-row">
+                  <el-form-item label="中文标题"><el-input v-model="selectedEntry.title_cn" /></el-form-item>
+                  <el-form-item label="年份"><el-input-number v-model="selectedEntry.year" /></el-form-item>
+                  <el-form-item label="月份"><el-input-number v-model="selectedEntry.month" :min="0" :max="12" /></el-form-item>
+                </div>
               <div class="form-row">
                 <el-form-item label="Bangumi ID"><el-input v-model="selectedEntry.bangumi_id" /></el-form-item>
                 <el-form-item label="TMDB ID"><el-input v-model="selectedEntry.tmdb_id" /></el-form-item>
@@ -839,6 +860,7 @@
             <el-input v-model="mediaWizardDraft.bangumi_id" placeholder="Bangumi ID" />
             <el-input v-model="mediaWizardDraft.tmdb_id" placeholder="TMDB ID" />
             <el-input-number v-model="mediaWizardDraft.year" :min="0" placeholder="年份" />
+            <el-input-number v-model="mediaWizardDraft.month" :min="0" :max="12" placeholder="月份" />
             <el-input-number v-model="mediaWizardDraft.season_number" :min="1" placeholder="季" />
           </div>
         </template>
@@ -910,6 +932,7 @@ let dashboardStream = null
 let streamRetryTimer = null
 const keyword = ref('')
 const libraryYearFilter = ref('')
+const libraryMonthFilter = ref('')
 const libraryScopeFilter = ref('')
 const libraryMediaTypeFilter = ref('')
 const libraryRegionFilter = ref('')
@@ -959,6 +982,7 @@ const mediaWizardDraft = reactive({
   bangumi_id: '',
   tmdb_id: '',
   year: 0,
+  month: 0,
   season_number: 1,
   episode_number: 0,
   resource_title: '',
@@ -1009,6 +1033,14 @@ const currentYearOptions = computed(() => {
     if (year > 0) values.add(year)
   }
   return Array.from(values).sort((a, b) => b - a)
+})
+const currentMonthOptions = computed(() => {
+  const values = new Set()
+  for (const item of currentCatalogSourceRows.value) {
+    const month = Number(item.month || 0)
+    if (month >= 1 && month <= 12) values.add(month)
+  }
+  return Array.from(values).sort((a, b) => a - b)
 })
 const currentMediaTypeOptions = computed(() => {
   const values = new Set()
@@ -1229,6 +1261,7 @@ const filteredSeries = computed(() => {
     if (libraryMediaTypeFilter.value && entryMediaType(item) !== String(libraryMediaTypeFilter.value)) return false
     if (libraryRegionFilter.value && String(item.region || '') !== String(libraryRegionFilter.value)) return false
     if (libraryYearFilter.value && Number(item.year || 0) !== Number(libraryYearFilter.value)) return false
+    if (libraryMonthFilter.value && Number(item.month || 0) !== Number(libraryMonthFilter.value)) return false
     if (libraryScopeFilter.value && String(item.entry_scope_label || item.entry_badge_text || '') !== String(libraryScopeFilter.value)) return false
     if (libraryTagFilters.value.length) {
       const tags = entryTags(item)
@@ -1729,6 +1762,7 @@ function openMediaWizard(mode) {
   mediaWizardDraft.bangumi_id = ''
   mediaWizardDraft.tmdb_id = ''
   mediaWizardDraft.year = 0
+  mediaWizardDraft.month = 0
   mediaWizardDraft.season_number = 1
   mediaWizardDraft.episode_number = 0
   mediaWizardDraft.resource_title = ''
@@ -1757,6 +1791,7 @@ async function commitMediaWizard() {
       bangumi_id: mediaWizardDraft.bangumi_id,
       tmdb_id: mediaWizardDraft.tmdb_id,
       year: mediaWizardDraft.year,
+      month: mediaWizardDraft.month,
       season_number: mediaWizardDraft.season_number || 1,
       episode_number: mediaWizardDraft.episode_number || 0,
       resource_title: mediaWizardDraft.resource_title,
@@ -1957,6 +1992,7 @@ watch(selectedScheduledJob, job => {
 watch(view, value => {
   if (['seasonal', 'library', 'movies', 'tv'].includes(value)) {
     libraryYearFilter.value = ''
+    libraryMonthFilter.value = ''
     libraryScopeFilter.value = ''
     libraryMediaTypeFilter.value = ''
     libraryRegionFilter.value = ''

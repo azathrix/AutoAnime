@@ -242,6 +242,7 @@ def init_db() -> None:
                 mikan_bangumi_id TEXT NOT NULL DEFAULT '',
                 tmdb_id TEXT NOT NULL DEFAULT '',
                 year INTEGER NOT NULL DEFAULT 0,
+                month INTEGER NOT NULL DEFAULT 0,
                 season_number INTEGER NOT NULL DEFAULT 1,
                 poster_url TEXT NOT NULL DEFAULT '',
                 poster_path TEXT NOT NULL DEFAULT '',
@@ -311,6 +312,7 @@ def init_db() -> None:
                 mikan_bangumi_id TEXT NOT NULL DEFAULT '',
                 tmdb_id TEXT NOT NULL DEFAULT '',
                 year INTEGER NOT NULL DEFAULT 0,
+                month INTEGER NOT NULL DEFAULT 0,
                 season_number INTEGER NOT NULL DEFAULT 1,
                 poster_url TEXT NOT NULL DEFAULT '',
                 poster_path TEXT NOT NULL DEFAULT '',
@@ -630,6 +632,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             mikan_bangumi_id TEXT NOT NULL DEFAULT '',
             tmdb_id TEXT NOT NULL DEFAULT '',
             year INTEGER NOT NULL DEFAULT 0,
+            month INTEGER NOT NULL DEFAULT 0,
             season_number INTEGER NOT NULL DEFAULT 1,
             poster_url TEXT NOT NULL DEFAULT '',
             poster_path TEXT NOT NULL DEFAULT '',
@@ -686,6 +689,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         "nfo_status": "TEXT NOT NULL DEFAULT 'pending'",
         "hidden": "INTEGER NOT NULL DEFAULT 0",
         "mikan_bangumi_id": "TEXT NOT NULL DEFAULT ''",
+        "month": "INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in series_additions.items():
         if column not in series_columns:
@@ -727,6 +731,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         "genres_json": "TEXT NOT NULL DEFAULT '[]'",
         "tags_json": "TEXT NOT NULL DEFAULT '[]'",
         "watch_status": "TEXT NOT NULL DEFAULT ''",
+        "month": "INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in entry_additions.items():
         if column not in entry_columns:

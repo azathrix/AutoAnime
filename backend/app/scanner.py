@@ -241,6 +241,17 @@ def parse_sort_time(value: str) -> float:
         return 0
 
 
+def parse_month_value(value: str) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        month = datetime.fromisoformat(text.replace("Z", "+00:00")).month
+    except ValueError:
+        return 0
+    return month if 1 <= month <= 12 else 0
+
+
 def priority_rank(value: str, priority: list[str], field: str) -> int:
     if not priority:
         return 0
@@ -421,6 +432,7 @@ def coalesce_episode_release(conn, entry_id: int, episode_number: int, item: Par
 def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[int, int, int]:
     fp = fingerprint(item.series_title or item.title, item.bangumi_id)
     metadata = metadata or {}
+    month = int(metadata.get("month") or 0) or parse_month_value(item.published_at)
     labels = parse_entry_labels(metadata.get("title_cn") or item.series_title)
     root_title = str(labels["title_root"] or (metadata.get("title_cn") or item.series_title))
     work_key = fingerprint(root_title, "")
@@ -452,15 +464,16 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
         conn.execute(
             """
             INSERT INTO series
-              (fingerprint, title_raw, title_cn, bangumi_id, mikan_bangumi_id, year, poster_url, summary,
+              (fingerprint, title_raw, title_cn, bangumi_id, mikan_bangumi_id, year, month, poster_url, summary,
                metadata_source, hidden, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'bangumi', 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'bangumi', 0, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               title_raw=excluded.title_raw,
               title_cn=CASE WHEN excluded.title_cn!='' THEN excluded.title_cn ELSE series.title_cn END,
               bangumi_id=CASE WHEN series.bangumi_id='' THEN excluded.bangumi_id ELSE series.bangumi_id END,
               mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE series.mikan_bangumi_id END,
               year=CASE WHEN excluded.year!=0 THEN excluded.year ELSE series.year END,
+              month=CASE WHEN excluded.month!=0 THEN excluded.month ELSE series.month END,
               poster_url=CASE WHEN excluded.poster_url!='' THEN excluded.poster_url ELSE series.poster_url END,
               summary=CASE WHEN excluded.summary!='' THEN excluded.summary ELSE series.summary END,
               metadata_source='bangumi',
@@ -473,6 +486,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
                 item.bangumi_id,
                 item.mikan_bangumi_id,
                 metadata.get("year") or item.year,
+                month,
                 metadata.get("poster_url") or "",
                 metadata.get("summary") or "",
                 ts,
@@ -488,10 +502,10 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
               (work_id, fingerprint, domain_kind, media_type, region, source_provider, metadata_provider,
                external_id, target_library_id, entry_kind, display_title, title_root,
                season_label, arc_label, part_label, special_label,
-               title_raw, title_cn, bangumi_id, mikan_bangumi_id, tmdb_id, year, season_number,
+               title_raw, title_cn, bangumi_id, mikan_bangumi_id, tmdb_id, year, month, season_number,
                poster_url, summary, metadata_source, hidden, auto_download, selected_group, selected_resolution,
                backfill_mode, created_at, updated_at)
-            VALUES (?, ?, 'seasonal', 'anime', 'jp', 'mikan', 'bangumi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'bangumi', 0, 'inherit', '', '', 'inherit', ?, ?)
+            VALUES (?, ?, 'seasonal', 'anime', 'jp', 'mikan', 'bangumi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 'bangumi', 0, 'inherit', '', '', 'inherit', ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               work_id=excluded.work_id,
               domain_kind='seasonal',
@@ -513,6 +527,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
               bangumi_id=CASE WHEN entries.bangumi_id='' THEN excluded.bangumi_id ELSE entries.bangumi_id END,
               mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE entries.mikan_bangumi_id END,
               year=CASE WHEN excluded.year!=0 THEN excluded.year ELSE entries.year END,
+              month=CASE WHEN excluded.month!=0 THEN excluded.month ELSE entries.month END,
               season_number=CASE WHEN excluded.season_number!=0 THEN excluded.season_number ELSE entries.season_number END,
               poster_url=CASE WHEN excluded.poster_url!='' THEN excluded.poster_url ELSE entries.poster_url END,
               summary=CASE WHEN excluded.summary!='' THEN excluded.summary ELSE entries.summary END,
@@ -537,6 +552,7 @@ def upsert_release(item: ParsedRelease, metadata: dict | None = None) -> tuple[i
                 item.bangumi_id,
                 item.mikan_bangumi_id,
                 metadata.get("year") or item.year,
+                month,
                 int(labels["season_number"] or 1),
                 metadata.get("poster_url") or "",
                 metadata.get("summary") or "",
