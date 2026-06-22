@@ -94,6 +94,10 @@ class EpisodeSubtitlePayload(BaseModel):
     file_name: str = ""
     selected: bool = True
 
+class EpisodeDownloadActionPayload(BaseModel):
+    entry_id: int = 0
+    episode_number: int = 0
+
 class EpisodeImportPayload(BaseModel):
     resources_text: str = ""
     subtitles_text: str = ""

@@ -147,9 +147,14 @@ export default appContextComponent()
                   <el-table-column label="等待" width="120">
                     <template #default="{ row }">{{ row.waiting_retry ? formatCountdown(row.retry_seconds) : '-' }}</template>
                   </el-table-column>
-                  <el-table-column label="操作" width="96">
+                  <el-table-column label="操作" width="150">
                     <template #default="{ row }">
                       <el-button v-if="row.entry_id" size="small" plain @click="openQueueEntry(row)">打开</el-button>
+                      <el-popconfirm v-if="queueTaskCanCancel(row)" title="取消该集下载任务？" @confirm="cancelQueueDownload(row)">
+                        <template #reference>
+                          <el-button size="small" type="danger" plain>取消</el-button>
+                        </template>
+                      </el-popconfirm>
                     </template>
                   </el-table-column>
                 </el-table>

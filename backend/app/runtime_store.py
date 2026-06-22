@@ -275,6 +275,8 @@ class RuntimeStore:
             task = self.tasks.get(task_id)
             if not task:
                 return
+            if task.status == "cancelled":
+                return
             task.status = status
             task.message = message[:2000]
             task.result = result or {}

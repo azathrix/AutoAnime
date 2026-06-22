@@ -12,7 +12,13 @@ from ..media_service import build_entry_response, reset_orphaned_download_jobs_i
 from ..pipeline_orchestrator import start_pipeline
 from ..runtime_service import DOWNLOAD_RUNTIME_PROCESSORS, trigger_queue
 from ..runtime_store import runtime_store
-from ..schemas import BatchSubtitlePayload, EpisodeImportPayload, EpisodeResourcePayload, EpisodeSubtitlePayload
+from ..schemas import (
+    BatchSubtitlePayload,
+    EpisodeDownloadActionPayload,
+    EpisodeImportPayload,
+    EpisodeResourcePayload,
+    EpisodeSubtitlePayload,
+)
 from ..utils import (
     is_valid_resource_reference,
     is_valid_subtitle_reference,
@@ -487,6 +493,21 @@ async def api_cancel_episode_download(episode_id: int) -> dict[str, Any]:
     return await _set_episode_download_state(episode_id, "cancelled", "用户取消下载", "已取消该集下载任务")
 
 
+@router.post("/api/downloads/cancel")
+async def api_cancel_download_by_entry_episode(payload: EpisodeDownloadActionPayload) -> dict[str, Any]:
+    entry_id = int(payload.entry_id or 0)
+    episode_number = int(payload.episode_number or 0)
+    if entry_id <= 0 or episode_number <= 0:
+        raise HTTPException(status_code=400, detail="取消下载缺少 entry_id 或 episode_number")
+    return await _set_episode_download_state_by_entry_episode(
+        entry_id,
+        episode_number,
+        "cancelled",
+        "用户从队列取消下载",
+        "已取消该集下载任务",
+    )
+
+
 @router.post("/api/episodes/{episode_id}/download/pause")
 async def api_pause_episode_download(episode_id: int) -> dict[str, Any]:
     return await _set_episode_download_state(episode_id, "paused", "用户暂停下载", "已暂停该集本地下载流程")
@@ -497,14 +518,27 @@ async def _set_episode_download_state(episode_id: int, status: str, error: str, 
         episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
         if not episode:
             raise HTTPException(status_code=404, detail="集数不存在")
-        ts = now()
+        entry_id = int(episode["entry_id"])
+        episode_number = int(episode["episode_number"])
+    return await _set_episode_download_state_by_entry_episode(entry_id, episode_number, status, error, message)
+
+
+async def _set_episode_download_state_by_entry_episode(
+    entry_id: int,
+    episode_number: int,
+    status: str,
+    error: str,
+    message: str,
+) -> dict[str, Any]:
+    ts = now()
+    with connect() as conn:
         conn.execute(
             """
             UPDATE download_jobs
             SET status=?, retry_after='', last_error=?, updated_at=?
-            WHERE entry_id=? AND episode_number=? AND status IN ('pending','running','submitted','failed','paused')
+            WHERE entry_id=? AND episode_number=? AND status IN ('pending','running','submitted','downloading','failed','paused')
             """,
-            (status, error, ts, episode["entry_id"], episode["episode_number"]),
+            (status, error, ts, entry_id, episode_number),
         )
         conn.execute(
             """
@@ -512,11 +546,11 @@ async def _set_episode_download_state(episode_id: int, status: str, error: str, 
             SET status=?, updated_at=?
             WHERE entry_id=? AND episode_number=? AND selected=1 AND downloaded=0
             """,
-            (status, ts, episode["entry_id"], episode["episode_number"]),
+            (status, ts, entry_id, episode_number),
         )
     cancelled = await runtime_store.cancel_episode_tasks(
-        int(episode["entry_id"]),
-        int(episode["episode_number"]),
+        entry_id,
+        episode_number,
         {"download"},
     )
     return {"status": status, "runtime_cancelled": cancelled, "message": message}

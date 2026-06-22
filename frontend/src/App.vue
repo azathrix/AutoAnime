@@ -773,6 +773,14 @@ function startDashboardStream() {
   }
 }
 
+function queueTaskCanCancel(row) {
+  const status = String(row?.status || '').toLowerCase()
+  return row?.processor_key === 'download'
+    && Number(row?.entry_id || 0) > 0
+    && Number(row?.episode_number || 0) > 0
+    && !['completed', 'skipped', 'cancelled'].includes(status)
+}
+
 
 
 function resolveAppContextBinding(key) {
@@ -818,6 +826,7 @@ const {
   applyMetadataToWizard,
   archiveCurrentEntry,
   cancelEpisodeDownload,
+  cancelQueueDownload,
   commitEpisodeImport,
   commitMediaWizard,
   deleteRssSubscription,

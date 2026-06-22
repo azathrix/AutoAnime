@@ -265,6 +265,22 @@ export function createAppActions(app, deps) {
     }
   }
 
+  async function cancelQueueDownload(row) {
+    try {
+      const entryId = Number(row?.entry_id || 0)
+      const episodeNumber = Number(row?.episode_number || 0)
+      if (!entryId || !episodeNumber) return
+      const result = await postAction('/downloads/cancel', {
+        entry_id: entryId,
+        episode_number: episodeNumber,
+      })
+      ElMessage.success(result?.message || '已取消该集下载')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
   async function pauseEpisodeDownload(row) {
     try {
       const episodeId = Number(row?.episode_id || 0)
@@ -735,9 +751,10 @@ export function createAppActions(app, deps) {
     advanceMediaWizard,
     apiErrorMessage,
     applyMetadataToWizard,
-    archiveCurrentEntry,
-    cancelEpisodeDownload,
-    commitEpisodeImport,
+  archiveCurrentEntry,
+  cancelEpisodeDownload,
+  cancelQueueDownload,
+  commitEpisodeImport,
     commitMediaWizard,
     deleteEpisodeResource,
     deleteRssSubscription,
