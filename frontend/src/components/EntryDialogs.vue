@@ -81,7 +81,7 @@ export default appContextComponent()
             <el-upload action="#" :auto-upload="false" :limit="1" :on-change="handleSubtitleFilePicked">
               <el-button plain>选择字幕文件</el-button>
               <template #tip>
-                <div class="el-upload__tip">{{ episodeResourceForm.subtitle_file_name || '支持先记录文件名；真实上传后续接入导入器。' }}</div>
+                <div class="el-upload__tip">{{ episodeResourceForm.subtitle_file_name || '选择后会上传到服务端临时区，保存配置时写入该集字幕信息。' }}</div>
               </template>
             </el-upload>
           </el-form-item>
@@ -113,7 +113,7 @@ export default appContextComponent()
               <el-upload action="#" :auto-upload="false" multiple :on-change="handleBatchSubtitlePicked">
                 <el-button plain>选择字幕文件</el-button>
                 <template #tip>
-                  <div class="el-upload__tip">{{ batchSubtitleForm.file_names.length ? batchSubtitleForm.file_names.join('，') : '当前版本先记录文件名，真实上传由后续导入器接入。' }}</div>
+                  <div class="el-upload__tip">{{ batchSubtitleForm.file_names.length ? batchSubtitleForm.file_names.join('，') : '选择后会上传到服务端临时区，并按文件名集数自动匹配。' }}</div>
                 </template>
               </el-upload>
             </el-form-item>
@@ -323,7 +323,7 @@ export default appContextComponent()
           type="warning"
           show-icon
           :closable="false"
-          title="TMDB 搜索入口已预留，后端还未配置 TMDB API。"
+          title="TMDB 搜索需要先在设置中心配置 TMDB token。"
         />
         <div class="metadata-result-list" v-loading="metadataSearchLoading">
           <button v-for="item in metadataSearchResults" :key="`${item.provider}-${item.id}`" type="button" @click="applyMetadataToWizard(item); metadataSearchDialogOpen = false">

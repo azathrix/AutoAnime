@@ -40,6 +40,7 @@ DEFAULT_SETTINGS = {
     "pikpak_refresh_token": "",
     "pikpak_encoded_token": "",
     "pikpak_proxy": "",
+    "tmdb_token": "",
     "library_root": "/Anime",
     "local_library_root": str(MEDIA_ROOT),
     "auto_sync_following": "true",

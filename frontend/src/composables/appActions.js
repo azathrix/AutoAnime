@@ -426,7 +426,7 @@ export function createAppActions(app, deps) {
     for (const file of app.mediaWizardFiles) {
       const raw = file.raw || file
       if (!raw) continue
-      uploaded.push(await uploadFile(raw))
+      uploaded.push(await uploadFile('/uploads/local', raw))
     }
     return uploaded
   }

@@ -130,4 +130,5 @@ def settings_response() -> dict[str, Any]:
         "tv_quality_priority": split_setting(settings.get("tv_quality_priority", "")),
         "tv_source_priority": split_setting(settings.get("tv_source_priority", "")),
         "tv_subtitle_priority": split_setting(settings.get("tv_subtitle_priority", "")),
+        "tmdb_token": settings.get("tmdb_token", ""),
     }

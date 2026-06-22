@@ -13,17 +13,25 @@ from ..media_service import build_entry_response
 from ..pipeline_orchestrator import start_pipeline
 from ..runtime_service import trigger_queue
 from ..schemas import LocalUploadImportPayload
-from ..utils import parsed_episode_or_fallback, safe_upload_filename, upload_root, validate_upload_temp_path
+from ..utils import (
+    is_valid_subtitle_reference,
+    parsed_episode_or_fallback,
+    safe_upload_filename,
+    subtitle_embedded_value,
+    upload_root,
+    validate_upload_temp_path,
+)
 
 
 router = APIRouter()
 
 
-@router.post("/api/uploads/local")
-async def api_upload_local_file(file: UploadFile = File(...)) -> dict[str, Any]:
+async def save_upload_file(file: UploadFile, subdir: str = "") -> dict[str, Any]:
     original_name = safe_upload_filename(file.filename or "upload.bin")
     token = uuid.uuid4().hex
-    target = upload_root() / f"{token}_{original_name}"
+    root = upload_root() / subdir if subdir else upload_root()
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / f"{token}_{original_name}"
 
     def write_file() -> int:
         with target.open("wb") as handle:
@@ -42,6 +50,71 @@ async def api_upload_local_file(file: UploadFile = File(...)) -> dict[str, Any]:
         "file_name": original_name,
         "size": size,
     }
+
+
+@router.post("/api/uploads/local")
+async def api_upload_local_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    return await save_upload_file(file)
+
+
+@router.post("/api/subtitles/upload")
+async def api_upload_subtitle_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    original_name = safe_upload_filename(file.filename or "subtitle.ass")
+    if not is_valid_subtitle_reference(original_name):
+        await file.close()
+        raise HTTPException(status_code=400, detail="字幕文件格式无效")
+    result = await save_upload_file(file, "subtitles")
+    log("info", f"字幕文件已上传: name={result['file_name']} size={result['size']}")
+    return result
+
+
+@router.post("/api/entries/{entry_id}/subtitles/uploads/import")
+async def api_import_entry_subtitle_uploads(entry_id: int, payload: LocalUploadImportPayload) -> dict[str, Any]:
+    uploads = [item for item in payload.uploads if item.temp_path.strip()]
+    if not uploads:
+        raise HTTPException(status_code=400, detail="请先上传字幕文件")
+    ts = now()
+    saved = 0
+    with connect() as conn:
+        entry = conn.execute("SELECT id FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            raise HTTPException(status_code=404, detail="媒体条目不存在")
+        for index, item in enumerate(uploads, start=1):
+            source = validate_upload_temp_path(item.temp_path)
+            file_name = safe_upload_filename(item.file_name or source.name)
+            if not is_valid_subtitle_reference(file_name):
+                continue
+            episode_number = parsed_episode_or_fallback(file_name, index)
+            episode = conn.execute(
+                "SELECT id FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
+                (entry_id, episode_number),
+            ).fetchone()
+            if not episode:
+                continue
+            conn.execute("UPDATE episode_subtitles SET selected=0 WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+            conn.execute(
+                """
+                INSERT INTO episode_subtitles
+                  (episode_id, entry_id, episode_number, language, subtitle_format, subtitle_path,
+                   file_name, embedded, selected, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    int(episode["id"]),
+                    entry_id,
+                    episode_number,
+                    payload.language.strip(),
+                    payload.subtitle_format.strip() or "external",
+                    str(source),
+                    file_name,
+                    subtitle_embedded_value(payload.subtitle_format),
+                    ts,
+                    ts,
+                ),
+            )
+            saved += 1
+    log("info", f"批量导入上传字幕: entry_id={entry_id} count={saved}")
+    return {"status": "saved", "count": saved, "detail": build_entry_response(entry_id)}
 
 
 @router.post("/api/entries/{entry_id}/uploads/import")

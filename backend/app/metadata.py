@@ -14,6 +14,7 @@ from .parser import clean_name
 
 
 BANGUMI_API = "https://api.bgm.tv"
+TMDB_API = "https://api.themoviedb.org/3"
 USER_AGENT = "AniTrack/0.1 (private NAS media automation)"
 BANGUMI_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
@@ -55,6 +56,47 @@ async def search_bangumi(keyword: str, proxy: str = "") -> list[dict[str, Any]]:
         resp.raise_for_status()
         data = resp.json()
         return data.get("data", [])
+
+
+async def search_tmdb(keyword: str, token: str, proxy: str = "") -> list[dict[str, Any]]:
+    async with httpx.AsyncClient(
+        proxy=proxy or None,
+        timeout=BANGUMI_TIMEOUT,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": USER_AGENT},
+    ) as client:
+        resp = await client.get(
+            f"{TMDB_API}/search/multi",
+            params={"query": keyword, "language": "zh-CN", "include_adult": "false"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    items: list[dict[str, Any]] = []
+    for row in data.get("results", [])[:20]:
+        media_type = row.get("media_type") or ""
+        if media_type not in {"movie", "tv"}:
+            continue
+        date_value = row.get("release_date") or row.get("first_air_date") or ""
+        year = int(date_value[:4]) if re.match(r"\d{4}", date_value) else 0
+        month_match = re.match(r"\d{4}-(\d{1,2})", date_value)
+        month = int(month_match.group(1)) if month_match else 0
+        language = row.get("original_language") or ""
+        region = {"ja": "jp", "zh": "cn", "ko": "kr", "en": "us"}.get(language, "")
+        poster_path = row.get("poster_path") or ""
+        items.append(
+            {
+                "provider": "tmdb",
+                "id": str(row.get("id") or ""),
+                "title": row.get("title") or row.get("name") or row.get("original_title") or row.get("original_name") or "",
+                "original_title": row.get("original_title") or row.get("original_name") or "",
+                "media_type": media_type,
+                "year": year,
+                "month": month,
+                "region": region,
+                "poster_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+                "summary": row.get("overview") or "",
+            }
+        )
+    return items
 
 
 def subject_cn_name(subject: dict[str, Any]) -> str:

@@ -651,9 +651,19 @@ function scheduledBadgeType(jobKey) {
 
 
 
-function handleSubtitleFilePicked(file) {
-  episodeResourceForm.subtitle_file_name = file?.name || file?.raw?.name || ''
+async function handleSubtitleFilePicked(file) {
+  const raw = file?.raw || file
+  episodeResourceForm.subtitle_file_name = file?.name || raw?.name || ''
   if (!episodeResourceForm.subtitle_format) episodeResourceForm.subtitle_format = 'external'
+  if (!raw) return
+  try {
+    const result = await uploadFile('/subtitles/upload', raw)
+    episodeResourceForm.subtitle_path = result.temp_path || ''
+    episodeResourceForm.subtitle_file_name = result.file_name || episodeResourceForm.subtitle_file_name
+    ElMessage.success('字幕已上传')
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
+  }
 }
 
 function openBatchSubtitleDialog() {
@@ -665,10 +675,19 @@ function openBatchSubtitleDialog() {
   batchSubtitleDialogOpen.value = true
 }
 
-function handleBatchSubtitlePicked(file) {
-  const name = file?.name || file?.raw?.name || ''
-  if (name && !batchSubtitleForm.file_names.includes(name)) {
-    batchSubtitleForm.file_names = [...batchSubtitleForm.file_names, name]
+async function handleBatchSubtitlePicked(file) {
+  const raw = file?.raw || file
+  const name = file?.name || raw?.name || ''
+  if (!raw) return
+  try {
+    const result = await uploadFile('/subtitles/upload', raw)
+    const value = result.temp_path || name
+    if (value && !batchSubtitleForm.file_names.includes(value)) {
+      batchSubtitleForm.file_names = [...batchSubtitleForm.file_names, value]
+    }
+    ElMessage.success('字幕已上传')
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error))
   }
 }
 

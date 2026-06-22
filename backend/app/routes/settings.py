@@ -7,7 +7,7 @@ from ..database import connect
 from ..db import get_settings, log, now, save_settings
 from ..downloader_service import SUPPORTED_DOWNLOADER_TYPES
 from ..maintenance import diagnostics
-from ..metadata import search_bangumi, subject_cn_name, subject_month, subject_year
+from ..metadata import search_bangumi, search_tmdb, subject_cn_name, subject_month, subject_year
 from ..pipeline_orchestrator import start_pipeline
 from ..runtime_service import reschedule, trigger_queue
 from ..schemas import ProcessorSettingsPayload, ScheduledJobPayload, SettingsPayload
@@ -64,6 +64,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict:
             "tv_quality_priority": "\n".join(payload.tv_quality_priority),
             "tv_source_priority": "\n".join(payload.tv_source_priority),
             "tv_subtitle_priority": "\n".join(payload.tv_subtitle_priority),
+            "tmdb_token": payload.tmdb_token.strip(),
         }
     )
     sync_download_processor_concurrency(int_setting(payload.download_concurrency, 2, 1, 12))
@@ -148,7 +149,14 @@ async def api_search_metadata(provider: str = Query("bangumi"), keyword: str = Q
     if not text:
         raise HTTPException(status_code=400, detail="搜索关键词不能为空")
     if provider_key == "tmdb":
-        return {"provider": "tmdb", "items": [], "message": "TMDB 搜索尚未配置"}
+        settings = get_settings()
+        token = settings.get("tmdb_token", "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="请先在设置中配置 TMDB token")
+        try:
+            return {"provider": "tmdb", "items": await search_tmdb(text, token, settings.get("rss_proxy", ""))}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"TMDB 搜索失败: {exc}") from exc
     if provider_key != "bangumi":
         raise HTTPException(status_code=400, detail="未知元数据来源")
     try:

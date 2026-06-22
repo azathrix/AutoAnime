@@ -27,6 +27,7 @@ class SettingsPayload(BaseModel):
     tv_quality_priority: list[str] = Field(default_factory=list)
     tv_source_priority: list[str] = Field(default_factory=list)
     tv_subtitle_priority: list[str] = Field(default_factory=list)
+    tmdb_token: str = ""
 
 class EntryPayload(BaseModel):
     title_cn: str = ""

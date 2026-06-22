@@ -21,6 +21,7 @@ export default appContextComponent({ draggable, PriorityList })
                   class="settings-alert"
                 />
                 <el-form-item label="RSS 代理"><el-input v-model="settings.rss_proxy" placeholder="http://NAS_IP:20171" /></el-form-item>
+                <el-form-item label="TMDB Token"><el-input v-model="settings.tmdb_token" placeholder="用于电影/电视剧搜索，可留空" show-password /></el-form-item>
                 <div class="form-row">
                   <el-form-item label="补全本季"><el-switch v-model="settings.backfill_current_season" /></el-form-item>
                 </div>
