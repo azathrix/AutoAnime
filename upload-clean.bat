@@ -3,8 +3,8 @@ setlocal
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
-set "TARGET=%AUTOANIME_UPLOAD_TARGET%"
-if "%TARGET%"=="" set "TARGET=\\InputName\docker\autoanime"
+set "TARGET=%ANITRACK_UPLOAD_TARGET%"
+if "%TARGET%"=="" set "TARGET=\\InputName\docker\anitrack"
 set "SOURCE=%ROOT%"
 if not exist "%TARGET%" mkdir "%TARGET%"
 
@@ -22,5 +22,5 @@ if %RC% GEQ 8 (
 
 echo Uploaded %SOURCE% to %TARGET%
 echo Deploy command on NAS:
-echo cd /volume1/docker/autoanime ^&^& ./deploy-nas.sh
+echo cd /volume1/docker/anitrack ^&^& ./deploy-nas.sh
 exit /b 0

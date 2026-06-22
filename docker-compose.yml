@@ -1,5 +1,5 @@
 services:
-  autoanime:
+  anitrack:
     build:
       context: .
       args:
@@ -7,8 +7,8 @@ services:
         HTTPS_PROXY: ${HTTPS_PROXY:-}
         ALL_PROXY: ${ALL_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
-    image: autoanime:local
-    container_name: autoanime
+    image: anitrack:local
+    container_name: anitrack
     restart: unless-stopped
     ports:
       - "32888:8080"

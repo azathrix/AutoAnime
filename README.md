@@ -15,13 +15,11 @@ PikPak 只是下载器之一，不再作为媒体数据核心。媒体库以 NAS
 - 新番条目按季/篇章入库，不按作品折叠。
 - Bangumi 元数据补全。
 - 字幕组、分辨率、语言优先级自动选集。
-- 支持下载器优先级列表：PikPak rclone、PikPak API、aria2、qBittorrent。
-- 单个资源失败 3 次后切换下一个下载器。
+- 下载器优先级列表：PikPak rclone、PikPak API、aria2、qBittorrent。
 - 下载完成后整理到本地媒体目录。
-- NFO 暂时禁用，当前不作为主流程能力。
 - 新番、番剧、电影、电视剧使用统一媒体库页面。
-- 番剧/电影/电视剧导入和添加向导已预留 UI 骨架。
 - 控制台展示运行队列和定时任务，日志独立页面查看和导出。
+- NFO 暂时禁用，当前不作为主流程能力。
 
 ## 媒体目录
 
@@ -31,7 +29,7 @@ PikPak 只是下载器之一，不再作为媒体数据核心。媒体库以 NAS
 /media
 ```
 
-应用会按媒体类型使用以下目录：
+应用会按媒体类型使用以下目录，不存在时自动创建：
 
 ```txt
 /media/anime
@@ -49,7 +47,13 @@ Jellyfin/Plex 只需要扫描 NAS 本地真实目录。
 
 ## Docker 部署
 
-当前部署脚本和默认容器目录仍沿用历史名称 `autoanime`，避免已有 NAS 路径和容器名被强制迁移；后续发布 Docker Hub 镜像时可以再统一调整镜像名。
+当前镜像名、容器名和 NAS 上传目录统一为 `anitrack`：
+
+```txt
+image: anitrack:local
+container: anitrack
+deploy dir: /volume1/docker/anitrack
+```
 
 先在本机生成干净源码目录：
 
@@ -65,39 +69,38 @@ build\AniTrack-clean
 
 上传干净目录内容到 NAS：
 
-```sh
-/volume1/docker/autoanime
-```
-
-如果使用上传脚本，请进入 clean 包目录运行，脚本会同步“当前目录”到 NAS：
-
 ```bat
 cd build\AniTrack-clean
 upload-clean.bat
 ```
 
-启动或更新：
+`upload-clean.bat` 会上传脚本所在的当前目录，默认目标为：
 
-```sh
-cd /volume1/docker/autoanime
-docker compose down --remove-orphans
-docker compose up -d --build
+```txt
+\\InputName\docker\anitrack
 ```
 
-也可以使用部署脚本：
+如需改上传位置，可以设置：
+
+```bat
+set ANITRACK_UPLOAD_TARGET=\\InputName\docker\anitrack
+upload-clean.bat
+```
+
+在 NAS 上启动或更新：
 
 ```sh
-cd /volume1/docker/autoanime
+cd /volume1/docker/anitrack
 chmod +x deploy-nas.sh
 ./deploy-nas.sh
 ```
 
-部署脚本会停止旧容器并重新构建启动。`./data` 和映射的 `/media` 不会被删除。
+部署脚本会重新构建并启动 `anitrack` 容器，也会顺手移除旧的 `autoanime` 容器，避免历史容器占用端口。`./data` 和映射的 `/media` 不会被删除。
 
 如果 NAS 构建需要代理：
 
 ```sh
-AUTOANIME_PROXY=http://192.168.31.146:10808 ./deploy-nas.sh
+ANITRACK_PROXY=http://192.168.31.146:10808 ./deploy-nas.sh
 ```
 
 访问地址：
@@ -108,7 +111,7 @@ http://NAS_IP:32888
 
 ## 上传包规则
 
-需要上传的是 `build\AniTrack-clean` 目录内容。`upload-clean.bat` 也按这个约定上传脚本所在目录。不要手动上传开发环境目录：
+只上传 `build\AniTrack-clean` 目录内容，不要上传开发环境目录。清理包会排除：
 
 ```txt
 frontend/node_modules
@@ -127,6 +130,24 @@ test-data
 - 下载器在“设置 -> 下载器”中按优先级配置。
 - 命名模板在“设置 -> 媒体库”中配置。
 - 自动选集规则在“设置 -> 自动选择”中按动画、电影、电视剧分别配置。
+
+## GitHub 改名
+
+GitHub 仓库可以直接改名：进入仓库 `Settings -> General -> Repository name`，把仓库名改成 `AniTrack` 或 `anitrack`。
+
+改名后 GitHub 会保留旧地址跳转，但本地建议同步更新 remote：
+
+```sh
+git remote set-url origin git@github.com:<your-name>/AniTrack.git
+```
+
+如果你用 HTTPS：
+
+```sh
+git remote set-url origin https://github.com/<your-name>/AniTrack.git
+```
+
+Docker Hub 后续也建议使用 `anitrack` 作为镜像仓库名。
 
 ## 说明
 

@@ -7,7 +7,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("APP_DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "autoanime.db"
-MEDIA_ROOT = Path(os.environ.get("AUTOANIME_MEDIA_ROOT", "/media"))
+MEDIA_ROOT = Path(os.environ.get("ANITRACK_MEDIA_ROOT", "/media"))
 
 
 DEFAULT_SETTINGS = {

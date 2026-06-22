@@ -34,7 +34,7 @@ def password(settings: dict[str, str]) -> str:
 
 def task_tag(source: str) -> str:
     digest = hashlib.sha1(source.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    return f"autoanime-{digest}"
+    return f"anitrack-{digest}"
 
 
 def magnet_hash(source: str) -> str:
@@ -107,7 +107,10 @@ async def list_tasks(settings: dict[str, str]) -> list[dict[str, Any]]:
             if not isinstance(torrent, dict):
                 continue
             tags = [item.strip() for item in str(torrent.get("tags") or "").split(",") if item.strip()]
-            task_id = next((tag for tag in tags if tag.startswith("autoanime-")), str(torrent.get("hash") or ""))
+            task_id = next(
+                (tag for tag in tags if tag.startswith("anitrack-") or tag.startswith("autoanime-")),
+                str(torrent.get("hash") or ""),
+            )
             save_path = str(torrent.get("save_path") or torrent.get("savePath") or "")
             file_path, file_name = await _files_for_hash(client, str(torrent.get("hash") or ""), save_path)
             progress = float(torrent.get("progress") or 0)
