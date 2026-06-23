@@ -81,6 +81,7 @@ def diagnostics() -> dict[str, Any]:
             "episode_subtitles",
             "rss_candidates",
             "rss_subscriptions",
+            "processing_cache",
             "download_jobs",
             "download_artifacts",
             "sync_rules",
@@ -117,8 +118,12 @@ def clear_runtime_data() -> None:
             "series",
         ]:
             conn.execute(f"DELETE FROM {table}")
+        try:
+            conn.execute("DELETE FROM processing_cache")
+        except sqlite3.Error:
+            pass
         conn.execute(
-            "DELETE FROM sqlite_sequence WHERE name IN ('local_assets','sync_rules','download_artifacts','download_jobs','episode_subtitles','episode_resources','rss_candidates','library_entries','seasonal_entries','entries','works','releases','episodes','series')"
+            "DELETE FROM sqlite_sequence WHERE name IN ('local_assets','sync_rules','download_artifacts','download_jobs','episode_subtitles','episode_resources','rss_candidates','processing_cache','library_entries','seasonal_entries','entries','works','releases','episodes','series')"
         )
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('runtime_generation', ?) "

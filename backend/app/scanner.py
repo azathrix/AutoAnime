@@ -13,6 +13,7 @@ from .db import get_settings, hide_orphan_series, log, merge_duplicate_series, n
 from .library import parse_entry_labels
 from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_subtitle_format, parse_year, split_lines
+from .processing_cache import first_resource_ref, get_cached_json, set_cached_json
 from .retry_utils import extract_file_id, extract_task_id, is_rate_limited_error, retry_after_time, task_retry_after
 
 
@@ -170,7 +171,7 @@ async def resolve_entry_mikan_bangumi_id(settings: dict[str, str], entry_id: int
         if bangumi_id:
             candidates = conn.execute(
                 """
-                SELECT id, page_url, series_title, bangumi_id
+                SELECT id, guid, torrent_url, magnet, page_url, series_title, bangumi_id
                 FROM rss_candidates
                 WHERE bangumi_id=?
                   AND page_url != ''
@@ -188,7 +189,7 @@ async def resolve_entry_mikan_bangumi_id(settings: dict[str, str], entry_id: int
             title_keys = {value for value in title_keys if value}
             rows = conn.execute(
                 """
-                SELECT id, page_url, series_title, bangumi_id
+                SELECT id, guid, torrent_url, magnet, page_url, series_title, bangumi_id
                 FROM rss_candidates
                 WHERE page_url != ''
                 ORDER BY updated_at DESC, id DESC
@@ -203,12 +204,42 @@ async def resolve_entry_mikan_bangumi_id(settings: dict[str, str], entry_id: int
                     break
     log("info", f"Mikan ID 反查候选: entry_id={entry_id} bangumi_id={bangumi_id or '-'} candidates={len(candidates)}")
     for candidate in candidates:
+        cache_ref = first_resource_ref(candidate["magnet"], candidate["torrent_url"], candidate["page_url"], candidate["guid"])
+        cached_match = get_cached_json("mikan_match", cache_ref)
+        if isinstance(cached_match, dict):
+            matched_bangumi_id = str(cached_match.get("bangumi_id") or "")
+            mikan_id = str(cached_match.get("mikan_bangumi_id") or "")
+            if matched_bangumi_id == bangumi_id and mikan_id:
+                ts = now()
+                with connect() as conn:
+                    conn.execute("UPDATE entries SET mikan_bangumi_id=?, updated_at=? WHERE id=?", (mikan_id, ts, entry_id))
+                    conn.execute(
+                        "UPDATE series SET mikan_bangumi_id=?, updated_at=? WHERE bangumi_id=?",
+                        (mikan_id, ts, bangumi_id),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE rss_candidates
+                        SET mikan_bangumi_id=?, updated_at=?
+                        WHERE bangumi_id=?
+                          AND mikan_bangumi_id=''
+                        """,
+                        (mikan_id, ts, bangumi_id),
+                    )
+                log("info", f"Mikan ID 反查缓存命中: entry_id={entry_id} bangumi_id={bangumi_id} mikan_id={mikan_id}")
+                return mikan_id
         try:
             log("info", f"Mikan ID 反查尝试: entry_id={entry_id} candidate_id={candidate['id']} page={candidate['page_url']}")
             matched_bangumi_id, mikan_id = await fetch_mikan_match(settings, str(candidate["page_url"] or ""), "")
         except Exception:
             log("warn", f"Mikan ID 反查失败: entry_id={entry_id} candidate_id={candidate['id']} page={candidate['page_url']}")
             continue
+        if matched_bangumi_id:
+            set_cached_json(
+                "mikan_match",
+                cache_ref,
+                {"bangumi_id": matched_bangumi_id, "mikan_bangumi_id": mikan_id},
+            )
         if matched_bangumi_id == bangumi_id and mikan_id:
             ts = now()
             with connect() as conn:
@@ -680,7 +711,7 @@ def upsert_rss_candidate(item: ParsedRelease, reason: str = "") -> int:
               resolution=excluded.resolution,
               language=excluded.language,
               subtitle_format=excluded.subtitle_format,
-              bangumi_id=excluded.bangumi_id,
+              bangumi_id=CASE WHEN excluded.bangumi_id!='' THEN excluded.bangumi_id ELSE rss_candidates.bangumi_id END,
               mikan_bangumi_id=CASE WHEN excluded.mikan_bangumi_id!='' THEN excluded.mikan_bangumi_id ELSE rss_candidates.mikan_bangumi_id END,
               torrent_url=excluded.torrent_url,
               magnet=excluded.magnet,

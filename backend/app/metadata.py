@@ -12,15 +12,21 @@ from .database import connect
 from .db import log, merge_duplicate_series, now
 from .library import local_library_root, render_episode_name, render_season_dir, render_series_dir
 from .parser import clean_name
+from .processing_cache import get_cached_json, set_cached_json
 
 
 BANGUMI_API = "https://api.bgm.tv"
 TMDB_API = "https://api.themoviedb.org/3"
 USER_AGENT = "AniTrack/0.1 (private NAS media automation)"
 BANGUMI_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+BANGUMI_SUBJECT_CACHE_TTL = 30 * 24 * 60 * 60
 
 
 async def fetch_bangumi_subject(subject_id: str, proxy: str = "") -> dict[str, Any]:
+    cached = get_cached_json("bangumi_subject", subject_id)
+    if isinstance(cached, dict) and cached:
+        log("info", f"Bangumi 元数据缓存命中: subject_id={subject_id}")
+        return cached
     async with httpx.AsyncClient(
         proxy=proxy or None,
         timeout=BANGUMI_TIMEOUT,
@@ -30,7 +36,9 @@ async def fetch_bangumi_subject(subject_id: str, proxy: str = "") -> dict[str, A
         resp = await client.get(f"{BANGUMI_API}/v0/subjects/{subject_id}")
         resp.raise_for_status()
         log("info", f"Bangumi 元数据响应: subject_id={subject_id} status={resp.status_code} bytes={len(resp.content)}")
-        return resp.json()
+        subject = resp.json()
+        set_cached_json("bangumi_subject", subject_id, subject, ttl_seconds=BANGUMI_SUBJECT_CACHE_TTL)
+        return subject
 
 
 async def fetch_bangumi_metadata(subject_id: str, proxy: str = "") -> dict[str, Any]:

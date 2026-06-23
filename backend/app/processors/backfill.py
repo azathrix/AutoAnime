@@ -3,7 +3,12 @@ from __future__ import annotations
 from ..database import connect
 from ..db import get_settings, log, now
 from ..pipeline_models import ProcessorContext, ProcessorResult
+from ..processing_cache import get_cached_json, set_cached_json
 from ..scanner import fetch_mikan_page_releases, resolve_entry_mikan_bangumi_id, task_retry_after, upsert_release
+from .rss import release_from_payload, release_to_payload
+
+
+BACKFILL_RELEASE_CACHE_TTL = 12 * 60 * 60
 
 
 async def process_backfill(context: ProcessorContext, payload: dict) -> ProcessorResult:
@@ -31,10 +36,24 @@ async def process_backfill(context: ProcessorContext, payload: dict) -> Processo
             return ProcessorResult.retryable(f"解析 Mikan 番组 ID 失败: {str(exc)[:1800]}", task_retry_after(settings, context.attempts + 1))
     if not mikan_bangumi_id:
         return ProcessorResult.skipped("缺少 Mikan 番组 ID，无法补全整季", data={"entry_id": entry_id})
-    try:
-        releases = await fetch_mikan_page_releases(settings, mikan_bangumi_id)
-    except Exception as exc:
-        return ProcessorResult.retryable(f"Mikan 番组页补全失败: {str(exc)[:1800]}", task_retry_after(settings, context.attempts + 1))
+    cached_releases = get_cached_json("mikan_backfill_releases", mikan_bangumi_id)
+    if isinstance(cached_releases, list):
+        releases = [release_from_payload(item) for item in cached_releases if isinstance(item, dict)]
+        log(
+            "info",
+            f"整季补全缓存命中: entry_id={entry_id} mikan_id={mikan_bangumi_id} releases={len(releases)}",
+        )
+    else:
+        try:
+            releases = await fetch_mikan_page_releases(settings, mikan_bangumi_id)
+        except Exception as exc:
+            return ProcessorResult.retryable(f"Mikan 番组页补全失败: {str(exc)[:1800]}", task_retry_after(settings, context.attempts + 1))
+        set_cached_json(
+            "mikan_backfill_releases",
+            mikan_bangumi_id,
+            [release_to_payload(item) for item in releases],
+            ttl_seconds=BACKFILL_RELEASE_CACHE_TTL,
+        )
     metadata = {
         "title_cn": row["title_cn"] or row["display_title"] or row["title_raw"],
         "year": row["year"] or 0,

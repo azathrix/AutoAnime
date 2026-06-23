@@ -5,6 +5,7 @@ from typing import Any
 from ..db import get_settings, log
 from ..parser import ParsedRelease
 from ..pipeline_models import ProcessorContext, ProcessorResult
+from ..processing_cache import first_resource_ref, get_cached_json
 from ..scanner import fetch_entries, upsert_rss_candidate
 
 
@@ -78,6 +79,20 @@ async def process_rss_candidate_persist(_context: ProcessorContext, payload: dic
     if int(item.episode_number or 0) <= 0:
         log("warn", f"RSS 候选跳过: 未识别集数 title={item.title[:180]}")
         return ProcessorResult.skipped("未识别集数，跳过资源入库")
+    cache_ref = first_resource_ref(item.magnet, item.torrent_url, item.page_url, item.guid)
+    cached_match = get_cached_json("mikan_match", cache_ref)
+    if isinstance(cached_match, dict):
+        cached_bangumi = str(cached_match.get("bangumi_id") or "")
+        cached_mikan = str(cached_match.get("mikan_bangumi_id") or "")
+        if cached_bangumi and not item.bangumi_id:
+            item.bangumi_id = cached_bangumi
+        if cached_mikan and not item.mikan_bangumi_id:
+            item.mikan_bangumi_id = cached_mikan
+        if cached_bangumi:
+            log(
+                "info",
+                f"RSS 候选命中 Mikan 缓存: guid={item.guid} bangumi_id={cached_bangumi} mikan_id={cached_mikan or '-'}",
+            )
     candidate_id = upsert_rss_candidate(item, "pipeline:rss")
     return ProcessorResult.success(
         "RSS 候选已写入",
