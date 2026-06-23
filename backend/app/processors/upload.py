@@ -45,7 +45,7 @@ async def process_upload(context: ProcessorContext, payload: dict) -> ProcessorR
     episode_id = int(episode["id"] or 0) if episode else 0
     target = normalize_local_target_path(
         local_episode_path(
-            {"artifact_name": original_name, "episode_number": episode_number},
+            {"artifact_name": "", "episode_number": episode_number},
             dict(entry),
             settings,
         ),

@@ -163,6 +163,10 @@ export function createAppActions(app, deps) {
     app.episodeResourceForm.subtitle_id = row.subtitle_id || 0
     app.episodeResourceForm.episode_number = row.episode_number || ''
     app.episodeResourceForm.title = row.resource_title || ''
+    app.episodeResourceForm.source_type = row.source_type || 'manual'
+    app.episodeResourceForm.source_ref = row.source_ref || row.magnet || row.torrent_url || ''
+    app.episodeResourceForm.local_upload_temp_path = ''
+    app.episodeResourceForm.local_upload_file_name = ''
     app.episodeResourceForm.subtitle_group = row.subtitle_group || ''
     app.episodeResourceForm.resolution = row.resolution || ''
     app.episodeResourceForm.language = row.language || ''
@@ -180,6 +184,8 @@ export function createAppActions(app, deps) {
       await putAction(`/episodes/${episodeId}/resource`, {
         resource_id: Number(app.episodeResourceForm.resource_id || 0),
         title: app.episodeResourceForm.title,
+        source_type: app.episodeResourceForm.source_type,
+        source_ref: app.episodeResourceForm.source_ref,
         subtitle_group: app.episodeResourceForm.subtitle_group,
         resolution: app.episodeResourceForm.resolution,
         language: app.episodeResourceForm.language,
@@ -195,12 +201,51 @@ export function createAppActions(app, deps) {
         file_name: app.episodeResourceForm.subtitle_file_name,
         selected: true,
       })
+      if (app.episodeResourceForm.source_type === 'upload' && app.episodeResourceForm.local_upload_temp_path && app.selectedEntry?.id) {
+        await postAction(`/entries/${app.selectedEntry.id}/uploads/import`, {
+          uploads: [{
+            temp_path: app.episodeResourceForm.local_upload_temp_path,
+            file_name: app.episodeResourceForm.local_upload_file_name,
+            episode_number: Number(app.episodeResourceForm.episode_number || 0),
+          }],
+          subtitle_format: app.episodeResourceForm.subtitle_format || '',
+          language: app.episodeResourceForm.language || '',
+        })
+      }
       ElMessage.success('集数资源已保存')
       app.episodeResourceDialogOpen = false
       if (app.selectedEntry?.id) {
         await app.openEntry(app.selectedEntry.id, app.selectedEntryDomain, app.selectedEntryMediaType)
       }
       await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
+  function toggleEntryResourceRow(row, column) {
+    const property = String(column?.property || column?.type || '')
+    if (property === 'selection') return
+    const key = row?.key
+    if (!key) return
+    const current = app.expandedResourceKeys || []
+    app.expandedResourceKeys = current.includes(key)
+      ? current.filter(item => item !== key)
+      : [...current, key]
+  }
+
+  async function handleEpisodeResourceFilePicked(file) {
+    const raw = file?.raw || file
+    if (!raw) return
+    app.episodeResourceForm.source_type = 'upload'
+    app.episodeResourceForm.local_upload_file_name = file?.name || raw?.name || ''
+    app.episodeResourceForm.source_ref = app.episodeResourceForm.local_upload_file_name
+    try {
+      const result = await uploadFile('/uploads/local', raw)
+      app.episodeResourceForm.local_upload_temp_path = result.temp_path || ''
+      app.episodeResourceForm.local_upload_file_name = result.file_name || app.episodeResourceForm.local_upload_file_name
+      app.episodeResourceForm.source_ref = result.file_name || app.episodeResourceForm.source_ref
+      ElMessage.success('本地文件已上传到临时区，保存后会进入整理队列')
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
     }
@@ -399,16 +444,19 @@ export function createAppActions(app, deps) {
 
   async function advanceMediaWizard() {
     if (app.mediaWizardStep === 0) {
+      addMediaWizardResourceLines(false)
       const titleSeed = titleFromResourceSeed(app.mediaWizardDraft.resource_input || app.mediaWizardDraft.resources_text || app.mediaWizardFiles?.[0]?.name || '')
       if (titleSeed && !app.mediaWizardDraft.title) {
         app.mediaWizardDraft.title = titleSeed
       }
+    }
+    if (app.mediaWizardStep === 1) {
       if (!app.mediaWizardDraft.title.trim()) {
         ElMessage.warning('请先填写作品标题')
         return
       }
     }
-    if (app.mediaWizardStep === 1) {
+    if (app.mediaWizardStep === 2) {
       if (!addMediaWizardResourceLines(false) || !addMediaWizardSubtitleLines(false)) {
         return
       }
@@ -425,7 +473,14 @@ export function createAppActions(app, deps) {
         return
       }
     }
-    app.mediaWizardStep = Math.min(2, app.mediaWizardStep + 1)
+    if (app.mediaWizardStep === 3) {
+      if (!addMediaWizardSubtitleLines(false)) return
+      if (app.mediaWizardInvalidSubtitleCount) {
+        ElMessage.warning('请先修正无法识别的字幕')
+        return
+      }
+    }
+    app.mediaWizardStep = Math.min(4, app.mediaWizardStep + 1)
   }
 
   function mediaWizardEpisodeFallback(index) {
@@ -639,7 +694,7 @@ export function createAppActions(app, deps) {
     app.metadataSearchTarget = target
     app.metadataSearchKeyword = target === 'entry'
       ? (app.entryEditForm.title_cn || app.entryEditForm.title_raw || '')
-      : (app.mediaWizardDraft.title || titleFromResourceSeed(app.mediaWizardSeed || app.mediaWizardDraft.resources_text || '') || '')
+      : (app.mediaWizardDraft.title || titleFromResourceSeed(app.mediaWizardDraft.resource_input || app.mediaWizardSeed || app.mediaWizardDraft.resources_text || app.mediaWizardFiles?.[0]?.name || '') || '')
     app.metadataSearchResults = { bangumi: [], tmdb: [] }
     app.metadataSelectedBangumi = null
     app.metadataSelectedTmdb = null
@@ -1015,6 +1070,7 @@ export function createAppActions(app, deps) {
     entryEditPayload,
     exportLogs,
     fetchEntryMetadata,
+    handleEpisodeResourceFilePicked,
     loadRssSubscriptions,
     normalizeSettingsShape,
     openEntry,
@@ -1048,6 +1104,7 @@ export function createAppActions(app, deps) {
     selectMetadataCandidate,
     skipMetadataProvider,
     syncMediaWizardFileResources,
+    toggleEntryResourceRow,
     startMetadataProgress,
     stopMetadataProgress,
     syncScheduledJobForm,

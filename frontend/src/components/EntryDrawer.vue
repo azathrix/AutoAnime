@@ -68,7 +68,15 @@ export default appContextComponent()
               <el-button plain @click="openEpisodeImportDialog">手动导入集数</el-button>
               <el-button type="primary" @click="openBatchSubtitleDialog">字幕批量配置</el-button>
             </div>
-            <el-table :data="entryResourceRows" height="620" class="episode-resource-table" empty-text="暂无集数资源">
+            <el-table
+              :data="entryResourceRows"
+              row-key="key"
+              :expand-row-keys="expandedResourceKeys"
+              height="620"
+              class="episode-resource-table"
+              empty-text="暂无集数资源"
+              @row-click="toggleEntryResourceRow"
+            >
               <el-table-column type="expand" width="44">
                 <template #default="{ row }">
                   <div class="resource-expand">
@@ -78,6 +86,7 @@ export default appContextComponent()
                       <div><span>分辨率</span><code>{{ row.resolution || '-' }}</code></div>
                       <div><span>语言</span><code>{{ row.language || '-' }}</code></div>
                       <div><span>字幕类型</span><code>{{ subtitleFormatText(row.subtitle_format) }}</code></div>
+                      <div><span>来源类型</span><code>{{ sourceModeText(row.source_type) }}</code></div>
                       <div><span>资源链接</span><code>{{ row.source_ref || row.magnet || row.torrent_url || '-' }}</code></div>
                     </section>
                     <section class="resource-expand-section">

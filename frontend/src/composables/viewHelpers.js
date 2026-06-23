@@ -38,6 +38,8 @@ export function sourceModeText(value) {
     collect: '收录',
     add: '添加',
     import: '导入',
+    upload: '本地上传',
+    manual: '磁力 / 下载链接',
   }[key] || key
 }
 

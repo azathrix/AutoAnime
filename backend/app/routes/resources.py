@@ -266,10 +266,18 @@ async def api_update_episode_resource(episode_id: int, payload: EpisodeResourceP
             conn.execute("UPDATE episode_resources SET selected=0 WHERE entry_id=? AND episode_number=?", (episode["entry_id"], episode["episode_number"]))
             conn.execute("UPDATE releases SET selected=0 WHERE entry_id=? AND episode_number=?", (episode["entry_id"], episode["episode_number"]))
         if payload.resource_id:
+            source_ref = payload.source_ref.strip()
+            source_type = payload.source_type.strip()
+            torrent_url = source_ref if source_ref.startswith("http") else ""
+            magnet = source_ref if source_ref.startswith("magnet:") else ""
             conn.execute(
                 """
                 UPDATE episode_resources
                 SET title=CASE WHEN ?='' THEN title ELSE ? END,
+                    source_type=CASE WHEN ?='' THEN source_type ELSE ? END,
+                    source_ref=CASE WHEN ?='' THEN source_ref ELSE ? END,
+                    torrent_url=CASE WHEN ?='' THEN torrent_url ELSE ? END,
+                    magnet=CASE WHEN ?='' THEN magnet ELSE ? END,
                     subtitle_group=CASE WHEN ?='' THEN subtitle_group ELSE ? END,
                     resolution=CASE WHEN ?='' THEN resolution ELSE ? END,
                     language=CASE WHEN ?='' THEN language ELSE ? END,
@@ -280,6 +288,10 @@ async def api_update_episode_resource(episode_id: int, payload: EpisodeResourceP
                 """,
                 (
                     payload.title.strip(), payload.title.strip(),
+                    source_type, source_type,
+                    source_ref, source_ref,
+                    torrent_url, torrent_url,
+                    magnet, magnet,
                     payload.subtitle_group.strip(), payload.subtitle_group.strip(),
                     payload.resolution.strip(), payload.resolution.strip(),
                     payload.language.strip(), payload.language.strip(),
@@ -291,17 +303,21 @@ async def api_update_episode_resource(episode_id: int, payload: EpisodeResourceP
             if payload.selected and row and int(row["release_id"] or 0) > 0:
                 conn.execute("UPDATE releases SET selected=1 WHERE id=?", (int(row["release_id"]),))
         else:
+            source_type = payload.source_type.strip() or "manual"
+            source_ref = payload.source_ref.strip() or f"manual:{episode_id}:{ts}"
+            torrent_url = source_ref if source_ref.startswith("http") else ""
+            magnet = source_ref if source_ref.startswith("magnet:") else ""
             conn.execute(
                 """
                 INSERT INTO episode_resources
                   (entry_id, episode_id, episode_number, source_type, source_ref, title,
-                   subtitle_group, resolution, language, subtitle_format, selected, created_at, updated_at)
-                VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   subtitle_group, resolution, language, subtitle_format, torrent_url, magnet, selected, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    episode["entry_id"], episode_id, episode["episode_number"], f"manual:{episode_id}:{ts}",
+                    episode["entry_id"], episode_id, episode["episode_number"], source_type, source_ref,
                     payload.title.strip(), payload.subtitle_group.strip(), payload.resolution.strip(),
-                    payload.language.strip(), payload.subtitle_format.strip(), int(payload.selected), ts, ts,
+                    payload.language.strip(), payload.subtitle_format.strip(), torrent_url, magnet, int(payload.selected), ts, ts,
                 ),
             )
             row = conn.execute("SELECT * FROM episode_resources WHERE id=last_insert_rowid()").fetchone()

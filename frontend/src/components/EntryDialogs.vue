@@ -5,7 +5,7 @@ export default appContextComponent()
 </script>
 
 <template>
-    <el-dialog v-model="entryEditDialogOpen" title="编辑作品信息" width="760px" class="entry-edit-dialog">
+    <el-dialog v-model="entryEditDialogOpen" title="编辑作品信息" width="760px" top="4vh" class="entry-edit-dialog">
       <el-form :model="entryEditForm" label-position="top">
         <el-form-item label="中文标题">
           <div class="field-with-action">
@@ -57,18 +57,36 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="episodeResourceDialogOpen" title="配置集数资源" width="760px">
+    <el-dialog v-model="episodeResourceDialogOpen" title="配置集数资源" width="820px" top="4vh">
       <el-form :model="episodeResourceForm" label-position="top">
         <div class="form-row">
           <el-form-item label="集数"><el-input v-model="episodeResourceForm.episode_number" disabled /></el-form-item>
-          <el-form-item label="分辨率"><el-input v-model="episodeResourceForm.resolution" placeholder="1080p" /></el-form-item>
+          <el-form-item label="资源类型">
+            <el-select v-model="episodeResourceForm.source_type">
+              <el-option label="磁力 / 下载链接" value="manual" />
+              <el-option label="本地上传" value="upload" />
+              <el-option label="仅占位" value="metadata" />
+            </el-select>
+          </el-form-item>
         </div>
         <el-form-item label="当前资源标题"><el-input v-model="episodeResourceForm.title" /></el-form-item>
+        <el-form-item v-if="episodeResourceForm.source_type !== 'upload'" label="资源链接">
+          <el-input v-model="episodeResourceForm.source_ref" placeholder="magnet:? / https://... / 可留空作为占位资源" />
+        </el-form-item>
+        <el-form-item v-else label="本地上传">
+          <el-upload action="#" :auto-upload="false" :limit="1" :on-change="handleEpisodeResourceFilePicked">
+            <el-button type="primary" plain>选择本地媒体文件</el-button>
+            <template #tip>
+              <div class="el-upload__tip">{{ episodeResourceForm.local_upload_file_name || episodeResourceForm.source_ref || '选择后先上传临时区，保存配置时按作品/季/集整理。' }}</div>
+            </template>
+          </el-upload>
+        </el-form-item>
         <div class="form-row">
+          <el-form-item label="分辨率"><el-input v-model="episodeResourceForm.resolution" placeholder="1080p" /></el-form-item>
           <el-form-item label="字幕组"><el-input v-model="episodeResourceForm.subtitle_group" /></el-form-item>
-          <el-form-item label="语言"><el-input v-model="episodeResourceForm.language" /></el-form-item>
         </div>
         <div class="form-row">
+          <el-form-item label="语言"><el-input v-model="episodeResourceForm.language" /></el-form-item>
           <el-form-item label="字幕类型">
             <el-select v-model="episodeResourceForm.subtitle_format" clearable>
               <el-option label="无字幕 / 未配置" value="" />
@@ -101,7 +119,7 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="batchSubtitleDialogOpen" title="字幕批量配置" width="760px">
+    <el-dialog v-model="batchSubtitleDialogOpen" title="字幕批量配置" width="760px" top="4vh">
       <div class="guided-dialog">
         <el-steps :active="batchSubtitleStep" simple>
           <el-step title="提供字幕" />
@@ -169,7 +187,7 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="episodeImportDialogOpen" title="手动导入集数资源" width="820px">
+    <el-dialog v-model="episodeImportDialogOpen" title="手动导入集数资源" width="820px" top="4vh">
       <div class="guided-dialog">
         <el-steps :active="episodeImportStep" simple>
           <el-step title="资源链接" />
@@ -242,7 +260,7 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="processorSettingsDialogOpen" title="下载处理器设置" width="520px">
+    <el-dialog v-model="processorSettingsDialogOpen" title="下载处理器设置" width="520px" top="4vh">
       <el-form :model="processorSettingsForm" label-position="top">
         <el-alert
           type="info"
@@ -261,7 +279,7 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="scheduledSettingsDialogOpen" title="定时任务设置" width="520px">
+    <el-dialog v-model="scheduledSettingsDialogOpen" title="定时任务设置" width="520px" top="4vh">
       <el-form :model="scheduledJobForm" label-position="top">
         <el-alert
           type="info"
@@ -281,7 +299,7 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="rssDialogOpen" title="RSS 订阅" width="760px">
+    <el-dialog v-model="rssDialogOpen" title="RSS 订阅" width="760px" top="4vh">
       <div class="rss-dialog-layout">
         <el-form :model="rssForm" label-position="top" class="rss-form">
           <el-form-item label="订阅名称"><el-input v-model="rssForm.name" placeholder="例如：Mikan 追番" /></el-form-item>
@@ -317,7 +335,7 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="metadataSearchDialogOpen" title="作品匹配" width="900px">
+    <el-dialog v-model="metadataSearchDialogOpen" title="作品匹配" width="900px" top="4vh">
       <div class="metadata-search-dialog">
         <el-steps :active="metadataSearchProvider === 'bangumi' ? 0 : 1" finish-status="success" simple class="metadata-match-steps">
           <el-step title="匹配 Bangumi" />
@@ -387,14 +405,51 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="mediaWizardOpen" :title="mediaWizardTitle" width="760px">
+    <el-dialog v-model="mediaWizardOpen" :title="mediaWizardTitle" width="920px" top="4vh">
       <el-steps :active="mediaWizardStep" finish-status="success" align-center>
+        <el-step title="选择来源" />
         <el-step title="作品信息" />
         <el-step title="集数资源" />
+        <el-step title="字幕配置" />
         <el-step title="确认收录" />
       </el-steps>
       <div class="wizard-panel">
         <template v-if="mediaWizardStep === 0">
+          <div class="wizard-intro">
+            <strong>选择收录来源</strong>
+            <span>可以先给本地文件或磁力链接，系统会用文件名/链接提取作品线索；也可以只手动登记作品。</span>
+          </div>
+          <el-tabs v-model="mediaWizardDraft.source_mode" class="wizard-source-tabs">
+            <el-tab-pane label="本地文件上传" name="local">
+              <el-upload
+                v-model:file-list="mediaWizardFiles"
+                drag
+                action="#"
+                :auto-upload="false"
+                multiple
+                :on-change="syncMediaWizardFileResources"
+                :on-remove="syncMediaWizardFileResources"
+              >
+                <p>选择本地媒体文件</p>
+                <small>选择后会自动进入集数资源列表；电影未识别集数时默认第 1 集。</small>
+              </el-upload>
+            </el-tab-pane>
+            <el-tab-pane label="磁力 / 下载链接" name="link">
+              <el-form label-position="top" class="wizard-form">
+                <el-form-item label="资源链接">
+                  <el-input v-model="mediaWizardDraft.resource_input" type="textarea" :rows="6" placeholder="每行一个磁力、种子或下载链接" />
+                </el-form-item>
+                <div class="wizard-input-actions">
+                  <el-button type="primary" @click="addMediaWizardResourceLines">添加到集数资源</el-button>
+                </div>
+              </el-form>
+            </el-tab-pane>
+            <el-tab-pane label="手动收录" name="metadata">
+              <el-alert type="info" show-icon :closable="false" title="只登记作品，不配置资源；后续可在卡片详情里继续添加集数资源。" />
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+        <template v-else-if="mediaWizardStep === 1">
           <div class="wizard-intro">
             <strong>确认作品信息</strong>
             <span>先填写作品标题，再点击匹配，从 Bangumi 或 TMDB 结果中选择并填入基础信息。</span>
@@ -434,41 +489,27 @@ export default appContextComponent()
             </div>
           </el-form>
         </template>
-        <template v-else-if="mediaWizardStep === 1">
+        <template v-else-if="mediaWizardStep === 2">
           <div class="wizard-intro">
             <strong>配置集数资源</strong>
-            <span>上方先批量粘贴磁力/下载链接或选择本地文件，添加后在下方逐集检查集数、来源和字幕。</span>
+            <span>一行就是一集资源。自动识别只是初稿，集数、标题、来源都可以手动修正。</span>
           </div>
-          <el-form :model="mediaWizardDraft" label-position="top" class="wizard-form">
-            <div class="wizard-resource-input">
-              <el-form-item label="磁力 / 下载链接">
-                <el-input v-model="mediaWizardDraft.resource_input" type="textarea" :rows="4" placeholder="每行一个资源链接，点击添加后进入下面的集数资源列表" />
-              </el-form-item>
-              <div class="wizard-input-actions">
-                <el-button type="primary" @click="addMediaWizardResourceLines">添加到集数资源</el-button>
+          <el-tabs v-model="mediaWizardDraft.source_mode" class="wizard-source-tabs">
+            <el-tab-pane label="本地文件上传" name="local">
+              <el-upload v-model:file-list="mediaWizardFiles" drag action="#" :auto-upload="false" multiple :on-change="syncMediaWizardFileResources" :on-remove="syncMediaWizardFileResources">
+                <p>继续添加本地媒体文件</p>
+                <small>文件会按下方集数信息整理为规范文件名。</small>
+              </el-upload>
+            </el-tab-pane>
+            <el-tab-pane label="磁力 / 下载链接" name="link">
+              <div class="wizard-resource-input">
+                <el-input v-model="mediaWizardDraft.resource_input" type="textarea" :rows="4" placeholder="每行一个资源链接" />
+                <div class="wizard-input-actions">
+                  <el-button type="primary" @click="addMediaWizardResourceLines">添加到集数资源</el-button>
+                </div>
               </div>
-            </div>
-            <el-upload
-              v-model:file-list="mediaWizardFiles"
-              drag
-              action="#"
-              :auto-upload="false"
-              multiple
-              :on-change="syncMediaWizardFileResources"
-              :on-remove="syncMediaWizardFileResources"
-            >
-              <p>选择本地媒体文件</p>
-              <small>选择后会自动加入下面的集数资源列表；电影未识别集数时默认按第 1 集处理。</small>
-            </el-upload>
-            <div class="wizard-resource-input">
-              <el-form-item label="字幕链接 / 字幕文件名">
-                <el-input v-model="mediaWizardDraft.subtitle_input" type="textarea" :rows="3" placeholder="可选，每行一个字幕链接或字幕文件名" />
-              </el-form-item>
-              <div class="wizard-input-actions">
-                <el-button plain @click="addMediaWizardSubtitleLines">添加字幕</el-button>
-              </div>
-            </div>
-          </el-form>
+            </el-tab-pane>
+          </el-tabs>
           <div class="wizard-resource-list">
             <div class="wizard-resource-list-head">
               <strong>集数资源</strong>
@@ -493,6 +534,25 @@ export default appContextComponent()
             </div>
             <el-empty v-if="!mediaWizardResourceRows.length" description="还没有集数资源；可以只登记作品，也可以先添加链接或本地文件。" />
           </div>
+        </template>
+        <template v-else-if="mediaWizardStep === 3">
+          <div class="wizard-intro">
+            <strong>配置字幕</strong>
+            <span>字幕会按文件名或链接里的集数自动匹配到对应集。识别不准时可以直接修改集数。</span>
+          </div>
+          <el-tabs class="wizard-source-tabs">
+            <el-tab-pane label="本地字幕上传" name="local-subtitle">
+              <el-alert type="info" show-icon :closable="false" title="批量上传字幕文件会在下一轮接入；当前可先填字幕文件名或字幕链接。" />
+            </el-tab-pane>
+            <el-tab-pane label="字幕链接 / 文件名" name="link-subtitle">
+              <div class="wizard-resource-input">
+                <el-input v-model="mediaWizardDraft.subtitle_input" type="textarea" :rows="4" placeholder="每行一个字幕链接或字幕文件名" />
+                <div class="wizard-input-actions">
+                  <el-button type="primary" @click="addMediaWizardSubtitleLines">添加字幕</el-button>
+                </div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
           <div class="wizard-resource-list" v-if="mediaWizardSubtitleRows.length">
             <div class="wizard-resource-list-head">
               <strong>批量字幕</strong>
@@ -532,7 +592,7 @@ export default appContextComponent()
       <template #footer>
         <el-button @click="mediaWizardOpen = false">关闭</el-button>
         <el-button :disabled="mediaWizardStep <= 0" @click="mediaWizardStep -= 1">上一步</el-button>
-        <el-button v-if="mediaWizardStep < 2" type="primary" @click="advanceMediaWizard">下一步</el-button>
+        <el-button v-if="mediaWizardStep < 4" type="primary" @click="advanceMediaWizard">下一步</el-button>
         <el-button v-else type="primary" :loading="mediaWizardSaving" @click="commitMediaWizard">收录</el-button>
       </template>
     </el-dialog>

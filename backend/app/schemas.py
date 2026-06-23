@@ -83,6 +83,8 @@ class RssSubscriptionPayload(BaseModel):
 class EpisodeResourcePayload(BaseModel):
     resource_id: int = 0
     title: str = ""
+    source_type: str = ""
+    source_ref: str = ""
     subtitle_group: str = ""
     resolution: str = ""
     language: str = ""
