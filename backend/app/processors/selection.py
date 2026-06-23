@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..database import connect
-from ..db import get_settings
+from ..db import get_settings, log
 from ..pipeline_models import ProcessorContext, ProcessorResult
 from ..scanner import mark_selected_releases, resolve_entry_choice, task_retry_after
 
@@ -23,6 +23,11 @@ async def process_selection(context: ProcessorContext, payload: dict) -> Process
     release_rows = {}
     if release_ids:
         with connect() as conn:
+            from ..media_service import reset_orphaned_download_jobs_in_conn
+
+            reset_count = reset_orphaned_download_jobs_in_conn(conn, entry_id)
+            if reset_count:
+                log("warn", f"自动选集前已释放中断下载状态: entry_id={entry_id} count={reset_count}")
             placeholders = ",".join("?" for _ in release_ids)
             rows = conn.execute(
                 f"""

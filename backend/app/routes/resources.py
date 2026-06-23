@@ -421,6 +421,11 @@ async def api_download_episode_resource(episode_id: int) -> dict[str, Any]:
         message=f"手动下载集数: entry_id={episode['entry_id']} episode={episode['episode_number']}",
     )
     trigger_queue("processor", delay=0)
+    log(
+        "info",
+        f"单集下载请求: entry_id={int(episode['entry_id'])} episode={int(episode['episode_number'])} "
+        f"release_id={int(selected['release_id'])} run_id={run_id}",
+    )
     return {"status": "started", "download_run_id": run_id, "message": "已加入下载队列"}
 
 
@@ -480,6 +485,11 @@ async def api_download_entry_resources(entry_id: int) -> dict[str, Any]:
         run_ids.append(run_id)
     if run_ids:
         trigger_queue("processor", delay=0)
+    log(
+        "info",
+        f"批量下载请求: entry_id={entry_id} candidates={len(rows)} runs={len(run_ids)} "
+        f"message={'已提交下载流水线' if run_ids else '没有符合条件的待下载集数'}",
+    )
     return {
         "status": "started" if run_ids else "skipped",
         "count": len(run_ids),

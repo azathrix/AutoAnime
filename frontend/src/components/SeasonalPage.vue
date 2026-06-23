@@ -76,7 +76,7 @@ export default appContextComponent()
           </div>
         </div>
         <div class="anime-grid catalog-card-grid">
-          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'seasonal')">
+          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'seasonal', 'anime')">
             <div class="cover poster-cover">
               <img v-if="item.poster_url" :src="item.poster_url" />
               <span v-else>{{ cardInitials(item) }}</span>

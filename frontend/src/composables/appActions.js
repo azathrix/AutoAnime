@@ -74,7 +74,7 @@ export function createAppActions(app, deps) {
   async function saveProcessorSettings() {
     try {
       const value = Math.max(1, Math.min(12, Number(app.processorSettingsForm.download_concurrency || 2)))
-      await putAction('/processors/settings', { download_concurrency: value })
+      await putAction('/processors/download/settings', { download_concurrency: value })
       app.settings.download_concurrency = value
       app.processorSettingsDialogOpen = false
       ElMessage.success('下载处理器设置已保存')
@@ -625,7 +625,8 @@ export function createAppActions(app, deps) {
     app.metadataFetching = true
     try {
       const provider = app.entryEditForm.bangumi_id ? 'bangumi' : (app.entryEditForm.tmdb_id ? 'tmdb' : 'bangumi')
-      const result = await postAction(`/entries/${entryId}/metadata/fetch`, {
+      const mediaType = app.selectedEntryMediaType || 'anime'
+      const result = await postAction(`/media/${mediaType}/${entryId}/metadata/fetch`, {
         provider,
         bangumi_id: app.entryEditForm.bangumi_id,
         tmdb_id: app.entryEditForm.tmdb_id,

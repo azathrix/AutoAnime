@@ -30,7 +30,7 @@ export default appContextComponent()
               v-for="item in day.items"
               :key="`${day.key}-${item.entry_id}-${item.episode_number}-${item.updated_at}`"
               class="calendar-entry-card"
-              @click="openEntry(item.entry_id, 'seasonal')"
+              @click="openEntry(item.entry_id, 'seasonal', 'anime')"
             >
               <div class="calendar-entry-cover">
                 <img v-if="item.poster_url" :src="item.poster_url" />
