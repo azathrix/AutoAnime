@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -124,6 +125,26 @@ def subject_month(subject: dict[str, Any]) -> int:
     return value if 1 <= value <= 12 else 0
 
 
+def chinese_summary(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
+    chinese_lines = [line for line in lines if re.search(r"[\u4e00-\u9fff]", line)]
+    if chinese_lines:
+        return "\n".join(chinese_lines)
+    return text
+
+
+def subject_tags_json(subject: dict[str, Any], limit: int = 16) -> str:
+    tags = []
+    for item in subject.get("tags") or []:
+        name = str(item.get("name") or "").strip()
+        if name:
+            tags.append(name)
+    return json.dumps(list(dict.fromkeys(tags))[:limit], ensure_ascii=False)
+
+
 async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
     with connect() as conn:
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
@@ -149,7 +170,8 @@ async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
     title_cn = subject_cn_name(subject) or entry["title_cn"]
     images = subject.get("images") or {}
     poster = images.get("large") or images.get("common") or images.get("medium") or ""
-    summary = subject.get("summary") or ""
+    summary = chinese_summary(subject.get("summary") or "")
+    tags_json = subject_tags_json(subject)
     year = subject_year(subject) or entry["year"]
     month = subject_month(subject) or entry["month"]
     with connect() as conn:
@@ -157,11 +179,11 @@ async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
             """
             UPDATE entries
             SET title_cn=?, display_title=CASE WHEN display_title='' THEN ? ELSE display_title END,
-                bangumi_id=?, poster_url=?, summary=?, year=?, month=?,
+                bangumi_id=?, poster_url=?, summary=?, year=?, month=?, tags_json=?,
                 metadata_source='bangumi', updated_at=?
             WHERE id=?
             """,
-            (title_cn, title_cn, bangumi_id, poster, summary, year, month, now(), entry_id),
+            (title_cn, title_cn, bangumi_id, poster, summary, year, month, tags_json, now(), entry_id),
         )
         if series:
             conn.execute(

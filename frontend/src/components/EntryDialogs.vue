@@ -34,7 +34,7 @@ export default appContextComponent()
             </el-select>
           </el-form-item>
         </div>
-        <el-form-item label="别名 / 原名"><el-input v-model="entryEditForm.title_romaji" /></el-form-item>
+        <el-form-item label="原名"><el-input v-model="entryEditForm.title_raw" /></el-form-item>
         <el-form-item label="海报 URL"><el-input v-model="entryEditForm.poster_url" /></el-form-item>
         <el-form-item label="标签">
           <el-input v-model="entryEditForm.tags_text" type="textarea" :rows="3" placeholder="一行一个标签，或用逗号分隔" />
@@ -47,6 +47,7 @@ export default appContextComponent()
       </el-form>
       <template #footer>
         <el-button @click="entryEditDialogOpen = false">取消</el-button>
+        <el-button plain @click="openMetadataSearch('bangumi', 'entry')">匹配</el-button>
         <el-button plain :loading="metadataFetching" @click="fetchEntryMetadata">扒信息</el-button>
         <el-button type="primary" @click="saveEntryEditForm">保存</el-button>
       </template>
@@ -312,31 +313,53 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="metadataSearchDialogOpen" :title="metadataSearchProvider === 'tmdb' ? '搜索 TMDB' : '搜索 Bangumi'" width="760px">
+    <el-dialog v-model="metadataSearchDialogOpen" title="作品匹配" width="900px">
       <div class="metadata-search-dialog">
         <div class="metadata-search-bar">
-          <el-input v-model="metadataSearchKeyword" clearable placeholder="输入作品名、别名或原名" @keyup.enter="runMetadataSearch" />
-          <el-button type="primary" :loading="metadataSearchLoading" @click="runMetadataSearch">搜索</el-button>
+          <el-input v-model="metadataSearchKeyword" clearable placeholder="输入作品名" @keyup.enter="runMetadataSearch" />
+          <el-button type="primary" :loading="metadataSearchLoading" @click="runMetadataSearch">匹配</el-button>
         </div>
         <el-alert
-          v-if="metadataSearchProvider === 'tmdb'"
+          v-if="!settings.tmdb_token"
           type="warning"
           show-icon
           :closable="false"
-          title="TMDB 搜索需要先在设置中心配置 TMDB token。"
+          title="TMDB 搜索需要先在设置中心配置 TMDB token；Bangumi 搜索不受影响。"
         />
-        <div class="metadata-result-list" v-loading="metadataSearchLoading">
-          <button v-for="item in metadataSearchResults" :key="`${item.provider}-${item.id}`" type="button" @click="applyMetadataToWizard(item); metadataSearchDialogOpen = false">
-            <img v-if="item.poster_url" :src="item.poster_url" />
-            <span v-else>{{ (item.title || item.original_title || '候选').slice(0, 2) }}</span>
-            <div>
-              <strong>{{ item.title || item.original_title }}</strong>
-              <small>{{ item.original_title || '-' }}</small>
-              <code>{{ item.provider }} · {{ item.id }} · {{ item.year || '年份未知' }}</code>
+        <el-tabs v-model="metadataSearchProvider" class="metadata-result-tabs">
+          <el-tab-pane label="Bangumi" name="bangumi">
+            <div class="metadata-result-list" v-loading="metadataSearchLoading">
+              <article v-for="item in metadataSearchResults.bangumi" :key="`${item.provider}-${item.id}`" class="metadata-result-card">
+                <img v-if="item.poster_url" :src="item.poster_url" />
+                <span v-else>{{ (item.title || item.original_title || '候选').slice(0, 2) }}</span>
+                <div>
+                  <strong>{{ item.title || item.original_title }}</strong>
+                  <small>{{ item.original_title || '-' }}</small>
+                  <p>{{ item.summary || '暂无简介' }}</p>
+                  <code>{{ item.provider }} · {{ item.id }} · {{ item.year || '年份未知' }}</code>
+                </div>
+                <el-button type="primary" @click="applyMetadataSearchItem(item)">填入</el-button>
+              </article>
+              <el-empty v-if="!metadataSearchLoading && !metadataSearchResults.bangumi.length" description="暂无 Bangumi 匹配结果" />
             </div>
-          </button>
-          <el-empty v-if="!metadataSearchLoading && !metadataSearchResults.length" description="暂无匹配结果" />
-        </div>
+          </el-tab-pane>
+          <el-tab-pane label="TMDB" name="tmdb">
+            <div class="metadata-result-list" v-loading="metadataSearchLoading">
+              <article v-for="item in metadataSearchResults.tmdb" :key="`${item.provider}-${item.id}`" class="metadata-result-card">
+                <img v-if="item.poster_url" :src="item.poster_url" />
+                <span v-else>{{ (item.title || item.original_title || '候选').slice(0, 2) }}</span>
+                <div>
+                  <strong>{{ item.title || item.original_title }}</strong>
+                  <small>{{ item.original_title || '-' }}</small>
+                  <p>{{ item.summary || '暂无简介' }}</p>
+                  <code>{{ item.provider }} · {{ item.id }} · {{ item.year || '年份未知' }}</code>
+                </div>
+                <el-button type="primary" @click="applyMetadataSearchItem(item)">填入</el-button>
+              </article>
+              <el-empty v-if="!metadataSearchLoading && !metadataSearchResults.tmdb.length" description="暂无 TMDB 匹配结果" />
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </el-dialog>
 
@@ -384,45 +407,36 @@ export default appContextComponent()
             <p>选择本地文件或目录</p>
             <small>提交后会先上传到服务端临时区，再由上传整理队列收录到媒体库。</small>
           </el-upload>
-          <el-form label-position="top" class="wizard-form">
-            <el-form-item :label="mediaWizardDraft.source_mode === 'metadata' ? '作品线索' : '资源线索'">
+          <el-form v-if="mediaWizardDraft.source_mode === 'link'" label-position="top" class="wizard-form">
+            <el-form-item label="资源链接">
               <el-input
-                v-model="mediaWizardSeed"
+                v-model="mediaWizardDraft.resources_text"
                 type="textarea"
-                :rows="4"
-                placeholder="可以填 Bangumi ID、TMDB ID、作品名、磁力链接或下载链接。系统会尽量自动带入后面的字段。"
+                :rows="5"
+                placeholder="每行一个磁链、种子链接或下载链接。下一步会从文件名或链接中提取标题。"
               />
             </el-form-item>
           </el-form>
+          <el-alert v-else-if="mediaWizardDraft.source_mode === 'metadata'" type="info" show-icon :closable="false" title="仅收录作品时，下一步填写作品标题并匹配元数据。" />
         </template>
         <template v-else-if="mediaWizardStep === 1">
           <div class="wizard-intro">
             <strong>确认作品信息</strong>
-            <span>系统会尽量从第一步线索匹配 Bangumi；多结果时先选择最接近的一项，再手动修正。</span>
-          </div>
-          <div v-if="mediaWizardCandidates.length" class="metadata-candidate-list">
-            <button v-for="item in mediaWizardCandidates" :key="`${item.provider}-${item.id}`" type="button" @click="applyMetadataToWizard(item)">
-              <img v-if="item.poster_url" :src="item.poster_url" />
-              <span v-else>{{ (item.title || item.original_title || '候选').slice(0, 2) }}</span>
-              <strong>{{ item.title || item.original_title }}</strong>
-              <small>{{ item.provider }} · {{ item.id }} · {{ item.year || '年份未知' }}</small>
-            </button>
+            <span>先填写作品标题，再点击匹配，从 Bangumi 或 TMDB 结果中选择并填入基础信息。</span>
           </div>
           <el-form :model="mediaWizardDraft" label-position="top" class="wizard-form">
             <div class="wizard-form-grid labeled">
-              <el-form-item label="作品标题"><el-input v-model="mediaWizardDraft.title" placeholder="例如 欢迎来到实力至上主义的教室 第四季" /></el-form-item>
-              <el-form-item label="别名 / 原名"><el-input v-model="mediaWizardDraft.alias" placeholder="可选，例如 Youkoso Jitsuryoku..." /></el-form-item>
-              <el-form-item label="Bangumi ID">
+              <el-form-item label="作品标题">
                 <div class="field-with-action">
-                  <el-input v-model="mediaWizardDraft.bangumi_id" placeholder="动画优先使用 Bangumi ID" />
-                  <el-button plain @click="openMetadataSearch('bangumi')">搜索</el-button>
+                  <el-input v-model="mediaWizardDraft.title" placeholder="例如 欢迎来到实力至上主义的教室 第四季" />
+                  <el-button type="primary" plain @click="openMetadataSearch('bangumi', 'wizard')">匹配</el-button>
                 </div>
               </el-form-item>
+              <el-form-item label="Bangumi ID">
+                <el-input v-model="mediaWizardDraft.bangumi_id" placeholder="动画优先使用 Bangumi ID" />
+              </el-form-item>
               <el-form-item label="TMDB ID">
-                <div class="field-with-action">
-                  <el-input v-model="mediaWizardDraft.tmdb_id" placeholder="电影/电视剧可填 TMDB ID" />
-                  <el-button plain @click="openMetadataSearch('tmdb')">搜索</el-button>
-                </div>
+                <el-input v-model="mediaWizardDraft.tmdb_id" placeholder="电影/电视剧可填 TMDB ID" />
               </el-form-item>
               <el-form-item label="年份"><el-input v-model="mediaWizardDraft.year" placeholder="例如 2026" /></el-form-item>
               <el-form-item label="月份"><el-input v-model="mediaWizardDraft.month" placeholder="例如 4，未知可留空" /></el-form-item>
@@ -436,6 +450,10 @@ export default appContextComponent()
                   <el-option label="其他" value="other" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="海报 URL"><el-input v-model="mediaWizardDraft.poster_url" placeholder="可选，匹配后会自动填入" /></el-form-item>
+              <el-form-item label="标签"><el-input v-model="mediaWizardDraft.tags_text" type="textarea" :rows="2" placeholder="一行一个标签" /></el-form-item>
+              <el-form-item label="类型 / 题材"><el-input v-model="mediaWizardDraft.genres_text" type="textarea" :rows="2" placeholder="一行一个类型" /></el-form-item>
+              <el-form-item label="简介"><el-input v-model="mediaWizardDraft.summary" type="textarea" :rows="4" /></el-form-item>
             </div>
           </el-form>
         </template>

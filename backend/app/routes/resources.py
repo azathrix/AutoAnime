@@ -518,6 +518,38 @@ async def api_cancel_download_by_entry_episode(payload: EpisodeDownloadActionPay
     )
 
 
+@router.post("/api/downloads/cancel-all")
+async def api_cancel_all_downloads() -> dict[str, Any]:
+    cancelled_runtime = await runtime_store.cancel_processor_tasks(DOWNLOAD_RUNTIME_PROCESSORS)
+    ts = now()
+    with connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE download_jobs
+            SET status='cancelled', last_error='用户取消全部下载', retry_after='', updated_at=?
+            WHERE status IN ('pending','running','submitted','downloading','failed','paused')
+            """,
+            (ts,),
+        )
+        changed_jobs = cursor.rowcount if cursor.rowcount is not None else 0
+        conn.execute(
+            """
+            UPDATE episode_resources
+            SET status='cancelled', updated_at=?
+            WHERE downloaded=0
+              AND status IN ('queued','downloading','remote_completed','failed','paused')
+            """,
+            (ts,),
+        )
+    log("warn", f"已取消全部下载任务: runtime={cancelled_runtime} jobs={changed_jobs}")
+    return {
+        "status": "cancelled",
+        "runtime_cancelled": cancelled_runtime,
+        "download_jobs": changed_jobs,
+        "message": f"已取消全部下载任务: {changed_jobs} 条记录",
+    }
+
+
 @router.post("/api/episodes/{episode_id}/download/pause")
 async def api_pause_episode_download(episode_id: int) -> dict[str, Any]:
     return await _set_episode_download_state(episode_id, "paused", "用户暂停下载", "已暂停该集本地下载流程")

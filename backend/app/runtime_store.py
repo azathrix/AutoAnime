@@ -338,6 +338,25 @@ class RuntimeStore:
             await self.bump()
         return cancelled
 
+    async def cancel_processor_tasks(self, processor_keys: set[str] | None = None) -> int:
+        cancelled = 0
+        async with self._lock:
+            now_value = utc_now()
+            for task in self.tasks.values():
+                if task.status in TASK_TERMINAL_STATUSES:
+                    continue
+                if processor_keys and task.processor_key not in processor_keys:
+                    continue
+                task.status = "cancelled"
+                task.message = "用户取消该类任务"
+                task.error = ""
+                task.retry_at = ""
+                task.updated_at = now_value
+                cancelled += 1
+        if cancelled:
+            await self.bump()
+        return cancelled
+
     def has_active_episode_task(self, entry_id: int, episode_number: int, processor_keys: set[str] | None = None) -> bool:
         for task in self.tasks.values():
             if task.status in TASK_TERMINAL_STATUSES:

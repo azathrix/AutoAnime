@@ -61,6 +61,10 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
     month = max(0, min(12, int(payload.month or 0)))
     region = payload.region.strip() or "jp"
     source_ref = payload.source_ref.strip()
+    poster_url = payload.poster_url.strip()
+    summary = payload.summary.strip()
+    genres_json = normalize_json_list_text(payload.genres_json)
+    tags_json = normalize_json_list_text(payload.tags_json)
     ts = now()
     work_key = fingerprint(title, bangumi_id or tmdb_id)
     entry_key = fingerprint(f"{media_type}:{bangumi_id or tmdb_id or title}:S{season_number}", "")
@@ -88,8 +92,8 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
             INSERT INTO entries
               (work_id, fingerprint, domain_kind, media_type, region, source_provider, metadata_provider,
                external_id, target_library_id, display_title, title_root, title_raw, title_cn,
-               bangumi_id, tmdb_id, year, month, season_number, created_at, updated_at)
-            VALUES (?, ?, 'library', ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               bangumi_id, tmdb_id, year, month, season_number, poster_url, summary, genres_json, tags_json, created_at, updated_at)
+            VALUES (?, ?, 'library', ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               media_type=excluded.media_type,
               region=excluded.region,
@@ -101,6 +105,10 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
               tmdb_id=CASE WHEN entries.tmdb_id='' THEN excluded.tmdb_id ELSE entries.tmdb_id END,
               year=CASE WHEN excluded.year>0 THEN excluded.year ELSE entries.year END,
               month=CASE WHEN excluded.month>0 THEN excluded.month ELSE entries.month END,
+              poster_url=CASE WHEN excluded.poster_url!='' THEN excluded.poster_url ELSE entries.poster_url END,
+              summary=CASE WHEN excluded.summary!='' THEN excluded.summary ELSE entries.summary END,
+              genres_json=CASE WHEN excluded.genres_json!='[]' THEN excluded.genres_json ELSE entries.genres_json END,
+              tags_json=CASE WHEN excluded.tags_json!='[]' THEN excluded.tags_json ELSE entries.tags_json END,
               updated_at=excluded.updated_at
             """,
             (
@@ -120,6 +128,10 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
                 year,
                 month,
                 season_number,
+                poster_url,
+                summary,
+                genres_json,
+                tags_json,
                 ts,
                 ts,
             ),

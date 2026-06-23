@@ -90,6 +90,11 @@ export default appContextComponent()
                     <el-tag :type="queueTag(selectedQueue)">{{ queueState(selectedQueue) }}</el-tag>
                     <el-tag v-if="selectedQueue.waiting" type="warning">重试 {{ selectedQueue.waiting }}</el-tag>
                     <el-button v-if="selectedQueue.key === 'download'" size="small" plain @click="openProcessorSettings">设置</el-button>
+                    <el-popconfirm v-if="selectedQueue.key === 'download'" title="取消全部下载任务？" @confirm="cancelAllDownloads">
+                      <template #reference>
+                        <el-button size="small" type="danger" plain>取消全部</el-button>
+                      </template>
+                    </el-popconfirm>
                     <el-button v-if="selectedQueueAction" size="small" plain @click="runAction(selectedQueueAction)">立即执行该队列</el-button>
                   </div>
                 </div>

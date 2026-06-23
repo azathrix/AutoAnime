@@ -69,6 +69,10 @@ class MediaCreatePayload(BaseModel):
     subtitle_path: str = ""
     subtitle_url: str = ""
     subtitle_file_name: str = ""
+    poster_url: str = ""
+    summary: str = ""
+    genres_json: str = "[]"
+    tags_json: str = "[]"
 
 class RssSubscriptionPayload(BaseModel):
     name: str = ""

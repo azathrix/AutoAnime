@@ -28,8 +28,14 @@ export default appContextComponent()
             <el-descriptions :column="2" border class="entry-meta-descriptions">
               <el-descriptions-item label="标题">{{ selectedEntry.title_cn || selectedEntry.display_title || '-' }}</el-descriptions-item>
               <el-descriptions-item label="媒体类型">{{ mediaTypeLabel(selectedEntry.media_type) }}</el-descriptions-item>
-              <el-descriptions-item label="Bangumi ID">{{ selectedEntry.bangumi_id || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="TMDB ID">{{ selectedEntry.tmdb_id || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="Bangumi ID">
+                <a v-if="selectedEntry.bangumi_id" :href="`https://bgm.tv/subject/${selectedEntry.bangumi_id}`" target="_blank" rel="noreferrer">{{ selectedEntry.bangumi_id }}</a>
+                <span v-else>-</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="TMDB ID">
+                <a v-if="selectedEntry.tmdb_id" :href="`https://www.themoviedb.org/${selectedEntry.media_type === 'movie' ? 'movie' : 'tv'}/${selectedEntry.tmdb_id}`" target="_blank" rel="noreferrer">{{ selectedEntry.tmdb_id }}</a>
+                <span v-else>-</span>
+              </el-descriptions-item>
               <el-descriptions-item label="年份 / 月份">{{ selectedEntry.year || '-' }} / {{ selectedEntry.month || '-' }}</el-descriptions-item>
               <el-descriptions-item label="国家 / 地区">{{ regionLabel(selectedEntry.region) }}</el-descriptions-item>
               <el-descriptions-item label="追番状态">{{ selectedEntryDomain === 'seasonal' ? '追番中' : '普通媒体库条目' }}</el-descriptions-item>

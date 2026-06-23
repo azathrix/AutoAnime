@@ -13,6 +13,7 @@ import {
   resourceReferenceKind,
   sourceModeText,
   splitTextLines,
+  titleFromResourceSeed,
 } from './viewHelpers'
 
 export function createAppActions(app, deps) {
@@ -281,6 +282,16 @@ export function createAppActions(app, deps) {
     }
   }
 
+  async function cancelAllDownloads() {
+    try {
+      const result = await postAction('/downloads/cancel-all')
+      ElMessage.success(result?.message || '已取消全部下载任务')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
   async function pauseEpisodeDownload(row) {
     try {
       const episodeId = Number(row?.episode_id || 0)
@@ -360,13 +371,16 @@ export function createAppActions(app, deps) {
     Object.assign(app.mediaWizardDraft, {
       source_mode: 'link',
       title: '',
-      alias: '',
       bangumi_id: '',
       tmdb_id: '',
       year: 0,
       month: 0,
       season_number: 1,
       region: app.currentMediaType === 'anime' ? 'jp' : '',
+      poster_url: '',
+      summary: '',
+      tags_text: '',
+      genres_text: '',
       episode_number: 0,
       resource_title: '',
       source_ref: '',
@@ -385,11 +399,10 @@ export function createAppActions(app, deps) {
         app.mediaWizardDraft.source_mode = 'link'
         app.mediaWizardDraft.resources_text = seed
         app.mediaWizardDraft.source_ref = seed
-      } else if (seed) {
-        app.mediaWizardDraft.title = app.mediaWizardDraft.title || seed
       }
-      if (seed && !isValidResourceReference(seed)) {
-        await searchWizardMetadata('bangumi', seed, true)
+      const titleSeed = titleFromResourceSeed(seed || app.mediaWizardDraft.resources_text || app.mediaWizardFiles?.[0]?.name || '')
+      if (titleSeed && !app.mediaWizardDraft.title) {
+        app.mediaWizardDraft.title = titleSeed
       }
     }
     if (app.mediaWizardStep === 1 && !app.mediaWizardDraft.title.trim()) {
@@ -411,12 +424,36 @@ export function createAppActions(app, deps) {
 
   function applyMetadataToWizard(item) {
     app.mediaWizardDraft.title = item.title || item.original_title || app.mediaWizardDraft.title
-    app.mediaWizardDraft.alias = item.original_title || app.mediaWizardDraft.alias
     app.mediaWizardDraft.year = item.year || app.mediaWizardDraft.year
     app.mediaWizardDraft.month = item.month || app.mediaWizardDraft.month
     app.mediaWizardDraft.region = item.region || app.mediaWizardDraft.region
+    app.mediaWizardDraft.poster_url = item.poster_url || app.mediaWizardDraft.poster_url
+    app.mediaWizardDraft.summary = item.summary || app.mediaWizardDraft.summary
+    if (item.tags_json || item.tags) app.mediaWizardDraft.tags_text = listTextFromJson(item.tags_json || item.tags)
+    if (item.genres_json || item.genres) app.mediaWizardDraft.genres_text = listTextFromJson(item.genres_json || item.genres)
     if (item.provider === 'bangumi') app.mediaWizardDraft.bangumi_id = String(item.id || '')
     if (item.provider === 'tmdb') app.mediaWizardDraft.tmdb_id = String(item.id || '')
+  }
+
+  function applyMetadataToEntryEdit(item) {
+    app.entryEditForm.title_cn = item.title || item.original_title || app.entryEditForm.title_cn
+    app.entryEditForm.title_raw = item.original_title || app.entryEditForm.title_raw
+    app.entryEditForm.year = item.year || app.entryEditForm.year
+    app.entryEditForm.month = item.month || app.entryEditForm.month
+    app.entryEditForm.region = item.region || app.entryEditForm.region
+    app.entryEditForm.poster_url = item.poster_url || app.entryEditForm.poster_url
+    app.entryEditForm.summary = item.summary || app.entryEditForm.summary
+    if (item.tags_json || item.tags) app.entryEditForm.tags_text = listTextFromJson(item.tags_json || item.tags)
+    if (item.genres_json || item.genres) app.entryEditForm.genres_text = listTextFromJson(item.genres_json || item.genres)
+    if (item.provider === 'bangumi') app.entryEditForm.bangumi_id = String(item.id || '')
+    if (item.provider === 'tmdb') app.entryEditForm.tmdb_id = String(item.id || '')
+  }
+
+  function applyMetadataSearchItem(item) {
+    if (app.metadataSearchTarget === 'entry') applyMetadataToEntryEdit(item)
+    else applyMetadataToWizard(item)
+    app.metadataSearchDialogOpen = false
+    ElMessage.success('已填入作品信息')
   }
 
   async function searchWizardMetadata(provider, keyword, autoApply = false) {
@@ -432,10 +469,13 @@ export function createAppActions(app, deps) {
     }
   }
 
-  async function openMetadataSearch(provider) {
+  async function openMetadataSearch(provider = 'bangumi', target = 'wizard') {
     app.metadataSearchProvider = provider
-    app.metadataSearchKeyword = app.mediaWizardDraft.title || app.mediaWizardSeed || app.entryEditForm.title_cn || ''
-    app.metadataSearchResults = []
+    app.metadataSearchTarget = target
+    app.metadataSearchKeyword = target === 'entry'
+      ? (app.entryEditForm.title_cn || app.entryEditForm.title_raw || '')
+      : (app.mediaWizardDraft.title || titleFromResourceSeed(app.mediaWizardSeed || app.mediaWizardDraft.resources_text || '') || '')
+    app.metadataSearchResults = { bangumi: [], tmdb: [] }
     app.metadataSearchDialogOpen = true
     if (app.metadataSearchKeyword) await runMetadataSearch()
   }
@@ -443,8 +483,18 @@ export function createAppActions(app, deps) {
   async function runMetadataSearch() {
     app.metadataSearchLoading = true
     try {
-      const result = await getAction(`/metadata/search?provider=${encodeURIComponent(app.metadataSearchProvider)}&keyword=${encodeURIComponent(app.metadataSearchKeyword)}`)
-      app.metadataSearchResults = result.items || []
+      const keyword = encodeURIComponent(app.metadataSearchKeyword)
+      const [bangumiResult, tmdbResult] = await Promise.allSettled([
+        getAction(`/metadata/search?provider=bangumi&keyword=${keyword}`),
+        getAction(`/metadata/search?provider=tmdb&keyword=${keyword}`),
+      ])
+      app.metadataSearchResults = {
+        bangumi: bangumiResult.status === 'fulfilled' ? (bangumiResult.value.items || []) : [],
+        tmdb: tmdbResult.status === 'fulfilled' ? (tmdbResult.value.items || []) : [],
+      }
+      if (bangumiResult.status === 'rejected' && tmdbResult.status === 'rejected') {
+        ElMessage.error(apiErrorMessage(bangumiResult.reason))
+      }
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
     } finally {
@@ -487,6 +537,10 @@ export function createAppActions(app, deps) {
         subtitle_path: app.mediaWizardDraft.subtitle_path || '',
         subtitle_url: splitTextLines(app.mediaWizardDraft.subtitles_text || app.mediaWizardDraft.subtitle_url || '')[0] || '',
         subtitle_file_name: app.mediaWizardDraft.subtitle_file_name || '',
+        poster_url: app.mediaWizardDraft.poster_url || '',
+        summary: app.mediaWizardDraft.summary || '',
+        tags_json: jsonFromListText(app.mediaWizardDraft.tags_text || ''),
+        genres_json: jsonFromListText(app.mediaWizardDraft.genres_text || ''),
       }
       const created = await postAction(`/media/${app.currentMediaType}`, payload)
       const entryId = Number(created.entry?.id || created.detail?.entry?.id || 0)
@@ -631,16 +685,17 @@ export function createAppActions(app, deps) {
         bangumi_id: app.entryEditForm.bangumi_id,
         tmdb_id: app.entryEditForm.tmdb_id,
       })
+      const entry = result.entry || result
       Object.assign(app.entryEditForm, {
-        title_cn: result.title_cn || app.entryEditForm.title_cn,
-        title_romaji: result.title_romaji || app.entryEditForm.title_romaji,
-        title_raw: result.title_raw || app.entryEditForm.title_raw,
-        poster_url: result.poster_url || app.entryEditForm.poster_url,
-        summary: result.summary || app.entryEditForm.summary,
-        year: result.year || app.entryEditForm.year,
-        month: result.month || app.entryEditForm.month,
-        tags_text: listTextFromJson(result.tags_json || app.entryEditForm.tags_text),
-        genres_text: listTextFromJson(result.genres_json || app.entryEditForm.genres_text),
+        title_cn: entry.title_cn || app.entryEditForm.title_cn,
+        title_romaji: entry.title_romaji || app.entryEditForm.title_romaji,
+        title_raw: entry.title_raw || app.entryEditForm.title_raw,
+        poster_url: entry.poster_url || app.entryEditForm.poster_url,
+        summary: entry.summary || app.entryEditForm.summary,
+        year: entry.year || app.entryEditForm.year,
+        month: entry.month || app.entryEditForm.month,
+        tags_text: entry.tags_json ? listTextFromJson(entry.tags_json) : app.entryEditForm.tags_text,
+        genres_text: entry.genres_json ? listTextFromJson(entry.genres_json) : app.entryEditForm.genres_text,
       })
       app.metadataFetchProgress = 100
       ElMessage.success('信息已填入，请确认后保存')
@@ -756,11 +811,13 @@ export function createAppActions(app, deps) {
     addDownloader,
     advanceMediaWizard,
     apiErrorMessage,
+    applyMetadataSearchItem,
     applyMetadataToWizard,
-  archiveCurrentEntry,
-  cancelEpisodeDownload,
-  cancelQueueDownload,
-  commitEpisodeImport,
+    archiveCurrentEntry,
+    cancelAllDownloads,
+    cancelEpisodeDownload,
+    cancelQueueDownload,
+    commitEpisodeImport,
     commitMediaWizard,
     deleteEpisodeResource,
     deleteRssSubscription,

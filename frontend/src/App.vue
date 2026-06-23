@@ -97,6 +97,7 @@ import {
   subtitleFormatText,
   taskStatusText,
   taskTag,
+  titleFromResourceSeed,
   watchableCount,
 } from './composables/viewHelpers'
 import DashboardPage from './components/DashboardPage.vue'
@@ -135,7 +136,8 @@ const metadataSearchDialogOpen = ref(false)
 const metadataSearchProvider = ref('bangumi')
 const metadataSearchKeyword = ref('')
 const metadataSearchLoading = ref(false)
-const metadataSearchResults = ref([])
+const metadataSearchResults = ref({ bangumi: [], tmdb: [] })
+const metadataSearchTarget = ref('wizard')
 const episodeResourceDialogOpen = ref(false)
 const entryEditDialogOpen = ref(false)
 const batchSubtitleDialogOpen = ref(false)
@@ -227,13 +229,16 @@ const episodeImportForm = reactive({
 const mediaWizardDraft = reactive({
   source_mode: 'link',
   title: '',
-  alias: '',
   bangumi_id: '',
   tmdb_id: '',
   year: 0,
   month: 0,
   season_number: 1,
   region: '',
+  poster_url: '',
+  summary: '',
+  tags_text: '',
+  genres_text: '',
   episode_number: 0,
   resource_title: '',
   source_ref: '',
@@ -375,12 +380,22 @@ const weekDays = computed(() => {
   return Array.from({ length: 7 }, (_, index) => {
     const date = addDays(weekStart.value, index)
     const key = formatDateKey(date)
+    const itemsByEntry = new Map()
+    for (const item of seasonalCalendarCards.value) {
+      const itemDate = formatDateKey(new Date(item.updated_at || item.synced_at || 0))
+      if (itemDate !== key) continue
+      const entryId = Number(item.entry_id || 0)
+      const old = itemsByEntry.get(entryId)
+      if (!old || Number(item.episode_number || 0) > Number(old.episode_number || 0)) {
+        itemsByEntry.set(entryId, item)
+      }
+    }
     return {
       key,
       label: labels[index],
       dateLabel: `${date.getMonth() + 1}/${date.getDate()}`,
       isToday: key === formatDateKey(new Date()),
-      items: seasonalCalendarCards.value.filter(item => formatDateKey(new Date(item.updated_at || item.synced_at || 0)) === key)
+      items: Array.from(itemsByEntry.values()).sort((a, b) => Number(b.episode_number || 0) - Number(a.episode_number || 0))
     }
   })
 })
@@ -925,6 +940,7 @@ exposeAppContext({
   metadataSearchLoading,
   metadataSearchProvider,
   metadataSearchResults,
+  metadataSearchTarget,
   numberFromInput,
   openBatchSubtitleDialog,
   openEpisodeImportDialog,
@@ -981,6 +997,7 @@ exposeAppContext({
   subtitleFormatText,
   taskStatusText,
   taskTag,
+  titleFromResourceSeed,
   toggleLibraryTag,
   view,
   watchableCount,
@@ -995,8 +1012,10 @@ const {
   addDownloader,
   advanceMediaWizard,
   apiErrorMessage,
+  applyMetadataSearchItem,
   applyMetadataToWizard,
   archiveCurrentEntry,
+  cancelAllDownloads,
   cancelEpisodeDownload,
   cancelQueueDownload,
   commitEpisodeImport,
@@ -1056,8 +1075,10 @@ exposeAppContext({
   addDownloader,
   advanceMediaWizard,
   apiErrorMessage,
+  applyMetadataSearchItem,
   applyMetadataToWizard,
   archiveCurrentEntry,
+  cancelAllDownloads,
   cancelEpisodeDownload,
   cancelQueueDownload,
   commitEpisodeImport,

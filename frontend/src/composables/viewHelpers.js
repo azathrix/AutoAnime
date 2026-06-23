@@ -82,6 +82,28 @@ export function resourceReferenceKind(value) {
   return '资源'
 }
 
+export function titleFromResourceSeed(value) {
+  let text = String(value || '').trim()
+  if (!text) return ''
+  try {
+    const url = new URL(text)
+    const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '')
+    if (name) text = name
+  } catch {
+    const dn = text.match(/[?&]dn=([^&]+)/i)
+    if (dn) text = decodeURIComponent(dn[1].replace(/\+/g, ' '))
+  }
+  return text
+    .replace(/\.(torrent|mkv|mp4|avi|mov|wmv|flv|webm)$/i, '')
+    .replace(/magnet:\?.*/i, '')
+    .replace(/\[[^\]]*(1080p|2160p|720p|hevc|avc|aac|web|rip|简|繁|字幕)[^\]]*\]/gi, '')
+    .replace(/【[^】]*(1080p|2160p|720p|hevc|avc|aac|web|rip|简|繁|字幕)[^】]*】/gi, '')
+    .replace(/S\d{1,2}E\d{1,4}/ig, '')
+    .replace(/(?:第|EP|E|episode)[\s._-]*\d{1,4}/ig, '')
+    .replace(/[\s._-]+/g, ' ')
+    .trim()
+}
+
 export function isValidSubtitleReference(value) {
   const text = String(value || '').trim().toLowerCase()
   if (!text) return false
