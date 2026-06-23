@@ -13,6 +13,33 @@ from .queue_bridge import request_queue_trigger
 from .runtime_store import RuntimeTask, runtime_store
 
 
+active_processor_tasks: dict[int, tuple[Any, RuntimeTask]] = {}
+
+
+async def cancel_active_processor_tasks(
+    processor_keys: set[str] | None = None,
+    entry_id: int = 0,
+    episode_number: int = 0,
+) -> int:
+    import asyncio
+
+    targets = []
+    for task_id, (runner, runtime_task) in active_processor_tasks.items():
+        if processor_keys and runtime_task.processor_key not in processor_keys:
+            continue
+        payload = runtime_task.payload or {}
+        if entry_id > 0 and int(payload.get("entry_id") or 0) != int(entry_id):
+            continue
+        if episode_number > 0 and int(payload.get("episode_number") or 0) != int(episode_number):
+            continue
+        targets.append((task_id, runner))
+    for _, runner in targets:
+        if not runner.done():
+            runner.cancel()
+    if targets:
+        await asyncio.gather(*(runner for _, runner in targets), return_exceptions=True)
+    return len(targets)
+
 LOG_PAYLOAD_KEYS = [
     "entry_id",
     "release_id",
@@ -300,10 +327,7 @@ async def dispatch_result(task: RuntimeTask, payload: dict[str, Any], result: Pr
     return enqueued
 
 
-async def run_one_task(processor_key: str = "", processor_limits: dict[str, int] | None = None) -> bool:
-    task = await runtime_store.claim_task(processor_key, processor_limits)
-    if not task:
-        return False
+async def execute_task(task: RuntimeTask) -> None:
     processor = get_processor(str(task.processor_key))
     payload = dict(task.payload or {})
     log(
@@ -342,6 +366,13 @@ async def run_one_task(processor_key: str = "", processor_limits: dict[str, int]
     )
     await dispatch_result(task, payload, result)
     await __import__("asyncio").sleep(0)
+
+
+async def run_one_task(processor_key: str = "", processor_limits: dict[str, int] | None = None) -> bool:
+    task = await runtime_store.claim_task(processor_key, processor_limits)
+    if not task:
+        return False
+    await execute_task(task)
     return True
 
 
@@ -352,7 +383,16 @@ async def run_ready_tasks(limit: int = 20, processor_key: str = "") -> int:
     if processor_key:
         limit = min(max(1, int(limits.get(processor_key, 1))), max(1, limit))
     else:
-        limit = min(max(1, limit), 8)
-    results = await asyncio.gather(*(run_one_task(processor_key, limits) for _ in range(limit)))
-    return sum(1 for item in results if item)
+        limit = min(max(1, limit), 64)
+    scheduled = 0
+    for _ in range(limit):
+        task = await runtime_store.claim_task(processor_key, limits)
+        if not task:
+            break
+        runner = asyncio.create_task(execute_task(task))
+        active_processor_tasks[int(task.id)] = (runner, task)
+        runner.add_done_callback(lambda finished, task_id=int(task.id): active_processor_tasks.pop(task_id, None))
+        scheduled += 1
+    await asyncio.sleep(0)
+    return scheduled
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from ..database import connect
 from ..db import log, now
 from ..media_service import build_entry_response, reset_orphaned_download_jobs_in_conn
-from ..pipeline_orchestrator import start_pipeline
+from ..pipeline_orchestrator import cancel_active_processor_tasks, start_pipeline
 from ..runtime_service import DOWNLOAD_RUNTIME_PROCESSORS, trigger_queue
 from ..runtime_store import runtime_store
 from ..schemas import (
@@ -521,6 +521,7 @@ async def api_cancel_download_by_entry_episode(payload: EpisodeDownloadActionPay
 @router.post("/api/downloads/cancel-all")
 async def api_cancel_all_downloads() -> dict[str, Any]:
     cancelled_runtime = await runtime_store.cancel_processor_tasks(DOWNLOAD_RUNTIME_PROCESSORS)
+    cancelled_active = await cancel_active_processor_tasks(DOWNLOAD_RUNTIME_PROCESSORS)
     ts = now()
     with connect() as conn:
         cursor = conn.execute(
@@ -541,10 +542,11 @@ async def api_cancel_all_downloads() -> dict[str, Any]:
             """,
             (ts,),
         )
-    log("warn", f"已取消全部下载任务: runtime={cancelled_runtime} jobs={changed_jobs}")
+    log("warn", f"已取消全部下载任务: runtime={cancelled_runtime} active={cancelled_active} jobs={changed_jobs}")
     return {
         "status": "cancelled",
         "runtime_cancelled": cancelled_runtime,
+        "active_cancelled": cancelled_active,
         "download_jobs": changed_jobs,
         "message": f"已取消全部下载任务: {changed_jobs} 条记录",
     }
@@ -593,9 +595,14 @@ async def _set_episode_download_state_by_entry_episode(
     cancelled = await runtime_store.cancel_episode_tasks(
         entry_id,
         episode_number,
-        {"download"},
+        DOWNLOAD_RUNTIME_PROCESSORS,
     )
-    return {"status": status, "runtime_cancelled": cancelled, "message": message}
+    active_cancelled = await cancel_active_processor_tasks(
+        DOWNLOAD_RUNTIME_PROCESSORS,
+        entry_id=entry_id,
+        episode_number=episode_number,
+    )
+    return {"status": status, "runtime_cancelled": cancelled, "active_cancelled": active_cancelled, "message": message}
 
 
 @router.post("/api/entries/{entry_id}/refresh-resources")

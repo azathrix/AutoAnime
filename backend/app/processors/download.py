@@ -15,6 +15,7 @@ from ..downloader_service import (
 )
 from ..library import render_episode_name, target_dir
 from ..pipeline_models import ProcessorContext, ProcessorResult
+from ..runtime_store import runtime_store
 from ..scanner import extract_file_id, extract_task_id, is_rate_limited_error, retry_after_time
 from ..sync_service import (
     download_file_id,
@@ -308,6 +309,7 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
     source = str(release["magnet"] or release["torrent_url"] or "")
     remote_target = target_dir(dict(release), settings)
     remote_name = render_episode_name(dict(release), int(release["episode_number"] or 0), "", settings)
+    await runtime_store.update_task_progress(context.task_id, 5, "检查下载器远端是否已有文件")
     if not source:
         retry_after = task_retry_after(settings, context.attempts + 1)
         _upsert_submission(
@@ -394,6 +396,7 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
         normalized_name=remote_name,
     )
     try:
+        await runtime_store.update_task_progress(context.task_id, 10, "正在提交下载器任务")
         result = await submit_download(settings, source, remote_target, remote_name)
         task_id = extract_task_id(result) if isinstance(result, dict) else ""
         file_id = extract_file_id(result) if isinstance(result, dict) else ""
@@ -513,6 +516,7 @@ async def process_download(context: ProcessorContext, payload: dict) -> Processo
 async def _sync_completed_artifact(context: ProcessorContext, payload: dict, download_artifact_id: int) -> ProcessorResult:
     from .sync import sync_download_artifact_to_local
 
+    await runtime_store.update_task_progress(context.task_id, 35, "下载器已完成，开始整理到本地")
     local_result = await sync_download_artifact_to_local(context, payload, download_artifact_id)
     if local_result.status != "success":
         return local_result
@@ -541,6 +545,7 @@ async def process_download_poll(context: ProcessorContext, payload: dict) -> Pro
     if not submission:
         return ProcessorResult.retryable("下载记录尚未生成，等待后重试", task_retry_after(settings, context.attempts + 1))
 
+    await runtime_store.update_task_progress(context.task_id, 20, "正在轮询下载器完成状态")
     remote_target = str(submission["target_dir"] or target_dir(dict(release), settings))
     remote_name = str(submission["normalized_name"] or render_episode_name(dict(release), int(release["episode_number"] or 0), "", settings))
     status = str(submission["status"] or "submitted")

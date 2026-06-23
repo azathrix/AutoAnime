@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from .db import get_runtime_generation, get_settings, log, now
 from .library import bool_setting
-from .pipeline_orchestrator import run_ready_tasks, start_pipeline
+from .pipeline_orchestrator import cancel_active_processor_tasks, run_ready_tasks, start_pipeline
 from .queue_bridge import register_queue_trigger
 from .runtime_store import runtime_store
 from .utils import int_setting
@@ -182,6 +182,7 @@ def trigger_queues(names: list[str], delay: float | None = None) -> None:
 
 async def cancel_runtime_activity() -> None:
     await runtime_store.cancel_all()
+    await cancel_active_processor_tasks()
     for task in list(queue_debounce_tasks.values()):
         if task and not task.done():
             task.cancel()

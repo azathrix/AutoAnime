@@ -289,8 +289,14 @@ async def run_rclone_streaming(settings: dict[str, str], args: list[str], progre
         if buffer:
             await handle_segment(buffer)
 
-    await asyncio.gather(consume(process.stdout), consume(process.stderr))
-    return_code = await process.wait()
+    try:
+        await asyncio.gather(consume(process.stdout), consume(process.stderr))
+        return_code = await process.wait()
+    except asyncio.CancelledError:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+        raise
     output = "\n".join(chunks).strip()
     if return_code != 0:
         raise RuntimeError((output or f"exit code {return_code}")[:2000])

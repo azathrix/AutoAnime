@@ -88,8 +88,22 @@ async def sync_download_artifact_to_local(
                             str(row["provider"] or ""),
                         ),
                     )
+                    progress_conn.execute(
+                        """
+                        UPDATE episode_resources
+                        SET status='downloading',
+                            updated_at=?
+                        WHERE entry_id=? AND episode_number=? AND selected=1 AND downloaded=0
+                        """,
+                        (
+                            ts,
+                            int(row["entry_id"] or 0),
+                            int(row["episode_number"] or 0),
+                        ),
+                    )
                 await runtime_store.update_task_progress(context.task_id, value, message)
 
+            await progress_cb(1, "本地下载启动")
             await download_remote_file_to_local(
                 str(row["provider_file_id"] or ""),
                 str(row["remote_path"] or ""),
