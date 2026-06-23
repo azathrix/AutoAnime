@@ -211,6 +211,44 @@ def _update_entry_path_prefix(entry_id: int, old_root, new_root) -> int:
     return updates
 
 
+def _remove_empty_parents(path: Path, stop: Path) -> int:
+    removed = 0
+    current = path.parent
+    stop_resolved = stop.resolve(strict=False)
+    while current != current.parent:
+        try:
+            current_resolved = current.resolve(strict=False)
+        except OSError:
+            break
+        if current_resolved == stop_resolved or stop_resolved not in current_resolved.parents:
+            break
+        try:
+            current.rmdir()
+            removed += 1
+        except OSError:
+            break
+        current = current.parent
+    return removed
+
+
+def _move_existing_file(old_path: str, expected: str, library_root: Path) -> dict[str, int]:
+    result = {"moved_files": 0, "move_conflicts": 0, "removed_dirs": 0}
+    if not old_path or not expected or old_path == expected:
+        return result
+    source = Path(old_path)
+    target = Path(expected)
+    if not source.exists() or not source.is_file():
+        return result
+    if target.exists():
+        result["move_conflicts"] += 1
+        return result
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    result["moved_files"] += 1
+    result["removed_dirs"] += _remove_empty_parents(source, library_root)
+    return result
+
+
 def _legacy_dir_names(entry: dict[str, Any], settings: dict[str, str]) -> list[str]:
     names: list[str] = []
     current = render_series_dir(entry, settings)
@@ -358,6 +396,9 @@ def repair_local_paths() -> dict[str, Any]:
         "rewritten": 0,
         "available": 0,
         "missing": 0,
+        "moved_files": 0,
+        "move_conflicts": 0,
+        "removed_dirs": 0,
     }
     with connect() as conn:
         rows = conn.execute(
@@ -407,6 +448,11 @@ def repair_local_paths() -> dict[str, Any]:
             if not expected:
                 summary["missing"] += 1
                 continue
+            if old_path and old_path != expected and Path(old_path).exists() and not Path(expected).exists():
+                move_result = _move_existing_file(old_path, expected, Path(local_library_root(entry, settings)))
+                summary["moved_files"] += move_result["moved_files"]
+                summary["move_conflicts"] += move_result["move_conflicts"]
+                summary["removed_dirs"] += move_result["removed_dirs"]
             expected_exists = Path(expected).exists()
             if expected != old_path:
                 summary["rewritten"] += 1
@@ -446,7 +492,8 @@ def repair_local_paths() -> dict[str, Any]:
             )
     message = (
         f"本地路径修复完成: 检查 {summary['checked']} 集，"
-        f"重写路径 {summary['rewritten']} 条，可观看 {summary['available']} 条，缺失 {summary['missing']} 条"
+        f"移动文件 {summary['moved_files']} 个，重写路径 {summary['rewritten']} 条，"
+        f"可观看 {summary['available']} 条，缺失 {summary['missing']} 条，冲突 {summary['move_conflicts']} 个"
     )
     log("info", message)
     return {"status": "completed", "message": message, **summary}

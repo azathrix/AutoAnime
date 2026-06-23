@@ -52,7 +52,7 @@ export default appContextComponent()
               <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理任务队列</el-button>
               <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载状态</el-button>
               <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
-              <el-popconfirm title="只修复数据库里的本地路径与可观看状态，不移动实际文件。确定执行？" @confirm="repairLocalPaths">
+              <el-popconfirm title="会把已识别到的旧本地文件移动到新命名路径，并同步修复数据库状态。确定执行？" @confirm="repairLocalPaths">
                 <template #reference>
                   <el-button type="primary">修复全部本地路径</el-button>
                 </template>
