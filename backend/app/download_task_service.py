@@ -42,13 +42,15 @@ def download_phase(value: str) -> str:
     return "pending"
 
 
-def download_status_text(value: str) -> str:
+def download_status_text(value: str, provider: str = "") -> str:
+    provider_key_text = str(provider or "").lower()
+    remote_wait_text = "等待云存储" if "rclone" in provider_key_text or "pikpak" in provider_key_text else "等待下载器完成"
     return {
         "pending": "等待下载",
         "submitting": "提交下载器",
-        "remote_downloading": "等待下载器完成",
+        "remote_downloading": remote_wait_text,
         "remote_completed": "下载器已完成",
-        "local_copying": "整理到本地",
+        "local_copying": "下载中",
         "completed": "可观看",
         "failed": "失败",
         "cancelled": "已取消",
@@ -370,7 +372,7 @@ def list_download_tasks(limit: int = 200) -> list[dict[str, Any]]:
         status = canonical_download_status(str(item.get("status") or ""))
         item["status"] = status
         item["phase"] = download_phase(str(item.get("phase") or status))
-        item["status_text"] = download_status_text(status)
+        item["status_text"] = download_status_text(status, str(item.get("provider_key") or item.get("provider") or ""))
         target_path = str(item.get("target_local_path") or item.get("local_asset_path") or "")
         current_size = 0
         if target_path:
@@ -389,20 +391,17 @@ def list_download_tasks(limit: int = 200) -> list[dict[str, Any]]:
             status = "remote_downloading"
             item["status"] = status
             item["phase"] = "remote_downloading"
-            item["status_text"] = download_status_text(status)
+            item["status_text"] = download_status_text(status, str(item.get("provider_key") or item.get("provider") or ""))
         if status in ACTIVE_DOWNLOAD_STATUSES:
-            if total_size > 0 and downloaded_size > 0:
+            if status == "local_copying" and total_size > 0 and downloaded_size > 0:
                 item["progress"] = min(99, max(1, int(downloaded_size * 100 / total_size)))
                 item["progress_text"] = f"{item['downloaded_size_text']} / {item['total_size_text']}"
-            elif downloaded_size > 0:
+            elif status == "local_copying" and downloaded_size > 0:
                 item["progress"] = 0
-                item["progress_text"] = f"{item['status_text']} · 本地 {item['downloaded_size_text']}"
-            elif total_size > 0:
-                item["progress"] = 0
-                item["progress_text"] = f"{item['status_text']} · 远端 {item['total_size_text']}"
+                item["progress_text"] = f"已写入 {item['downloaded_size_text']}"
             else:
                 item["progress"] = 0
-                item["progress_text"] = item["status_text"]
+                item["progress_text"] = "-"
         if status == "completed":
             item["progress"] = 0
             item["progress_text"] = "可观看"

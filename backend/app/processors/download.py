@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path, PurePosixPath
 
 from ..database import connect
@@ -288,6 +289,24 @@ def _remote_item_stable(submission, item: dict | None) -> bool:
     return previous_size > 0 and previous_size == current_size
 
 
+async def _confirm_remote_item_stable(
+    settings: dict[str, str],
+    target_directory: str,
+    expected_name: str,
+    episode_number: int,
+    first_item: dict,
+) -> dict | None:
+    first_size = _remote_item_size(first_item)
+    if first_size <= 0:
+        return None
+    await asyncio.sleep(5)
+    second_item = await find_existing_remote_episode(settings, target_directory, expected_name, episode_number)
+    second_size = _remote_item_size(second_item)
+    if second_item and second_size > 0 and second_size == first_size:
+        return second_item
+    return None
+
+
 def _local_asset_for_episode(entry_id: int, episode_number: int):
     with connect() as conn:
         return conn.execute(
@@ -367,19 +386,23 @@ async def process_download_presence(context: ProcessorContext, payload: dict) ->
     if existing_remote:
         existing_submission = _submission_for_release(release_id)
         if not _remote_item_stable(existing_submission, existing_remote):
-            retry_after = task_retry_after_minutes(1)
-            _upsert_submission(
-                settings=settings,
-                release=release,
-                status="remote_downloading",
-                target_directory=remote_target,
-                normalized_name=str(existing_remote.get("name") or remote_name),
-                provider_file_id=download_file_id(existing_remote),
-                retry_after=retry_after,
-                last_error="",
-                total_size=_remote_item_size(existing_remote),
-            )
-            return ProcessorResult.retryable("远端文件已出现，等待文件大小稳定后再整理", retry_after)
+            stable_remote = await _confirm_remote_item_stable(settings, remote_target, remote_name, episode_number, existing_remote)
+            if stable_remote:
+                existing_remote = stable_remote
+            else:
+                retry_after = task_retry_after_minutes(1)
+                _upsert_submission(
+                    settings=settings,
+                    release=release,
+                    status="remote_downloading",
+                    target_directory=remote_target,
+                    normalized_name=str(existing_remote.get("name") or remote_name),
+                    provider_file_id=download_file_id(existing_remote),
+                    retry_after=retry_after,
+                    last_error="",
+                    total_size=_remote_item_size(existing_remote),
+                )
+                return ProcessorResult.retryable("远端文件已出现，等待云存储完成", retry_after)
         asset_id = upsert_download_artifact_for_release(release_id, existing_remote, settings) or 0
         if asset_id <= 0:
             return ProcessorResult.retryable(
@@ -393,7 +416,7 @@ async def process_download_presence(context: ProcessorContext, payload: dict) ->
             target_directory=remote_target,
             normalized_name=str(existing_remote.get("name") or remote_name),
             provider_file_id=download_file_id(existing_remote),
-            total_size=int(existing_remote.get("size") or existing_remote.get("Size") or 0),
+            total_size=_remote_item_size(existing_remote),
         )
         log(
             "info",
@@ -472,24 +495,34 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
     if existing_remote:
         existing_submission = _submission_for_release(release_id)
         if not _remote_item_stable(existing_submission, existing_remote):
-            retry_after = task_retry_after_minutes(1)
-            _upsert_submission(
-                settings=settings,
-                release=release,
-                status="remote_downloading",
-                target_directory=remote_target,
-                normalized_name=str(existing_remote.get("name") or remote_name),
-                provider_file_id=download_file_id(existing_remote),
-                retry_after=retry_after,
-                last_error="",
-                total_size=_remote_item_size(existing_remote),
+            stable_remote = await _confirm_remote_item_stable(
+                settings,
+                remote_target,
+                remote_name,
+                int(release["episode_number"] or 0),
+                existing_remote,
             )
-            log(
-                "info",
-                f"下载提交前命中远端文件但暂不整理: release_id={release_id} entry_id={release['entry_id']} "
-                f"episode={release['episode_number']} size={_remote_item_size(existing_remote)}",
-            )
-            return ProcessorResult.retryable("远端文件已出现，等待文件大小稳定后再整理", retry_after)
+            if stable_remote:
+                existing_remote = stable_remote
+            else:
+                retry_after = task_retry_after_minutes(1)
+                _upsert_submission(
+                    settings=settings,
+                    release=release,
+                    status="remote_downloading",
+                    target_directory=remote_target,
+                    normalized_name=str(existing_remote.get("name") or remote_name),
+                    provider_file_id=download_file_id(existing_remote),
+                    retry_after=retry_after,
+                    last_error="",
+                    total_size=_remote_item_size(existing_remote),
+                )
+                log(
+                    "info",
+                    f"下载提交前命中远端文件但暂不整理: release_id={release_id} entry_id={release['entry_id']} "
+                    f"episode={release['episode_number']} size={_remote_item_size(existing_remote)}",
+                )
+                return ProcessorResult.retryable("远端文件已出现，等待云存储完成", retry_after)
         asset_id = upsert_download_artifact_for_release(release_id, existing_remote, settings) or 0
         if asset_id <= 0:
             return ProcessorResult.retryable(
@@ -503,7 +536,7 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
             target_directory=remote_target,
             normalized_name=str(existing_remote.get("name") or remote_name),
             provider_file_id=download_file_id(existing_remote),
-            total_size=int(existing_remote.get("size") or existing_remote.get("Size") or 0),
+            total_size=_remote_item_size(existing_remote),
         )
         log(
             "info",
@@ -717,7 +750,19 @@ async def process_download_poll(context: ProcessorContext, payload: dict) -> Pro
                     if _remote_item_stable(submission, matched):
                         status = "remote_completed"
                     else:
-                        message = "远端文件已出现，等待文件大小稳定后再整理"
+                        stable_remote = await _confirm_remote_item_stable(
+                            settings,
+                            remote_target,
+                            remote_name,
+                            int(release["episode_number"] or 0),
+                            matched,
+                        )
+                        if stable_remote:
+                            matched = stable_remote
+                            file_id = download_file_id(matched)
+                            status = "remote_completed"
+                        else:
+                            message = "远端文件已出现，等待云存储完成"
                 else:
                     message = "下载器已提交，目标目录暂未发现完成文件"
             elif file_id and not str(submission["submission_id"] or ""):
