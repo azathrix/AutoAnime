@@ -121,7 +121,7 @@ export function entryMediaType(item) {
 
 export function entryTitle(item) {
   if (!item) return ''
-  return item.work_display_title || item.entry_display_title || item.display_title || item.title_cn || item.work_title || item.title_root || '未命名条目'
+  return item.entry_display_title || item.display_title || item.title_cn || item.work_display_title || item.work_title || item.title_root || '未命名条目'
 }
 
 export function cardSubtitle(item) {

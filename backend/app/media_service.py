@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from .database import connect
 from .db import log, now
+from .library import parse_entry_labels
 from .parser import fingerprint
 from .pipeline_orchestrator import start_pipeline
 from .runtime_service import ACTIVE_DOWNLOAD_STATUSES, DOWNLOAD_RUNTIME_PROCESSORS
@@ -554,6 +555,9 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
     }
 
 def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain: str | None = None) -> dict[str, Any]:
+    title_cn = payload.title_cn.strip()
+    labels = parse_entry_labels(title_cn)
+    title_root = str(labels.get("title_root") or title_cn).strip()
     with connect() as conn:
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
         if not entry:
@@ -565,6 +569,8 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
             """
             UPDATE entries
             SET title_cn=?,
+                display_title=?,
+                title_root=?,
                 bangumi_id=?,
                 tmdb_id=?,
                 bangumi_score=?,
@@ -584,7 +590,9 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
             WHERE id=?
             """,
             (
-                payload.title_cn.strip(),
+                title_cn,
+                title_cn,
+                title_root,
                 payload.bangumi_id.strip(),
                 payload.tmdb_id.strip(),
                 max(0.0, float(payload.bangumi_score or 0)),
@@ -612,7 +620,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 WHERE bangumi_id=?
                 """,
                 (
-                    payload.title_cn.strip(),
+                    title_cn,
                     payload.bangumi_id.strip(),
                     payload.tmdb_id.strip(),
                     payload.year,
