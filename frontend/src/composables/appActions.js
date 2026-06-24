@@ -946,8 +946,8 @@ export function createAppActions(app, deps) {
     app.settings.tv_source_priority = Array.isArray(app.settings.tv_source_priority) ? app.settings.tv_source_priority : []
     app.settings.tv_subtitle_priority = Array.isArray(app.settings.tv_subtitle_priority) ? app.settings.tv_subtitle_priority : []
     app.settings.downloaders = Array.isArray(app.settings.downloaders) ? app.settings.downloaders : []
-    app.settings.movie_name_template = app.settings.movie_name_template || '{title_base}{year_suffix}/{title_base}{year_suffix}'
-    app.settings.tv_name_template = app.settings.tv_name_template || '{title_base}{year_suffix}/Season {season:02d}/{title_base} - S{season:02d}E{episode:02d} - 第 {episode:02d} 话'
+    app.settings.movie_name_template = app.settings.movie_name_template || '{title_base}/{title_base}'
+    app.settings.tv_name_template = app.settings.tv_name_template || '{title_base}/Season {season:02d}/{title_base} - S{season:02d}E{episode:02d} - 第 {episode:02d} 话'
     app.settings.episode_name_template = app.settings.episode_name_template || '{title_base} - S{season:02d}E{episode:02d} - 第 {episode:02d} 话'
   }
 

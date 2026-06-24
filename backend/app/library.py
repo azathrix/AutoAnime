@@ -130,7 +130,7 @@ def cn_number_to_int(value: str) -> int:
 
 
 def render_series_dir(series: dict, settings: dict[str, str]) -> str:
-    template = settings.get("series_dir_template") or "{title_base}{year_suffix}"
+    template = settings.get("series_dir_template") or "{title_base}"
     title_cn = clean_name(series.get("title_cn") or series.get("title_raw") or "Unknown")
     title_base = normalize_series_root_title(title_cn)
     bangumi_id = series.get("bangumi_id") or "unknown"
