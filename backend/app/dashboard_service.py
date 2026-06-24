@@ -146,14 +146,15 @@ def console_overview(
 
 def scheduled_jobs_summary() -> list[dict[str, Any]]:
     snapshot = runtime_store.snapshot()
+    visible_jobs = {"rss_scan"}
     latest_runs: dict[str, dict[str, Any]] = {}
     for run in snapshot.get("scheduler_runs", []):
         job_key = str(run.get("job_key") or "")
-        if job_key and job_key not in latest_runs:
+        if job_key in visible_jobs and job_key not in latest_runs:
             latest_runs[job_key] = dict(run)
     result = []
     for job in sorted(snapshot.get("scheduler", []), key=lambda item: str(item.get("job_key") or "")):
-        if str(job.get("job_key") or "") == "queue_dispatch":
+        if str(job.get("job_key") or "") not in visible_jobs:
             continue
         item = dict(job)
         item.setdefault("id", 0)
