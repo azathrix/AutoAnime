@@ -103,7 +103,13 @@ import SettingsPage from './components/SettingsPage.vue'
 import EntryDrawer from './components/EntryDrawer.vue'
 import EntryDialogs from './components/EntryDialogs.vue'
 
-const view = ref('dashboard')
+const validViews = new Set(['dashboard', 'seasonal', 'calendar', 'library', 'movies', 'tv', 'logs', 'settings'])
+function initialView() {
+  const saved = window.localStorage.getItem('anitrack:view') || ''
+  return validViews.has(saved) ? saved : 'seasonal'
+}
+
+const view = ref(initialView())
 const appVersion = APP_VERSION
 const appBuild = APP_BUILD
 const selectedConsoleSection = ref('')
@@ -268,6 +274,14 @@ const scheduledJobForm = reactive({
 })
 const processorSettingsForm = reactive({
   download_concurrency: 2,
+})
+const fileBrowser = reactive({
+  open: false,
+  mode: 'video',
+  current: '',
+  parent: '',
+  items: [],
+  loading: false,
 })
 const appContextBindings = {}
 
@@ -464,6 +478,7 @@ const entryResourceRows = computed(() => {
       episode_number: episode || '-',
       release_id: item.release_id || 0,
       resource_title: item.source_title || item.resource_ref || '-',
+      display_name: `${entryTitle(selectedEntry.value)} - S${String(selectedEntry.value?.season_number || 1).padStart(2, '0')}E${String(episode).padStart(2, '0')} - 第 ${String(episode).padStart(2, '0')} 话`,
       source_type: item.source_type || 'magnet',
       source_ref: item.resource_ref || '',
       torrent_url: item.resource_ref && String(item.resource_ref).startsWith('http') ? item.resource_ref : '',
@@ -475,8 +490,8 @@ const entryResourceRows = computed(() => {
       subtitle_file: item.subtitle_path || '-',
       subtitle_url: item.subtitle_ref || '',
       subtitle_file_name: '',
-      downloaded: Boolean(item.watchable) || Boolean(item.local_asset_id),
-      local_path: item.local_asset_path || item.local_path || '',
+      downloaded: Boolean(item.watchable),
+      local_path: item.watchable ? (item.local_asset_path || item.local_path || '') : '',
       status: item.status || '',
       download_status: item.download_status || '',
       download_progress: Number(item.download_progress || 0),
@@ -787,6 +802,7 @@ exposeAppContext({
   errorMessage,
   expandedDownloadTaskKeys,
   expandedResourceKeys,
+  fileBrowser,
   filteredSeries,
   filteredServerLogs,
   filteredServerLogText,
@@ -892,14 +908,15 @@ provide('appContext', appContext)
 
 const {
   addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
+  browseServerFiles,
   archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
   commitEpisodeImport, commitMediaWizard,
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
-  openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog,
+  openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
   openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
-  saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata,
+  saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile,
   confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
   startMetadataProgress, stopMetadataProgress, syncScheduledJobForm,
 } = createAppActions(appContext, {
@@ -916,20 +933,24 @@ const {
 
 exposeAppContext({
   addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
+  browseServerFiles,
   archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
   commitEpisodeImport, commitMediaWizard,
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
-  openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog,
+  openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
   openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
-  saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata,
+  saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile,
   confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
   startMetadataProgress, stopMetadataProgress, syncScheduledJobForm,
 })
 
 watch(selectedScheduledJob, job => {
   syncScheduledJobForm(job)
+})
+watch(view, value => {
+  if (validViews.has(value)) window.localStorage.setItem('anitrack:view', value)
 })
 watch(entryEditDialogOpen, value => {
   if (!value) {

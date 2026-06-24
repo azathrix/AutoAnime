@@ -100,10 +100,54 @@ export default appContextComponent()
             <el-input v-model="episodeResourceForm.subtitle_url" placeholder="https://... / magnet:? / 其它字幕下载地址" />
           </el-form-item>
         </div>
+        <el-form-item label="本地视频文件">
+          <div class="field-with-action">
+            <el-input v-model="episodeResourceForm.local_path" placeholder="/media/anime/..." />
+            <el-button plain @click="openServerFileBrowser('video')">选择文件</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="本地字幕文件">
+          <div class="field-with-action">
+            <el-input v-model="episodeResourceForm.subtitle_path" placeholder="/media/anime/.../*.ass" />
+            <el-button plain @click="openServerFileBrowser('subtitle')">选择字幕</el-button>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="episodeResourceDialogOpen = false">取消</el-button>
         <el-button type="primary" @click="saveEpisodeResource">保存配置</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="fileBrowser.open" :title="fileBrowser.mode === 'subtitle' ? '选择本地字幕文件' : '选择本地视频文件'" width="760px" top="6vh">
+      <div class="file-browser">
+        <div class="file-browser-toolbar">
+          <el-button :disabled="!fileBrowser.parent" @click="browseServerFiles(fileBrowser.parent)">上一级</el-button>
+          <code>{{ fileBrowser.current || '/media' }}</code>
+        </div>
+        <el-table :data="fileBrowser.items" height="420" v-loading="fileBrowser.loading" @row-dblclick="selectServerFile">
+          <el-table-column label="名称" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span>{{ row.kind === 'directory' ? '[目录]' : '[文件]' }} {{ row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.kind === 'directory' ? 'info' : row.kind === 'video' ? 'success' : 'warning'">
+                {{ row.kind === 'directory' ? '目录' : row.kind === 'video' ? '视频' : '字幕' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="path" label="路径" min-width="280" show-overflow-tooltip />
+          <el-table-column label="操作" width="90">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" @click="selectServerFile(row)">{{ row.kind === 'directory' ? '进入' : '选择' }}</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="fileBrowser.open = false">关闭</el-button>
       </template>
     </el-dialog>
 

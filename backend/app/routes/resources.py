@@ -421,7 +421,12 @@ async def api_update_episode(episode_id: int, payload: EpisodePayload) -> dict[s
         resource_ref = payload.resource_ref.strip()
         source_title = payload.source_title.strip()
         local_path = payload.local_path.strip()
-        watchable = 1 if local_path and Path(local_path).exists() else int(episode["watchable"] or 0)
+        subtitle_path = payload.subtitle_path.strip()
+        if local_path and not Path(local_path).exists():
+            raise HTTPException(status_code=400, detail="本地视频文件不存在")
+        if subtitle_path and not Path(subtitle_path).exists():
+            raise HTTPException(status_code=400, detail="本地字幕文件不存在")
+        watchable = 1 if local_path else int(episode["watchable"] or 0)
         conn.execute(
             """
             UPDATE episodes
@@ -444,7 +449,7 @@ async def api_update_episode(episode_id: int, payload: EpisodePayload) -> dict[s
                 resource_ref, resource_ref,
                 payload.subtitle_ref.strip(), payload.subtitle_ref.strip(),
                 local_path, local_path,
-                payload.subtitle_path.strip(), payload.subtitle_path.strip(),
+                subtitle_path, subtitle_path,
                 payload.subtitle_group.strip(), payload.subtitle_group.strip(),
                 payload.resolution.strip(), payload.resolution.strip(),
                 payload.language.strip(), payload.language.strip(),
@@ -457,6 +462,29 @@ async def api_update_episode(episode_id: int, payload: EpisodePayload) -> dict[s
             ),
         )
         row = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if local_path:
+            conn.execute(
+                """
+                INSERT INTO local_assets
+                  (download_artifact_id, release_id, series_id, entry_id, episode_number, local_path,
+                   nfo_status, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'disabled', 'synced', ?, ?)
+                ON CONFLICT(download_artifact_id) DO UPDATE SET
+                  local_path=excluded.local_path,
+                  status='synced',
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    -abs(episode_id),
+                    int(row["release_id"] or 0),
+                    int(row["series_id"] or 0),
+                    int(row["entry_id"] or 0),
+                    int(row["episode_number"] or 0),
+                    local_path,
+                    ts,
+                    ts,
+                ),
+            )
     return {"status": "saved", "item": row_to_dict(row)}
 
 
@@ -520,31 +548,47 @@ async def api_delete_episode_resource(resource_id: int) -> dict[str, Any]:
     return {"status": "deleted", "message": "集数资源已删除"}
 
 
+@router.delete("/api/episodes/{episode_id}")
+async def api_delete_episode(episode_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        entry_id = int(episode["entry_id"] or 0)
+        episode_number = int(episode["episode_number"] or 0)
+        active_placeholders = ",".join("?" for _ in ACTIVE_DOWNLOAD_STATUSES)
+        active = conn.execute(
+            f"""
+            SELECT 1 FROM download_jobs
+            WHERE entry_id=? AND episode_number=?
+              AND status IN ({active_placeholders})
+            LIMIT 1
+            """,
+            (entry_id, episode_number, *ACTIVE_DOWNLOAD_STATUSES),
+        ).fetchone()
+        if active:
+            raise HTTPException(status_code=400, detail="该集仍有下载任务，请先取消任务")
+        conn.execute("DELETE FROM episode_subtitles WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+        conn.execute("DELETE FROM episode_resources WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+        conn.execute("DELETE FROM releases WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+        conn.execute("DELETE FROM local_assets WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
+        conn.execute("DELETE FROM episodes WHERE id=?", (episode_id,))
+    return {"status": "deleted", "message": "集数已删除，本地文件不会被删除"}
+
+
 @router.post("/api/episodes/{episode_id}/refresh")
 async def api_refresh_episode_resource_state(episode_id: int) -> dict[str, Any]:
-    refreshed = 0
     with connect() as conn:
         episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
         if not episode:
             raise HTTPException(status_code=404, detail="集数不存在")
         reset_orphaned_download_jobs_in_conn(conn, int(episode["entry_id"]), int(episode["episode_number"]))
-        local_path = str(episode["local_path"] or "")
-        exists = bool(local_path and Path(local_path).exists())
-        conn.execute(
-            "UPDATE episodes SET watchable=?, status=CASE WHEN ?=1 THEN 'downloaded' ELSE 'available' END, updated_at=? WHERE id=?",
-            (1 if exists else 0, 1 if exists else 0, now(), episode_id),
-        )
-        refreshed += 1
-        resources = conn.execute(
-            "SELECT * FROM episode_resources WHERE episode_id=? OR (entry_id=? AND episode_number=?)",
-            (episode_id, episode["entry_id"], episode["episode_number"]),
-        ).fetchall()
-        for resource in resources:
-            local_path = str(resource["local_path"] or "")
-            exists = bool(local_path and Path(local_path).exists())
-            conn.execute("UPDATE episode_resources SET downloaded=?, updated_at=? WHERE id=?", (1 if exists else int(resource["downloaded"] or 0), now(), resource["id"]))
-            refreshed += 1
-    return {"status": "refreshed", "count": refreshed}
+    return refresh_local_status(episode_id=episode_id)
+
+
+@router.post("/api/episodes/{episode_id}/refresh-local-status")
+async def api_refresh_episode_local_status(episode_id: int) -> dict[str, Any]:
+    return await api_refresh_episode_resource_state(episode_id)
 
 
 @router.post("/api/episodes/{episode_id}/download")

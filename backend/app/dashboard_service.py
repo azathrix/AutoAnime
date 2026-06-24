@@ -354,7 +354,7 @@ def dashboard_data() -> dict[str, Any]:
               GROUP_CONCAT(DISTINCT r.language) AS languages,
               COUNT(DISTINCT CASE WHEN cs.status IN ('submitted','running','completed') THEN cs.id END) AS downloaded_count,
               COUNT(DISTINCT ca.id) AS download_artifact_count,
-              COUNT(DISTINCT la.id) AS local_asset_count
+              COUNT(DISTINCT CASE WHEN COALESCE(ep.watchable, 0)=1 THEN ep.id END) AS local_asset_count
             FROM entries e
             JOIN seasonal_entries se ON se.entry_id=e.id
             JOIN works w ON w.id=e.work_id
@@ -403,7 +403,7 @@ def dashboard_data() -> dict[str, Any]:
               COUNT(DISTINCT ep.id) AS episode_count,
               COUNT(DISTINCT r.id) AS release_count,
               COUNT(DISTINCT ca.id) AS download_artifact_count,
-              COUNT(DISTINCT la.id) AS local_asset_count
+              COUNT(DISTINCT CASE WHEN COALESCE(ep.watchable, 0)=1 THEN ep.id END) AS local_asset_count
             FROM entries e
             LEFT JOIN library_entries le ON le.entry_id=e.id
             JOIN works w ON w.id=e.work_id

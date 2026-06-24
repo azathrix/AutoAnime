@@ -522,7 +522,81 @@ def migrate_episode_model() -> dict[str, Any]:
     return {"status": "completed", "message": message, **summary}
 
 
-def refresh_local_status(entry_id: int = 0) -> dict[str, Any]:
+def _candidate_existing_path(*values: str) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text and Path(text).exists():
+            return text
+    return ""
+
+
+def _refresh_episode_row(conn: sqlite3.Connection, row: Any, settings: dict[str, str], ts: str) -> bool:
+    entry = dict(row)
+    current_path = str(row["local_path"] or "")
+    asset_path = str(row["asset_local_path"] or "")
+    resource_path = str(row["resource_local_path"] or "")
+    existing_path = _candidate_existing_path(current_path, asset_path, resource_path)
+    suffix = _video_suffix(existing_path, current_path, asset_path, resource_path, str(row["source_title"] or ""), str(row["resource_ref"] or ""))
+    expected_path = expected_local_episode_path(entry, int(row["episode_number"] or 0), suffix, settings)
+    final_path = existing_path or _candidate_existing_path(expected_path)
+    exists = bool(final_path)
+    episode_id = int(row["id"] or row["episode_id"] or 0)
+    entry_id = int(row["entry_id"] or 0)
+    episode_number = int(row["episode_number"] or 0)
+    conn.execute(
+        """
+        UPDATE episodes
+        SET local_path=?, watchable=?, status=CASE WHEN ?=1 THEN 'downloaded' ELSE 'available' END, updated_at=?
+        WHERE id=?
+        """,
+        (final_path, 1 if exists else 0, 1 if exists else 0, ts, episode_id),
+    )
+    conn.execute(
+        """
+        UPDATE episode_resources
+        SET downloaded=?, local_path=CASE WHEN ?=1 THEN ? ELSE '' END,
+            status=CASE WHEN ?=1 THEN 'downloaded' ELSE 'available' END,
+            updated_at=?
+        WHERE entry_id=? AND episode_number=?
+        """,
+        (1 if exists else 0, 1 if exists else 0, final_path, 1 if exists else 0, ts, entry_id, episode_number),
+    )
+    if exists:
+        conn.execute(
+            """
+            INSERT INTO local_assets
+              (download_artifact_id, release_id, series_id, entry_id, episode_number, local_path,
+               nfo_status, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'disabled', 'synced', ?, ?)
+            ON CONFLICT(download_artifact_id) DO UPDATE SET
+              local_path=excluded.local_path,
+              status='synced',
+              updated_at=excluded.updated_at
+            """,
+            (
+                -abs(episode_id),
+                int(row["release_id"] or 0),
+                int(row["series_id"] or 0),
+                entry_id,
+                episode_number,
+                final_path,
+                ts,
+                ts,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE local_assets
+            SET status='removed', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND status='synced'
+            """,
+            (ts, entry_id, episode_number),
+        )
+    return exists
+
+
+def refresh_local_status(entry_id: int = 0, episode_id: int = 0) -> dict[str, Any]:
     summary = {"checked": 0, "watchable": 0, "missing": 0}
     settings = get_settings()
     with connect() as conn:
@@ -532,12 +606,29 @@ def refresh_local_status(entry_id: int = 0) -> dict[str, Any]:
         if entry_id > 0:
             where += " AND ep.entry_id=?"
             params = (entry_id,)
+        if episode_id > 0:
+            where += " AND ep.id=?"
+            params = (*params, episode_id)
         rows = conn.execute(
             f"""
             SELECT ep.*, e.display_title, e.title_raw, e.title_cn, e.bangumi_id, e.tmdb_id,
-                   e.year, e.season_number, e.media_type, e.target_library_id
+                   e.year, e.season_number, e.media_type, e.target_library_id,
+                   la.local_path AS asset_local_path,
+                   er.local_path AS resource_local_path
             FROM episodes ep
             JOIN entries e ON e.id=ep.entry_id
+            LEFT JOIN local_assets la ON la.id=(
+              SELECT id FROM local_assets
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number
+              ORDER BY CASE status WHEN 'synced' THEN 0 ELSE 1 END, updated_at DESC, id DESC
+              LIMIT 1
+            )
+            LEFT JOIN episode_resources er ON er.id=(
+              SELECT id FROM episode_resources
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number
+              ORDER BY selected DESC, id DESC
+              LIMIT 1
+            )
             {where}
             ORDER BY ep.entry_id, ep.episode_number
             """,
@@ -546,47 +637,14 @@ def refresh_local_status(entry_id: int = 0) -> dict[str, Any]:
         ts = _now()
         for row in rows:
             summary["checked"] += 1
-            entry = dict(row)
-            current_path = str(row["local_path"] or "")
-            suffix = _video_suffix(current_path, str(row["source_title"] or ""), str(row["resource_ref"] or ""))
-            expected_path = current_path or expected_local_episode_path(entry, int(row["episode_number"] or 0), suffix, settings)
-            exists = bool(expected_path and Path(expected_path).exists())
-            if exists:
+            if _refresh_episode_row(conn, row, settings, ts):
                 summary["watchable"] += 1
             else:
                 summary["missing"] += 1
-            conn.execute(
-                """
-                UPDATE episodes
-                SET local_path=?, watchable=?, status=CASE WHEN ?=1 THEN 'downloaded' ELSE 'available' END, updated_at=?
-                WHERE id=?
-                """,
-                (expected_path, 1 if exists else 0, 1 if exists else 0, ts, int(row["id"] or 0)),
-            )
-            if exists:
-                conn.execute(
-                    """
-                    INSERT INTO local_assets
-                      (download_artifact_id, release_id, series_id, entry_id, episode_number, local_path,
-                       nfo_status, status, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'disabled', 'synced', ?, ?)
-                    ON CONFLICT(download_artifact_id) DO UPDATE SET
-                      local_path=excluded.local_path,
-                      status='synced',
-                      updated_at=excluded.updated_at
-                    """,
-                    (
-                        -abs(int(row["id"] or 0)),
-                        int(row["release_id"] or 0),
-                        int(row["series_id"] or 0),
-                        int(row["entry_id"] or 0),
-                        int(row["episode_number"] or 0),
-                        expected_path,
-                        ts,
-                        ts,
-                    ),
-                )
-    scope = f"entry_id={entry_id}" if entry_id > 0 else "全部"
+    if episode_id > 0:
+        scope = f"episode_id={episode_id}"
+    else:
+        scope = f"entry_id={entry_id}" if entry_id > 0 else "全部"
     message = f"本地状态刷新完成({scope}): 检查 {summary['checked']} 集，可观看 {summary['watchable']} 集，缺失 {summary['missing']} 集"
     log("info", message)
     return {"status": "completed", "message": message, **summary}

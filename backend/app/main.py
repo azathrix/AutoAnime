@@ -11,7 +11,7 @@ from .config import APP_DIR
 from .db import get_settings, init_db, log
 from .media_service import reset_orphaned_download_jobs
 from .processors import register_builtin_processors
-from .routes import dashboard, downloads, media, resources, rss, runtime, settings
+from .routes import dashboard, downloads, files, media, resources, rss, runtime, settings
 from .runtime_service import reschedule, scheduler
 from .settings_service import sync_download_processor_concurrency
 from .utils import int_setting
@@ -39,6 +39,7 @@ app.include_router(rss.router)
 app.include_router(media.router)
 app.include_router(resources.router)
 app.include_router(downloads.router)
+app.include_router(files.router)
 
 FRONTEND_DIR = APP_DIR.parent / "frontend_dist"
 if FRONTEND_DIR.exists():

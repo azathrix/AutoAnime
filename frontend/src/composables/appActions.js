@@ -1,5 +1,6 @@
 import { ElMessage } from 'element-plus'
 import { entryTitle, errorMessage, inferEpisodeFromText, isValidResourceReference, isValidSubtitleReference, jsonFromListText, listTextFromJson, numberFromInput, splitTextLines, titleFromResourceSeed } from './viewHelpers'
+import { createFileBrowserActions } from './fileBrowserActions'
 import { createMetadataActions } from './metadataActions'
 
 export function createAppActions(app, deps) {
@@ -7,6 +8,10 @@ export function createAppActions(app, deps) {
   let metadataProgressTimer = null
   const { clearEntryEditForm, refreshEntryMetadata } = createMetadataActions(app, {
     postAction,
+    apiErrorMessage,
+  })
+  const { browseServerFiles, openServerFileBrowser, selectServerFile } = createFileBrowserActions(app, {
+    getAction,
     apiErrorMessage,
   })
 
@@ -195,9 +200,15 @@ export function createAppActions(app, deps) {
   async function deleteEpisodeResource(row) {
     try {
       const resourceId = Number(row?.resource_id || 0)
-      if (!resourceId) return
-      await deleteAction(`/episode-resources/${resourceId}`)
-      ElMessage.success('集数资源已删除')
+      const episodeId = Number(row?.episode_id || 0)
+      if (resourceId) {
+        await deleteAction(`/episode-resources/${resourceId}`)
+      } else if (episodeId) {
+        await deleteAction(`/episodes/${episodeId}`)
+      } else {
+        return
+      }
+      ElMessage.success('集数已删除')
       if (app.selectedEntry?.id) {
         await app.openEntry(app.selectedEntry.id, app.selectedEntryDomain, app.selectedEntryMediaType)
       }
@@ -1044,14 +1055,14 @@ export function createAppActions(app, deps) {
 
   return {
     addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
-    archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
+    archiveCurrentEntry, browseServerFiles, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
     commitEpisodeImport, commitMediaWizard,
     deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
     editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
-    openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog,
+    openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
     openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
     removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
-    saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata,
+    saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile,
     confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
     startMetadataProgress, stopMetadataProgress, syncScheduledJobForm,
   }

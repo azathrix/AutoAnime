@@ -73,7 +73,7 @@ export default appContextComponent()
           <el-tab-pane label="集数资源">
             <div class="resource-toolbar">
               <el-button type="primary" @click="downloadCurrentEntryResources">批量下载</el-button>
-              <el-button plain @click="refreshCurrentEntryLocalStatus">刷新本地状态</el-button>
+              <el-button plain @click="refreshCurrentEntryLocalStatus">刷新</el-button>
               <el-button plain @click="openEpisodeImportDialog">手动导入集数</el-button>
             </div>
             <el-table
@@ -89,33 +89,52 @@ export default appContextComponent()
                 <template #default="{ row }">
                   <div class="resource-expand">
                     <section class="resource-expand-section">
-                      <strong>资源信息</strong>
-                      <div><span>字幕组</span><code>{{ row.subtitle_group || '-' }}</code></div>
-                      <div><span>分辨率</span><code>{{ row.resolution || '-' }}</code></div>
-                      <div><span>语言</span><code>{{ row.language || '-' }}</code></div>
-                      <div><span>字幕类型</span><code>{{ subtitleFormatText(row.subtitle_format) }}</code></div>
+                      <strong>视频</strong>
                       <div><span>资源链接</span><code>{{ row.source_ref || row.magnet || row.torrent_url || '-' }}</code></div>
+                      <div><span>本地视频</span><code>{{ row.local_path || '-' }}</code></div>
+                      <div><span>下载任务</span><code>{{ row.download_progress_text || row.download_status || '-' }}</code></div>
                     </section>
                     <section class="resource-expand-section">
-                      <strong>字幕与本地文件</strong>
+                      <strong>字幕</strong>
                       <div><span>字幕链接</span><code>{{ row.subtitle_url || '-' }}</code></div>
-                      <div><span>字幕文件路径</span><code>{{ row.subtitle_file || '-' }}</code></div>
-                      <div><span>本地文件路径</span><code>{{ row.local_path || '-' }}</code></div>
+                      <div><span>本地字幕</span><code>{{ row.subtitle_file || '-' }}</code></div>
+                      <div><span>字幕类型</span><code>{{ subtitleFormatText(row.subtitle_format) }}</code></div>
+                      <div><span>语言</span><code>{{ row.language || '-' }}</code></div>
+                    </section>
+                    <section class="resource-expand-section">
+                      <strong>识别信息</strong>
+                      <div><span>字幕组</span><code>{{ row.subtitle_group || '-' }}</code></div>
+                      <div><span>分辨率</span><code>{{ row.resolution || '-' }}</code></div>
+                      <div><span>来源标题</span><code>{{ row.resource_title || '-' }}</code></div>
                     </section>
                   </div>
                 </template>
               </el-table-column>
               <el-table-column prop="episode_number" label="集" width="58" />
-              <el-table-column prop="resource_title" label="资源" min-width="300" show-overflow-tooltip />
-              <el-table-column prop="local_path" label="本地路径" min-width="260" show-overflow-tooltip />
+              <el-table-column prop="display_name" label="名称" min-width="280" show-overflow-tooltip />
               <el-table-column label="可观看" width="94">
                 <template #default="{ row }">
                   <el-tag :type="episodeDownloadTag(row)" size="small">{{ row.downloaded ? '可观看' : '未缓存' }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="90">
+              <el-table-column label="操作" width="92">
                 <template #default="{ row }">
-                  <el-button size="small" type="primary" :disabled="row.downloaded || !row.source_ref" @click.stop="downloadEpisodeResource(row)">下载</el-button>
+                  <el-dropdown trigger="click" @command="command => {
+                    if (command === 'refresh') refreshEpisodeResource(row)
+                    if (command === 'download') downloadEpisodeResource(row)
+                    if (command === 'edit') openEpisodeResourceEditor(row)
+                    if (command === 'delete') deleteEpisodeResource(row)
+                  }">
+                    <el-button size="small" type="primary" @click.stop>操作</el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="refresh">刷新</el-dropdown-item>
+                        <el-dropdown-item command="download" :disabled="row.downloaded || !row.source_ref">下载</el-dropdown-item>
+                        <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                        <el-dropdown-item command="delete">删除</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
                 </template>
               </el-table-column>
             </el-table>
