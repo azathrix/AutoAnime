@@ -350,6 +350,54 @@ export function createAppActions(app, deps) {
     }
   }
 
+  async function cancelGenericTask(row) {
+    try {
+      const taskId = String(row?.id || '')
+      if (!taskId) return
+      const result = await postAction(`/tasks/${encodeURIComponent(taskId)}/cancel`)
+      ElMessage.success(result?.message || '任务已取消')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
+  async function pauseGenericTask(row) {
+    try {
+      const taskId = String(row?.id || '')
+      if (!taskId) return
+      const result = await postAction(`/tasks/${encodeURIComponent(taskId)}/pause`)
+      ElMessage.success(result?.message || '任务已暂停')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
+  async function resumeGenericTask(row) {
+    try {
+      const taskId = String(row?.id || '')
+      if (!taskId) return
+      const result = await postAction(`/tasks/${encodeURIComponent(taskId)}/resume`)
+      ElMessage.success(result?.message || '任务已继续')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
+  async function clearGenericTask(row) {
+    try {
+      const taskId = String(row?.id || '')
+      if (!taskId) return
+      const result = await deleteAction(`/tasks/${encodeURIComponent(taskId)}`)
+      ElMessage.success(result?.message || '任务已清理')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
   async function downloadCurrentEntryResources() {
     try {
       const entryId = Number(app.selectedEntry?.id || 0)
@@ -1050,12 +1098,13 @@ export function createAppActions(app, deps) {
 
   return {
     addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
-    archiveCurrentEntry, backfillCurrentEntrySeason, browseServerFiles, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
+    archiveCurrentEntry, backfillCurrentEntrySeason, browseServerFiles, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelGenericTask, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
+    clearGenericTask,
     commitEpisodeImport, commitMediaWizard,
     deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
     editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
     openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
-    openScheduledSettings, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+    openScheduledSettings, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, pauseGenericTask, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, resumeGenericTask, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
     removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
     saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
     confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,

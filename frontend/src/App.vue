@@ -113,6 +113,7 @@ const view = ref(initialView())
 const appVersion = APP_VERSION
 const appBuild = APP_BUILD
 const selectedConsoleSection = ref('')
+const selectedTaskType = ref('')
 const logKeyword = ref('')
 const loading = ref(false)
 const savingSettings = ref(false)
@@ -179,6 +180,8 @@ const dashboard = reactive({
   scanner_status: {},
   download_tasks: [],
   download_overview: {},
+  tasks: [],
+  task_overview: [],
 })
 const settings = reactive({})
 const diagnostics = reactive({ tables: {} })
@@ -435,6 +438,30 @@ const selectedScheduledJob = computed(() => {
   const section = selectedSectionMeta.value
   if (!section || section.kind !== 'scheduled') return null
   return (dashboard.scheduled_jobs || []).find(item => item.job_key === section.job_key) || null
+})
+const taskTypeDefaults = [
+  { type: 'rss_scan', name: 'RSS 扫描' },
+  { type: 'metadata', name: '刷新元数据' },
+  { type: 'download', name: '下载任务' },
+  { type: 'cache', name: '缓存清理' },
+  { type: 'local_status', name: '本地状态' },
+  { type: 'runtime', name: '后台任务' },
+]
+const taskTypeRows = computed(() => {
+  const overview = new Map((dashboard.task_overview || []).map(item => [String(item.type || ''), item]))
+  return taskTypeDefaults.map(item => ({
+    ...item,
+    ...(overview.get(item.type) || {}),
+    total: Number(overview.get(item.type)?.total || 0),
+    running: Number(overview.get(item.type)?.running || 0),
+    pending: Number(overview.get(item.type)?.pending || 0),
+    failed: Number(overview.get(item.type)?.failed || 0),
+  }))
+})
+const filteredConsoleTasks = computed(() => {
+  const selected = String(selectedTaskType.value || '')
+  const rows = dashboard.tasks || []
+  return selected ? rows.filter(item => String(item.type || '') === selected) : rows
 })
 const scanRunning = computed(() => String(dashboard.scanner_status?.status || '') === 'running')
 const filteredServerLogs = computed(() => {
@@ -714,6 +741,9 @@ function applyDashboard(nextDashboard) {
   if (!scheduledConsoleSections.value.some(item => item.key === selectedConsoleSection.value)) {
     selectedConsoleSection.value = ''
   }
+  if (selectedTaskType.value && !taskTypeRows.value.some(item => item.type === selectedTaskType.value)) {
+    selectedTaskType.value = ''
+  }
 }
 
 async function reload() {
@@ -827,6 +857,7 @@ exposeAppContext({
   expandedResourceKeys,
   fileBrowser,
   filteredSeries,
+  filteredConsoleTasks,
   filteredServerLogs,
   filteredServerLogText,
   formatDateKey,
@@ -910,6 +941,7 @@ exposeAppContext({
   selectedEntryStats,
   selectedScheduledJob,
   selectedSectionMeta,
+  selectedTaskType,
   settings,
   shiftCalendarWeek,
   sourceModeText,
@@ -918,6 +950,7 @@ exposeAppContext({
   subtitleFormatText,
   taskStatusText,
   taskTag,
+  taskTypeRows,
   titleFromResourceSeed,
   toggleLibraryTag,
   view,
@@ -933,6 +966,7 @@ const {
   addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
   browseServerFiles,
   archiveCurrentEntry, backfillCurrentEntrySeason, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
+  cancelGenericTask, clearGenericTask, pauseGenericTask, resumeGenericTask,
   commitEpisodeImport, commitMediaWizard,
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
@@ -958,6 +992,7 @@ exposeAppContext({
   addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
   browseServerFiles,
   archiveCurrentEntry, backfillCurrentEntrySeason, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
+  cancelGenericTask, clearGenericTask, pauseGenericTask, resumeGenericTask,
   commitEpisodeImport, commitMediaWizard,
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,

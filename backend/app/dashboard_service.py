@@ -14,6 +14,7 @@ from .library import bool_setting
 from .pipeline_runtime import pipeline_overview
 from .runtime_service import canonical_queue_key, queue_job_key, QUEUE_KEY_ALIASES
 from .runtime_store import runtime_store
+from .task_service import list_tasks, task_overview
 from .utils import enrich_catalog_entry, int_setting, rows_to_dicts, seconds_until, summarize_seasonal_entry
 
 DASHBOARD_CACHE_TTL = 1.0
@@ -524,6 +525,7 @@ def dashboard_data() -> dict[str, Any]:
         if str(item.get("status") or "") in {"running", "failed", "cancelled"}
     ][:20]
     download_tasks = list_download_tasks()
+    task_items = list_tasks()
     queue_details = queue_detail_map()
     seasonal_rows = [
         enrich_catalog_entry(summarize_seasonal_entry(row))
@@ -547,6 +549,8 @@ def dashboard_data() -> dict[str, Any]:
         "scanner_status": scanner_status(runtime_snapshot),
         "download_tasks": download_tasks,
         "download_overview": download_overview(download_tasks),
+        "tasks": task_items,
+        "task_overview": task_overview(task_items),
         "pipelines": pipeline_overview(),
         "console_sections": console_sections(),
         "server_logs": server_logs,

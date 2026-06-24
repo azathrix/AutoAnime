@@ -69,6 +69,7 @@ def list_tasks(task_type: str = "") -> list[dict[str, Any]]:
             item_type = runtime_task_type(item)
             if selected_type and item_type != selected_type:
                 continue
+            payload = item.get("payload") or {}
             rows.append(
                 {
                     "id": f"runtime:{item['id']}",
@@ -82,6 +83,8 @@ def list_tasks(task_type: str = "") -> list[dict[str, Any]]:
                     "message": item.get("progress_text") or item.get("message") or "",
                     "updated_at": item.get("updated_at") or "",
                     "source": "runtime",
+                    "entry_id": int(payload.get("entry_id") or item.get("entry_id") or 0),
+                    "episode_number": payload.get("episode_number") or item.get("episode_number") or "",
                 }
             )
     for item in snapshot.get("operations", []):
@@ -118,6 +121,8 @@ def list_tasks(task_type: str = "") -> list[dict[str, Any]]:
                     "message": item.get("progress_text") or "",
                     "updated_at": item.get("updated_at") or "",
                     "source": "download",
+                    "entry_id": int(item.get("entry_id") or 0),
+                    "episode_number": item.get("episode_number") or "",
                 }
             )
     rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)

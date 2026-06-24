@@ -383,6 +383,50 @@
   color: #b45309 !important;
 }
 
+.task-console-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 560px;
+}
+
+.task-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #dbe4ef;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.task-type-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid #dbe4ef;
+  border-radius: 10px;
+  background: #fff;
+  color: #1f2937;
+  cursor: pointer;
+  text-align: left;
+}
+
+.task-type-list button.active {
+  border-color: rgba(95, 112, 255, 0.55);
+  background: linear-gradient(135deg, rgba(95, 112, 255, 0.14), rgba(245, 114, 182, 0.12));
+  color: #3150d8;
+  font-weight: 700;
+}
+
+.task-table {
+  min-width: 0;
+}
+
 .mini-tag-row {
   display: flex;
   flex-wrap: wrap;
