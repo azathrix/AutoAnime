@@ -343,13 +343,14 @@ async def run_rss_scan(settings: dict[str, str], operation_id: int | None = None
         log("warn", "未配置 Mikan RSS")
         return "未配置 Mikan RSS"
     if operation_id:
-        runtime_store.update_operation_sync(operation_id, "正在拉取 RSS")
+        runtime_store.update_operation_sync(operation_id, "正在拉取 RSS", 1)
     items = await fetch_entries(settings)
     stats = ScanStats(fetched=len(items))
     log("info", f"RSS 拉取完成: {len(items)} 条")
     for index, item in enumerate(items, start=1):
         if operation_id:
-            runtime_store.update_operation_sync(operation_id, f"正在处理 RSS: {index}/{len(items)}")
+            progress = 5 + int(index * 90 / max(1, len(items)))
+            runtime_store.update_operation_sync(operation_id, f"正在处理 RSS: {index}/{len(items)}", progress)
         await process_rss_item(settings, item, stats)
     message = stats.message()
     log("info", message)

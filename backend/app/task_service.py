@@ -100,7 +100,7 @@ def list_tasks(task_type: str = "") -> list[dict[str, Any]]:
                 "title": item.get("name") or "-",
                 "status": item.get("status") or "",
                 "status_text": task_status_text(str(item.get("status") or "")),
-                "progress": 0,
+                "progress": int(item.get("progress") or 0),
                 "message": item.get("message") or "",
                 "updated_at": item.get("finished_at") or item.get("started_at") or "",
                 "source": "operation",
@@ -193,7 +193,7 @@ async def resume_task(task_id: str) -> bool:
             conn.execute(
                 """
                 UPDATE download_jobs
-                SET status='pending', phase='pending', progress=0, progress_text='等待下载', updated_at=?
+                SET status='pending', phase='pending', progress=0, progress_text='排队中', updated_at=?
                 WHERE id=? AND status='paused'
                 """,
                 (now(), int(raw)),

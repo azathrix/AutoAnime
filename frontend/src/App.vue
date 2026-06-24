@@ -469,6 +469,13 @@ const filteredConsoleTasks = computed(() => {
   return selected ? rows.filter(item => String(item.type || '') === selected) : rows
 })
 const scanRunning = computed(() => String(dashboard.scanner_status?.status || '') === 'running')
+const scannerStatusText = computed(() => {
+  const status = String(dashboard.scanner_status?.status || 'idle')
+  if (status === 'running') return '扫描中'
+  if (status === 'failed') return '失败'
+  if (status === 'completed') return '完成'
+  return '空闲'
+})
 const filteredServerLogs = computed(() => {
   const keyword = logKeyword.value.trim().toLowerCase()
   const rows = dashboard.server_logs || []
@@ -931,6 +938,7 @@ exposeAppContext({
   rssSubscriptions,
   savingSettings,
   scanRunning,
+  scannerStatusText,
   scheduledBadgeText,
   scheduledBadgeType,
   scheduledConsoleSections,

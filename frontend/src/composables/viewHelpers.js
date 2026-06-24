@@ -228,10 +228,10 @@ export function taskStatusText(row) {
   if (row?.status === 'completed') return '已完成'
   if (row?.status === 'synced') return '已整理'
   if (row?.status === 'submitting') return '提交下载器'
-  if (row?.status === 'remote_downloading') return '等待下载器'
+  if (row?.status === 'remote_downloading') return '云存储'
   if (row?.status === 'remote_completed') return '等待整理'
   if (row?.status === 'local_copying') return '整理中'
-  if (row?.status === 'submitted') return '等待下载器'
+  if (row?.status === 'submitted') return '云存储'
   if (row?.status === 'running') return '处理中'
   if (row?.status === 'waiting') return '等待重试'
   if (row?.status === 'pending' && row?.waiting_retry) return '等待重试'
@@ -266,25 +266,29 @@ export function episodeDownloadState(row) {
 export function episodeDownloadText(row) {
   const state = episodeDownloadState(row)
   const progress = Number(row?.download_progress || 0)
-  if (progress > 0 && progress < 100 && ['queued', 'pending', 'running', 'submitted', 'downloading', 'submitting', 'remote_downloading', 'remote_completed', 'local_copying'].includes(state)) {
+  const hasResource = Boolean(row?.source_ref || row?.magnet || row?.torrent_url)
+  if (progress > 0 && progress < 100 && ['downloading', 'remote_completed', 'local_copying'].includes(state)) {
     return `下载中 ${progress}%`
   }
+  if (!hasResource && !row?.downloaded && ['missing', 'unknown', ''].includes(state)) return '未知'
   return {
     downloaded: '可观看',
     synced: '可观看',
     queued: '排队中',
     pending: '排队中',
-    submitting: '提交下载器',
-    running: '提交下载器',
-    submitted: '等待下载器',
-    remote_downloading: '等待下载器',
+    submitting: '云存储',
+    running: '云存储',
+    submitted: '云存储',
+    remote_downloading: '云存储',
     downloading: '下载中',
-    remote_completed: '等待整理',
-    local_copying: '整理中',
+    remote_completed: '下载中',
+    local_copying: '下载中',
     cancelled: '已取消',
     failed: '失败',
+    missing: '未知',
+    unknown: '未知',
     available: '未下载',
-  }[state] || '未下载'
+  }[state] || (hasResource ? '未下载' : '未知')
 }
 
 export function episodeDownloadTag(row) {
@@ -292,6 +296,7 @@ export function episodeDownloadTag(row) {
   if (['downloaded', 'synced'].includes(state)) return 'success'
   if (['queued', 'pending', 'running', 'submitted', 'downloading', 'submitting', 'remote_downloading', 'remote_completed', 'local_copying'].includes(state)) return 'warning'
   if (state === 'failed') return 'danger'
+  if (['missing', 'unknown'].includes(state)) return 'danger'
   if (state === 'cancelled') return 'info'
   return 'info'
 }
@@ -326,7 +331,7 @@ export function queueState(queue) {
 export function queuePendingHint(queue) {
   const key = String(queue?.key || '')
   if (key === 'rss') return '这里只显示最近的 RSS 候选；Mikan、元数据、选集、下载到本地由任务链推进。'
-  if (key === 'download') return '待处理表示已选中发布，等待下载器完成并整理到本地媒体库。'
+  if (key === 'download') return '待处理表示已创建下载任务，等待进入云存储或本地下载阶段。'
   if (key === 'local_sync') return '待处理表示下载已完成，等待整理到本地媒体库。'
   if (key === 'selection') return '待处理表示元数据已完成，等待按规则自动选择发布。'
   if (key === 'processor') return '这里显示流水线统一处理器任务，扫描后可直接看每条数据卡在 RSS、匹配、元数据、整合还是下载。'

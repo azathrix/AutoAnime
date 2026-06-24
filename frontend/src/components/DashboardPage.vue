@@ -32,7 +32,7 @@ export default appContextComponent()
           </div>
           <div class="detail-tags">
             <el-tag :type="dashboard.scanner_status?.status === 'failed' ? 'danger' : (dashboard.scanner_status?.status === 'running' ? 'warning' : 'success')">
-              {{ dashboard.scanner_status?.message || '空闲' }}
+              {{ scannerStatusText }}
             </el-tag>
             <el-button type="primary" plain @click="runAction('/scanner/run')">扫描 RSS</el-button>
           </div>
@@ -99,11 +99,9 @@ export default appContextComponent()
           <el-table-column label="进度" min-width="220" show-overflow-tooltip>
             <template #default="{ row }">
               <el-progress
-                v-if="Number(row.progress || 0) > 0"
                 :percentage="Number(row.progress || 0)"
                 :status="row.status === 'failed' ? 'exception' : (row.status === 'completed' ? 'success' : undefined)"
               />
-              <span v-else>{{ row.message || '-' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="更新时间" width="190" show-overflow-tooltip>

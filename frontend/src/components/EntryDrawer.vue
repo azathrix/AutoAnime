@@ -137,7 +137,7 @@ export default appContextComponent()
               <el-table-column prop="display_name" label="名称" min-width="280" show-overflow-tooltip />
               <el-table-column label="可观看" width="94">
                 <template #default="{ row }">
-                  <el-tag :type="episodeDownloadTag(row)" size="small">{{ row.downloaded ? '可观看' : '未缓存' }}</el-tag>
+                  <el-tag :type="episodeDownloadTag(row)" size="small">{{ episodeDownloadText(row) }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="操作" width="92">

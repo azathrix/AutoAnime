@@ -510,6 +510,7 @@ class RuntimeStore:
             "id": operation_id,
             "name": name,
             "status": "running",
+            "progress": 0,
             "message": message[:2000],
             "started_at": utc_now(),
             "finished_at": "",
@@ -517,11 +518,13 @@ class RuntimeStore:
         self.bump_sync()
         return operation_id
 
-    def update_operation_sync(self, operation_id: int, message: str) -> None:
+    def update_operation_sync(self, operation_id: int, message: str, progress: int | None = None) -> None:
         operation = self.operations.get(operation_id)
         if not operation:
             return
         operation["message"] = message[:2000]
+        if progress is not None:
+            operation["progress"] = max(0, min(100, int(progress or 0)))
         self.bump_sync()
 
     def finish_operation_sync(self, operation_id: int, status: str, message: str = "") -> None:
@@ -530,6 +533,7 @@ class RuntimeStore:
             return
         operation["status"] = status
         operation["message"] = message[:2000]
+        operation["progress"] = 100 if status == "completed" else int(operation.get("progress") or 0)
         operation["finished_at"] = utc_now()
         self.bump_sync()
 

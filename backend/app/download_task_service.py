@@ -46,7 +46,7 @@ def download_status_text(value: str, provider: str = "") -> str:
     provider_key_text = str(provider or "").lower()
     remote_wait_text = "等待云存储" if "rclone" in provider_key_text or "pikpak" in provider_key_text else "等待下载器完成"
     return {
-        "pending": "等待下载",
+        "pending": "排队中",
         "submitting": "提交下载器",
         "remote_downloading": remote_wait_text,
         "remote_completed": "下载器已完成",
@@ -54,7 +54,7 @@ def download_status_text(value: str, provider: str = "") -> str:
         "completed": "可观看",
         "failed": "失败",
         "cancelled": "已取消",
-    }.get(download_phase(value), value or "等待下载")
+    }.get(download_phase(value), value or "排队中")
 
 
 def human_size(value: int | str | None) -> str:
@@ -262,7 +262,7 @@ def queue_download_for_release(release_id: int, *, reset_cancelled: bool = False
                source_ref, target_dir, remote_path, target_local_path, normalized_name,
                progress, progress_text, created_at, updated_at, last_seen_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', 'pending', 0,
-                    ?, ?, ?, ?, ?, 0, '等待下载', ?, ?, ?)
+                    ?, ?, ?, ?, ?, 0, '排队中', ?, ?, ?)
             ON CONFLICT(entry_id, episode_number, provider) DO UPDATE SET
               release_id=excluded.release_id,
               series_id=excluded.series_id,
@@ -280,7 +280,7 @@ def queue_download_for_release(release_id: int, *, reset_cancelled: bool = False
               target_local_path=excluded.target_local_path,
               normalized_name=excluded.normalized_name,
               progress=0,
-              progress_text='等待下载',
+              progress_text='排队中',
               updated_at=excluded.updated_at,
               last_seen_at=excluded.last_seen_at
             """,
