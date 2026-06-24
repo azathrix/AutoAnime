@@ -16,6 +16,7 @@ from ..media_service import (
     set_entry_following,
 )
 from ..metadata import fetch_tmdb_metadata, refresh_entry_metadata
+from ..rss_scan_service import start_metadata_refresh_task
 from ..schemas import EntryPayload, MediaCreatePayload, MetadataFetchPayload
 
 
@@ -134,6 +135,16 @@ async def api_fetch_media_metadata(media_type: str, entry_id: int, payload: Meta
         raise HTTPException(status_code=400, detail="请先填写 Bangumi ID 或 TMDB ID")
     log("info", f"媒体元数据已刷新: entry_id={entry_id} provider={','.join(refreshed)}")
     return build_media_entry_response(media_type, entry_id)
+
+
+@router.post("/api/entries/{entry_id}/metadata/refresh")
+async def api_refresh_entry_metadata_task(entry_id: int) -> dict[str, str]:
+    with connect() as conn:
+        exists = conn.execute("SELECT id FROM entries WHERE id=?", (entry_id,)).fetchone()
+    if not exists:
+        raise HTTPException(status_code=404, detail="媒体条目不存在")
+    operation_id = start_metadata_refresh_task(entry_id, f"手动刷新元数据: entry_id={entry_id}")
+    return {"status": "started", "operation_id": str(operation_id), "message": "元数据刷新任务已创建"}
 
 
 @router.get("/api/entries/{entry_id}/episodes")

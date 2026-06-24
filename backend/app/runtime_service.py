@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from .db import get_runtime_generation, get_settings, log, now
 from .library import bool_setting
-from .pipeline_orchestrator import cancel_active_processor_tasks, run_ready_tasks, start_pipeline
+from .pipeline_orchestrator import cancel_active_processor_tasks, run_ready_tasks
 from .queue_bridge import register_queue_trigger
 from .runtime_store import runtime_store
 
@@ -79,26 +79,11 @@ async def handle_processor_queue() -> None:
         trigger_queue("processor", delay=0)
 
 async def run_scan_source(settings: dict[str, str], operation_id: int | None = None) -> str:
-    if not settings.get("rss_url"):
-        log("warn", "未配置 Mikan RSS")
-        return "未配置 Mikan RSS"
     if operation_id:
-        runtime_store.update_operation_sync(operation_id, "正在启动 Mikan 新番追更流水线")
-    run_id = start_pipeline(
-        "seasonal_mikan_tracking",
-        trigger_source="manual",
-        first_step_key="rss_fetch",
-        subject_type="rss_source",
-        subject_id=1,
-        payload={"rss_url": settings.get("rss_url", ""), "domain_kind": "seasonal"},
-        message="手动扫描启动",
-    )
-    if run_id <= 0:
-        raise RuntimeError("Mikan 新番追更流水线启动失败")
-    trigger_queue("processor", delay=0)
-    message = f"已启动 Mikan 新番追更流水线 run_id={run_id}；后续由 processor 队列自动推进"
-    log("info", f"扫描全部: {message}")
-    return message
+        runtime_store.update_operation_sync(operation_id, "正在扫描 RSS 并同步 Bangumi ID")
+    from .rss_scan_service import run_rss_scan
+
+    return await run_rss_scan(settings, operation_id)
 
 def ensure_queue_handlers() -> None:
     queue_handlers.clear()

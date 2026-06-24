@@ -38,6 +38,8 @@ def operation_task_type(item: dict[str, Any]) -> str:
     name = str(item.get("name") or "")
     if "扫描" in name or "RSS" in name:
         return "rss_scan"
+    if "元数据" in name:
+        return "metadata"
     if "缓存" in name:
         return "cache"
     if "本地" in name:

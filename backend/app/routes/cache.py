@@ -12,7 +12,6 @@ router = APIRouter()
 @router.post("/api/cache/rss/clear")
 async def api_clear_rss_cache() -> dict[str, int | str]:
     total = clear_processing_cache_type("rss_resource_processed")
-    total += clear_processing_cache_type("mikan_match")
     log("info", f"RSS 缓存已清理: {total} 条")
     return {"status": "cleared", "count": total, "message": f"RSS 缓存已清理: {total} 条"}
 
@@ -29,4 +28,3 @@ async def api_clear_all_cache() -> dict[str, int | str]:
     total = clear_processing_cache()
     log("info", f"全部处理缓存已清理: {total} 条")
     return {"status": "cleared", "count": total, "message": f"全部处理缓存已清理: {total} 条"}
-

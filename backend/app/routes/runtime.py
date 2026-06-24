@@ -74,7 +74,7 @@ async def api_scan() -> dict[str, str]:
     operation_id = run_progress_operation(
         "扫描全部",
         lambda op_id: run_scan_source(get_settings(), op_id),
-        "正在扫描 RSS 源头，后续队列会自动推进",
+        "正在扫描 RSS 源头，后续会生成集数资源和下载任务",
     )
     return {"status": "started", "operation_id": str(operation_id), "message": "扫描已启动"}
 
