@@ -11,7 +11,7 @@ from .config import APP_DIR
 from .db import get_settings, init_db, log
 from .media_service import reset_orphaned_download_jobs
 from .processors import register_builtin_processors
-from .routes import dashboard, downloads, files, media, resources, rss, runtime, settings
+from .routes import cache, dashboard, downloads, files, media, resources, rss, runtime, schedules, settings, tasks
 from .runtime_service import reschedule, scheduler
 from .settings_service import sync_download_processor_concurrency
 from .utils import int_setting
@@ -35,6 +35,9 @@ app = FastAPI(title="AniTrack", lifespan=lifespan)
 app.include_router(dashboard.router)
 app.include_router(runtime.router)
 app.include_router(settings.router)
+app.include_router(tasks.router)
+app.include_router(cache.router)
+app.include_router(schedules.router)
 app.include_router(rss.router)
 app.include_router(media.router)
 app.include_router(resources.router)

@@ -8,7 +8,7 @@ from typing import Any
 
 
 TASK_TERMINAL_STATUSES = {"completed", "failed", "skipped", "cancelled"}
-VISIBLE_TASK_STATUSES = {"pending", "running", "waiting", "failed"}
+VISIBLE_TASK_STATUSES = {"pending", "running", "waiting", "failed", "paused"}
 
 
 def utc_now() -> str:
@@ -357,6 +357,19 @@ class RuntimeStore:
             await self.bump()
         return cancelled
 
+    async def cancel_task(self, task_id: int) -> bool:
+        async with self._lock:
+            task = self.tasks.get(task_id)
+            if not task or task.status in TASK_TERMINAL_STATUSES:
+                return False
+            task.status = "cancelled"
+            task.message = "用户取消任务"
+            task.error = ""
+            task.retry_at = ""
+            task.updated_at = utc_now()
+        await self.bump()
+        return True
+
     async def retry_queue_tasks(self, queue_key: str = "", include_failed: bool = False) -> int:
         reset = 0
         async with self._lock:
@@ -374,6 +387,43 @@ class RuntimeStore:
         if reset:
             await self.bump()
         return reset
+
+    async def pause_task(self, task_id: int) -> bool:
+        async with self._lock:
+            task = self.tasks.get(task_id)
+            if not task or task.status in TASK_TERMINAL_STATUSES:
+                return False
+            task.status = "paused"
+            task.message = "任务已暂停"
+            task.error = ""
+            task.retry_at = ""
+            task.updated_at = utc_now()
+        await self.bump()
+        return True
+
+    async def resume_task(self, task_id: int) -> bool:
+        async with self._lock:
+            task = self.tasks.get(task_id)
+            if not task or task.status != "paused":
+                return False
+            task.status = "pending"
+            task.message = "任务已继续"
+            task.error = ""
+            task.retry_at = ""
+            task.updated_at = utc_now()
+        await self.bump()
+        return True
+
+    async def delete_task(self, task_id: int) -> bool:
+        async with self._lock:
+            task = self.tasks.get(task_id)
+            if not task or task.status not in TASK_TERMINAL_STATUSES | {"paused"}:
+                return False
+            self.tasks.pop(task_id, None)
+            if task.dedupe_key:
+                self.dedupe_index.pop(task.dedupe_key, None)
+        await self.bump()
+        return True
 
     def has_active_episode_task(self, entry_id: int, episode_number: int, processor_keys: set[str] | None = None) -> bool:
         for task in self.tasks.values():

@@ -64,6 +64,34 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
+def seed_schedules(conn: sqlite3.Connection) -> None:
+    ts = now()
+    settings = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM settings").fetchall()}
+    rss_enabled = 1 if str(settings.get("auto_scan", "false")).lower() == "true" else 0
+    try:
+        rss_interval = max(1, int(settings.get("scan_interval_minutes") or 60))
+    except ValueError:
+        rss_interval = 60
+    defaults = [
+        ("rss_scan", "RSS 定时扫描", "rss_scan", rss_enabled, rss_interval),
+        ("rss_cache_cleanup", "清理 RSS 缓存", "rss_cache_cleanup", 1, 1440),
+        ("expired_cache_cleanup", "清理过期缓存", "expired_cache_cleanup", 1, 1440),
+    ]
+    for key, name, action, enabled, interval in defaults:
+        conn.execute(
+            """
+            INSERT INTO schedules
+              (key, name, action, enabled, interval_minutes, config_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, '{}', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              name=CASE WHEN schedules.name='' THEN excluded.name ELSE schedules.name END,
+              action=CASE WHEN schedules.action='' THEN excluded.action ELSE schedules.action END,
+              updated_at=schedules.updated_at
+            """,
+            (key, name, action, enabled, interval, ts, ts),
+        )
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     initialize_database()
@@ -317,6 +345,21 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                interval_minutes INTEGER NOT NULL DEFAULT 60,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                last_status TEXT NOT NULL DEFAULT 'idle',
+                last_run_at TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS download_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 series_id INTEGER NOT NULL,
@@ -404,6 +447,7 @@ def init_db() -> None:
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, value),
             )
+        seed_schedules(conn)
         for key, old_value, new_value in [
             ("series_dir_template", "{title_base} ({year}) [bangumi-{bangumi_id}]", "{title_base}"),
             ("series_dir_template", "{title_base}{year_suffix}", "{title_base}"),

@@ -137,3 +137,24 @@ def clear_processing_cache() -> int:
         _ensure_table(conn)
         cursor = conn.execute("DELETE FROM processing_cache")
         return int(cursor.rowcount or 0)
+
+
+def clear_processing_cache_type(cache_type: str) -> int:
+    cache_type = str(cache_type or "").strip()
+    if not cache_type:
+        return 0
+    with connect() as conn:
+        _ensure_table(conn)
+        cursor = conn.execute("DELETE FROM processing_cache WHERE cache_type=?", (cache_type,))
+        return int(cursor.rowcount or 0)
+
+
+def clear_expired_processing_cache() -> int:
+    ts = utc_now()
+    with connect() as conn:
+        _ensure_table(conn)
+        cursor = conn.execute(
+            "DELETE FROM processing_cache WHERE expires_at!='' AND expires_at<=?",
+            (ts,),
+        )
+        return int(cursor.rowcount or 0)

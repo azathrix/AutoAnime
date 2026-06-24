@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from ..config import MEDIA_ROOT
-from ..database import connect
 from ..db import get_settings, log, now, save_settings
 from ..downloader_service import SUPPORTED_DOWNLOADER_TYPES
 from ..maintenance import diagnostics
@@ -17,8 +16,8 @@ from ..metadata import (
     subject_tags_json,
     subject_year,
 )
-from ..pipeline_orchestrator import start_pipeline
-from ..runtime_service import reschedule, trigger_queue
+from ..runtime_service import reschedule
+from ..schedule_service import upsert_schedule
 from ..schemas import ProcessorSettingsPayload, ScheduledJobPayload, SettingsPayload
 from ..settings_service import clean_downloader_items, derived_downloader_settings, settings_response, sync_download_processor_concurrency
 from ..utils import int_setting
@@ -77,49 +76,6 @@ async def api_update_settings(payload: SettingsPayload) -> dict:
         }
     )
     sync_download_processor_concurrency(int_setting(payload.download_concurrency, 2, 1, 12))
-    current = get_settings()
-    if any(
-        previous.get(key, "") != current.get(key, "")
-        for key in [
-            "subtitle_priority",
-            "resolution_priority",
-            "language_priority",
-            "secondary_language_priority",
-            "default_backfill",
-            "backfill_current_season",
-            "episode_name_template",
-            "movie_name_template",
-            "tv_name_template",
-        ]
-    ):
-        with connect() as conn:
-            entry_rows = conn.execute(
-                "SELECT id, domain_kind FROM entries e WHERE COALESCE(hidden, 0)=0 AND bangumi_id != ''"
-            ).fetchall()
-        for row in entry_rows:
-            entry_id = int(row["id"])
-            domain_kind = str(row["domain_kind"] or "seasonal")
-            pipeline_key = "seasonal_mikan_tracking" if domain_kind == "seasonal" else "library_backfill"
-            start_pipeline(
-                pipeline_key,
-                trigger_source="settings",
-                first_step_key="release_selection",
-                subject_type="entry",
-                subject_id=entry_id,
-                payload={"entry_id": entry_id, "domain_kind": domain_kind},
-                message="全局规则变更，重新计算自动选集",
-            )
-            if domain_kind == "seasonal":
-                start_pipeline(
-                    "seasonal_mikan_tracking",
-                    trigger_source="settings",
-                    first_step_key="season_backfill",
-                    subject_type="entry",
-                    subject_id=entry_id,
-                    payload={"entry_id": entry_id, "domain_kind": domain_kind},
-                    message="全局规则变更，重新执行补全",
-                )
-        trigger_queue("processor", delay=0)
     reschedule()
     log("info", "全局设置已保存")
     return settings_response()
@@ -131,6 +87,15 @@ async def api_update_scheduled_job(job_key: str, payload: ScheduledJobPayload) -
     enabled = str(bool(payload.enabled)).lower()
     if job_key == "rss_scan":
         save_settings({"auto_scan": enabled, "scan_interval_minutes": str(interval)})
+        upsert_schedule(
+            {
+                "key": "rss_scan",
+                "name": "RSS 定时扫描",
+                "action": "rss_scan",
+                "enabled": bool(payload.enabled),
+                "interval_minutes": interval,
+            }
+        )
     elif job_key == "queue_dispatch":
         save_settings({"queue_dispatch_enabled": enabled, "queue_dispatch_interval_minutes": str(interval)})
     else:

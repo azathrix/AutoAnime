@@ -158,6 +158,14 @@ class ScheduledJobPayload(BaseModel):
     enabled: bool = True
     interval_minutes: int = 1
 
+class SchedulePayload(BaseModel):
+    key: str = ""
+    name: str = ""
+    action: str = "rss_scan"
+    enabled: bool = True
+    interval_minutes: int = 60
+    config: dict[str, Any] = Field(default_factory=dict)
+
 class ProcessorSettingsPayload(BaseModel):
     download_concurrency: int = 2
 

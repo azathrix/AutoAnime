@@ -12,7 +12,6 @@ from .library import bool_setting
 from .pipeline_orchestrator import cancel_active_processor_tasks, run_ready_tasks, start_pipeline
 from .queue_bridge import register_queue_trigger
 from .runtime_store import runtime_store
-from .utils import int_setting
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 QUEUE_DEBOUNCE_SECONDS = 10.0
@@ -226,15 +225,8 @@ async def dispatch_ready_queues() -> None:
 def reschedule() -> None:
     scheduler.remove_all_jobs()
     ensure_queue_handlers()
-    settings = get_settings()
-    minutes = int_setting(settings.get("scan_interval_minutes"), 60, 1)
-    rss_enabled = bool_setting(settings.get("auto_scan", "false"))
-    runtime_store.set_scheduler_sync(
-        "rss_scan",
-        interval_minutes=minutes,
-        enabled=int(rss_enabled),
-        updated_at=now(),
-    )
+    from .schedule_service import list_schedules, trigger_schedule
+
     runtime_store.set_scheduler_sync(
         "queue_dispatch",
         interval_minutes=0,
@@ -244,8 +236,25 @@ def reschedule() -> None:
     )
     for name in queue_handlers:
         runtime_store.set_scheduler_sync(queue_job_key(name), debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
-    if rss_enabled:
-        scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes, id="rss_scan")
+    for item in list_schedules():
+        key = str(item.get("key") or "")
+        interval = max(1, int(item.get("interval_minutes") or 60))
+        enabled = bool(int(item.get("enabled") or 0))
+        runtime_store.set_scheduler_sync(
+            key,
+            interval_minutes=interval,
+            enabled=int(enabled),
+            updated_at=now(),
+        )
+        if enabled:
+            schedule_id = int(item.get("id") or 0)
+            scheduler.add_job(
+                lambda sid=schedule_id: trigger_schedule(sid, "system"),
+                "interval",
+                minutes=interval,
+                id=key,
+                replace_existing=True,
+            )
 
 def runtime_generation_alive(expected: str) -> bool:
     return get_runtime_generation() == expected
