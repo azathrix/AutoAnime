@@ -376,7 +376,7 @@ async def process_download_presence(context: ProcessorContext, payload: dict) ->
                 normalized_name=str(existing_remote.get("name") or remote_name),
                 provider_file_id=download_file_id(existing_remote),
                 retry_after=retry_after,
-                last_error="远端文件已出现，等待文件大小稳定后再整理",
+                last_error="",
                 total_size=_remote_item_size(existing_remote),
             )
             return ProcessorResult.retryable("远端文件已出现，等待文件大小稳定后再整理", retry_after)
@@ -481,7 +481,7 @@ async def process_download_submit(context: ProcessorContext, payload: dict) -> P
                 normalized_name=str(existing_remote.get("name") or remote_name),
                 provider_file_id=download_file_id(existing_remote),
                 retry_after=retry_after,
-                last_error="远端文件已出现，等待文件大小稳定后再整理",
+                last_error="",
                 total_size=_remote_item_size(existing_remote),
             )
             log(
@@ -754,7 +754,7 @@ async def process_download_poll(context: ProcessorContext, payload: dict) -> Pro
             submission_id=str(submission["submission_id"] or ""),
             provider_file_id=file_id,
             retry_after=retry_after,
-            last_error=message,
+            last_error="" if matched and status != "failed" else message,
             total_size=_remote_item_size(matched) if matched else 0,
         )
         log(
