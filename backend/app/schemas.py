@@ -33,6 +33,8 @@ class EntryPayload(BaseModel):
     title_cn: str = ""
     bangumi_id: str = ""
     tmdb_id: str = ""
+    bangumi_score: float = 0
+    tmdb_score: float = 0
     year: int = 0
     month: int = 0
     season_number: int = 1
@@ -55,6 +57,8 @@ class MediaCreatePayload(BaseModel):
     title: str = ""
     bangumi_id: str = ""
     tmdb_id: str = ""
+    bangumi_score: float = 0
+    tmdb_score: float = 0
     year: int = 0
     month: int = 0
     season_number: int = 1

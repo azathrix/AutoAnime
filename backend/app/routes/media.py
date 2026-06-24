@@ -14,7 +14,7 @@ from ..media_service import (
     normalize_api_media_type,
     save_entry_payload,
 )
-from ..metadata import refresh_entry_metadata
+from ..metadata import fetch_tmdb_metadata, refresh_entry_metadata
 from ..schemas import EntryPayload, MediaCreatePayload, MetadataFetchPayload
 
 
@@ -55,7 +55,7 @@ async def api_delete_media_entry(media_type: str, entry_id: int) -> dict[str, st
 
 @router.post("/api/media/{media_type}/{entry_id}/metadata/fetch")
 async def api_fetch_media_metadata(media_type: str, entry_id: int, payload: MetadataFetchPayload) -> dict:
-    normalize_api_media_type(media_type)
+    normalized_type = normalize_api_media_type(media_type)
     bangumi_id = payload.bangumi_id.strip()
     tmdb_id = payload.tmdb_id.strip()
     if bangumi_id or tmdb_id:
@@ -68,13 +68,58 @@ async def api_fetch_media_metadata(media_type: str, entry_id: int, payload: Meta
                 (bangumi_id, bangumi_id, tmdb_id, tmdb_id, now(), entry_id),
             )
     with connect() as conn:
-        entry = conn.execute("SELECT bangumi_id FROM entries WHERE id=?", (entry_id,)).fetchone()
+        entry = conn.execute("SELECT bangumi_id, tmdb_id FROM entries WHERE id=?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(status_code=404, detail="媒体条目不存在")
-    if not str(entry["bangumi_id"] or "").strip():
-        raise HTTPException(status_code=400, detail="当前扒信息需要先填写 Bangumi ID")
-    await refresh_entry_metadata(entry_id, get_settings().get("rss_proxy", ""))
-    log("info", f"媒体元数据已刷新: entry_id={entry_id} provider=bangumi")
+    settings = get_settings()
+    refreshed = []
+    if str(entry["bangumi_id"] or "").strip():
+        await refresh_entry_metadata(entry_id, settings.get("rss_proxy", ""))
+        refreshed.append("bangumi")
+    tmdb_value = str(entry["tmdb_id"] or "").strip()
+    token = settings.get("tmdb_token", "").strip()
+    if tmdb_value and token:
+        try:
+            metadata = await fetch_tmdb_metadata(tmdb_value, normalized_type, token, settings.get("rss_proxy", ""))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"TMDB 元数据刷新失败: {exc}") from exc
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE entries
+                SET title_cn=CASE WHEN title_cn='' THEN ? ELSE title_cn END,
+                    title_raw=CASE WHEN title_raw='' THEN ? ELSE title_raw END,
+                    poster_url=CASE WHEN poster_url='' THEN ? ELSE poster_url END,
+                    summary=CASE WHEN summary='' THEN ? ELSE summary END,
+                    year=CASE WHEN year=0 THEN ? ELSE year END,
+                    month=CASE WHEN month=0 THEN ? ELSE month END,
+                    region=CASE WHEN region='' THEN ? ELSE region END,
+                    tags_json=CASE WHEN tags_json='[]' THEN ? ELSE tags_json END,
+                    tmdb_score=?,
+                    metadata_source=CASE WHEN metadata_source='' THEN 'tmdb' ELSE metadata_source END,
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    metadata.get("title_cn", ""),
+                    metadata.get("title_raw", ""),
+                    metadata.get("poster_url", ""),
+                    metadata.get("summary", ""),
+                    int(metadata.get("year") or 0),
+                    int(metadata.get("month") or 0),
+                    metadata.get("region", ""),
+                    metadata.get("tags_json", "[]"),
+                    float(metadata.get("tmdb_score") or 0),
+                    now(),
+                    entry_id,
+                ),
+            )
+        refreshed.append("tmdb")
+    if not refreshed:
+        if tmdb_value and not token:
+            raise HTTPException(status_code=400, detail="刷新 TMDB 信息需要先在设置中配置 TMDB token")
+        raise HTTPException(status_code=400, detail="请先填写 Bangumi ID 或 TMDB ID")
+    log("info", f"媒体元数据已刷新: entry_id={entry_id} provider={','.join(refreshed)}")
     return build_media_entry_response(media_type, entry_id)
 
 

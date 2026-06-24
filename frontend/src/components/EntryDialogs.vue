@@ -43,6 +43,14 @@ export default appContextComponent()
           <el-form-item label="Bangumi ID"><el-input v-model="entryEditForm.bangumi_id" /></el-form-item>
           <el-form-item label="TMDB ID"><el-input v-model="entryEditForm.tmdb_id" /></el-form-item>
         </div>
+        <div class="form-row">
+          <el-form-item label="Bangumi 评分">
+            <el-input-number v-model="entryEditForm.bangumi_score" :min="0" :max="10" :precision="1" :step="0.1" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="TMDB 评分">
+            <el-input-number v-model="entryEditForm.tmdb_score" :min="0" :max="10" :precision="1" :step="0.1" controls-position="right" />
+          </el-form-item>
+        </div>
         <el-form-item label="原名"><el-input v-model="entryEditForm.title_raw" /></el-form-item>
         <el-form-item label="海报 URL"><el-input v-model="entryEditForm.poster_url" /></el-form-item>
         <el-form-item label="标签">
@@ -52,6 +60,8 @@ export default appContextComponent()
         <el-progress v-if="metadataFetching || metadataFetchProgress" :percentage="metadataFetchProgress" :status="metadataFetchProgress >= 100 ? 'success' : undefined" />
       </el-form>
       <template #footer>
+        <el-button plain @click="clearEntryEditForm">清空</el-button>
+        <el-button plain :loading="metadataFetching" @click="fetchEntryMetadata">按 ID 刷新元数据</el-button>
         <el-button @click="entryEditDialogOpen = false">取消</el-button>
         <el-button type="primary" @click="saveEntryEditForm">保存</el-button>
       </template>

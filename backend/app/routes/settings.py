@@ -7,7 +7,16 @@ from ..database import connect
 from ..db import get_settings, log, now, save_settings
 from ..downloader_service import SUPPORTED_DOWNLOADER_TYPES
 from ..maintenance import diagnostics
-from ..metadata import chinese_summary, search_bangumi, search_tmdb, subject_cn_name, subject_month, subject_tags_json, subject_year
+from ..metadata import (
+    chinese_summary,
+    search_bangumi,
+    search_tmdb,
+    subject_cn_name,
+    subject_month,
+    subject_score,
+    subject_tags_json,
+    subject_year,
+)
 from ..pipeline_orchestrator import start_pipeline
 from ..runtime_service import reschedule, trigger_queue
 from ..schemas import ProcessorSettingsPayload, ScheduledJobPayload, SettingsPayload
@@ -177,6 +186,7 @@ async def api_search_metadata(provider: str = Query("bangumi"), keyword: str = Q
                 "poster_url": images.get("large") or images.get("common") or images.get("medium") or "",
                 "summary": chinese_summary(row.get("summary") or ""),
                 "tags_json": subject_tags_json(row),
+                "bangumi_score": subject_score(row),
             }
         )
     return {"provider": "bangumi", "items": items}

@@ -206,6 +206,8 @@ const entryEditForm = reactive({
   title_cn: '',
   bangumi_id: '',
   tmdb_id: '',
+  bangumi_score: 0,
+  tmdb_score: 0,
   year: 0,
   month: 0,
   release_month: '',
@@ -236,6 +238,8 @@ const mediaWizardDraft = reactive({
   title: '',
   bangumi_id: '',
   tmdb_id: '',
+  bangumi_score: 0,
+  tmdb_score: 0,
   year: 0,
   month: 0,
   release_month: '',
@@ -624,6 +628,15 @@ function scheduledBadgeText(jobKey) {
   return minutes > 0 ? `${minutes} 分` : '已配置'
 }
 
+function metadataScores(item) {
+  const scores = []
+  const bangumiScore = Number(item?.bangumi_score || 0)
+  const tmdbScore = Number(item?.tmdb_score || 0)
+  if (bangumiScore > 0) scores.push({ key: 'bangumi', label: `Bangumi ${bangumiScore.toFixed(1)}` })
+  if (tmdbScore > 0) scores.push({ key: 'tmdb', label: `TMDB ${tmdbScore.toFixed(1)}` })
+  return scores
+}
+
 function scheduledBadgeType(jobKey) {
   const job = (dashboard.scheduled_jobs || []).find(item => item.job_key === jobKey)
   if (!job) return 'info'
@@ -815,6 +828,7 @@ exposeAppContext({
   mediaWizardTitle,
   metadataFetchProgress,
   metadataFetching,
+  metadataScores,
   metadataSearchDialogOpen,
   metadataSearchKeyword,
   metadataSearchLoading,
@@ -878,12 +892,12 @@ provide('appContext', appContext)
 
 const {
   addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
-  archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks,
+  archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
   commitEpisodeImport, commitMediaWizard,
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog,
-  openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+  openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
   saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata,
   confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
@@ -902,12 +916,12 @@ const {
 
 exposeAppContext({
   addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
-  archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks,
+  archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
   commitEpisodeImport, commitMediaWizard,
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog,
-  openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+  openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
   saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata,
   confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,

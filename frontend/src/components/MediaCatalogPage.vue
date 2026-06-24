@@ -86,6 +86,10 @@ export default appContextComponent()
               <div class="tagline">
                 <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
                 <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
+                <el-tag v-for="score in metadataScores(item)" :key="score.key" size="small" type="warning">{{ score.label }}</el-tag>
+              </div>
+              <div class="card-actions">
+                <el-button size="small" plain @click.stop="refreshEntryMetadata(item, 'library', entryMediaType(item))">刷新元数据</el-button>
               </div>
             </div>
           </article>

@@ -1,30 +1,14 @@
 import { ElMessage } from 'element-plus'
-import {
-  entryTitle,
-  errorMessage,
-  inferEpisodeFromText,
-  isValidResourceReference,
-  isValidSubtitleReference,
-  jsonFromListText,
-  listTextFromJson,
-  numberFromInput,
-  splitTextLines,
-  titleFromResourceSeed,
-} from './viewHelpers'
+import { entryTitle, errorMessage, inferEpisodeFromText, isValidResourceReference, isValidSubtitleReference, jsonFromListText, listTextFromJson, numberFromInput, splitTextLines, titleFromResourceSeed } from './viewHelpers'
+import { createMetadataActions } from './metadataActions'
 
 export function createAppActions(app, deps) {
-  const {
-    deleteAction,
-    getAction,
-    getDiagnostics,
-    getMediaItem,
-    getSettings,
-    postAction,
-    putAction,
-    saveMediaItem,
-    saveSettings,
-  } = deps
+  const { deleteAction, getAction, getDiagnostics, getMediaItem, getSettings, postAction, putAction, saveMediaItem, saveSettings } = deps
   let metadataProgressTimer = null
+  const { clearEntryEditForm, refreshEntryMetadata } = createMetadataActions(app, {
+    postAction,
+    apiErrorMessage,
+  })
 
   async function runAction(path) {
     try {
@@ -617,6 +601,8 @@ export function createAppActions(app, deps) {
     fillIfEmpty(app.mediaWizardDraft, 'region', item.region)
     fillIfEmpty(app.mediaWizardDraft, 'poster_url', item.poster_url)
     fillIfEmpty(app.mediaWizardDraft, 'summary', item.summary)
+    fillIfEmpty(app.mediaWizardDraft, 'bangumi_score', item.bangumi_score)
+    fillIfEmpty(app.mediaWizardDraft, 'tmdb_score', item.tmdb_score)
     fillListIfEmpty(app.mediaWizardDraft, 'tags_text', item.tags_json || item.tags)
     if (item.provider === 'bangumi') fillIfEmpty(app.mediaWizardDraft, 'bangumi_id', String(item.id || ''))
     if (item.provider === 'tmdb') fillIfEmpty(app.mediaWizardDraft, 'tmdb_id', String(item.id || ''))
@@ -631,6 +617,8 @@ export function createAppActions(app, deps) {
     fillIfEmpty(app.entryEditForm, 'region', item.region)
     fillIfEmpty(app.entryEditForm, 'poster_url', item.poster_url)
     fillIfEmpty(app.entryEditForm, 'summary', item.summary)
+    fillIfEmpty(app.entryEditForm, 'bangumi_score', item.bangumi_score)
+    fillIfEmpty(app.entryEditForm, 'tmdb_score', item.tmdb_score)
     fillListIfEmpty(app.entryEditForm, 'tags_text', item.tags_json || item.tags)
     if (item.provider === 'bangumi') fillIfEmpty(app.entryEditForm, 'bangumi_id', String(item.id || ''))
     if (item.provider === 'tmdb') fillIfEmpty(app.entryEditForm, 'tmdb_id', String(item.id || ''))
@@ -734,6 +722,8 @@ export function createAppActions(app, deps) {
         title: app.mediaWizardDraft.title,
         bangumi_id: app.mediaWizardDraft.bangumi_id,
         tmdb_id: app.mediaWizardDraft.tmdb_id,
+        bangumi_score: Number(app.mediaWizardDraft.bangumi_score || 0),
+        tmdb_score: Number(app.mediaWizardDraft.tmdb_score || 0),
         year: release.year || numberFromInput(app.mediaWizardDraft.year, 0),
         month: release.month || numberFromInput(app.mediaWizardDraft.month, 0),
         season_number: numberFromInput(app.mediaWizardDraft.season_number, 1),
@@ -849,6 +839,8 @@ export function createAppActions(app, deps) {
       title_cn: entry.title_cn || entry.display_title || '',
       bangumi_id: entry.bangumi_id || '',
       tmdb_id: entry.tmdb_id || '',
+      bangumi_score: Number(entry.bangumi_score || 0),
+      tmdb_score: Number(entry.tmdb_score || 0),
       year: Number(entry.year || 0),
       month: Number(entry.month || 0),
       release_month: monthFieldValue(entry.year, entry.month),
@@ -871,6 +863,8 @@ export function createAppActions(app, deps) {
       title_cn: app.entryEditForm.title_cn,
       bangumi_id: app.entryEditForm.bangumi_id,
       tmdb_id: app.entryEditForm.tmdb_id,
+      bangumi_score: Number(app.entryEditForm.bangumi_score || 0),
+      tmdb_score: Number(app.entryEditForm.tmdb_score || 0),
       year: release.year || Number(app.entryEditForm.year || 0),
       month: release.month || Number(app.entryEditForm.month || 0),
       season_number: Number(app.entryEditForm.season_number || 1),
@@ -905,6 +899,8 @@ export function createAppActions(app, deps) {
         title_raw: entry.title_raw || app.entryEditForm.title_raw,
         poster_url: entry.poster_url || app.entryEditForm.poster_url,
         summary: entry.summary || app.entryEditForm.summary,
+        bangumi_score: Number(entry.bangumi_score || app.entryEditForm.bangumi_score || 0),
+        tmdb_score: Number(entry.tmdb_score || app.entryEditForm.tmdb_score || 0),
         year: entry.year || app.entryEditForm.year,
         month: entry.month || app.entryEditForm.month,
         release_month: monthFieldValue(entry.year || app.entryEditForm.year, entry.month || app.entryEditForm.month),
@@ -1048,12 +1044,12 @@ export function createAppActions(app, deps) {
 
   return {
     addDownloader, addMediaWizardResourceLines, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
-    archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks,
+    archiveCurrentEntry, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
     commitEpisodeImport, commitMediaWizard,
     deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
     editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
     openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog,
-    openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+    openScheduledSettings, migrateEpisodeModel, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
     removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
     saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata,
     confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,

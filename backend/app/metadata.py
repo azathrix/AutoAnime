@@ -51,6 +51,7 @@ async def fetch_bangumi_metadata(subject_id: str, proxy: str = "") -> dict[str, 
         "summary": subject.get("summary") or "",
         "year": subject_year(subject),
         "month": subject_month(subject),
+        "bangumi_score": subject_score(subject),
     }
 
 
@@ -111,9 +112,44 @@ async def search_tmdb(keyword: str, token: str, proxy: str = "") -> list[dict[st
                 "poster_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
                 "summary": row.get("overview") or "",
                 "tags_json": json.dumps(keyword_map.get(str(row.get("id") or ""), []), ensure_ascii=False),
+                "tmdb_score": float(row.get("vote_average") or 0),
             }
         )
     return items
+
+
+async def fetch_tmdb_metadata(item_id: str, media_type: str, token: str, proxy: str = "") -> dict[str, Any]:
+    item_id = str(item_id or "").strip()
+    normalized_type = "movie" if str(media_type or "").lower() == "movie" else "tv"
+    if not item_id or not token:
+        return {}
+    async with httpx.AsyncClient(
+        proxy=proxy or None,
+        timeout=BANGUMI_TIMEOUT,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": USER_AGENT},
+    ) as client:
+        resp = await client.get(f"{TMDB_API}/{normalized_type}/{item_id}", params={"language": "zh-CN"})
+        resp.raise_for_status()
+        row = resp.json()
+        keywords = await fetch_tmdb_keywords(client, normalized_type, item_id)
+    date_value = row.get("release_date") or row.get("first_air_date") or ""
+    year = int(date_value[:4]) if re.match(r"\d{4}", date_value) else 0
+    month_match = re.match(r"\d{4}-(\d{1,2})", date_value)
+    month = int(month_match.group(1)) if month_match else 0
+    language = row.get("original_language") or ""
+    region = {"ja": "jp", "zh": "cn", "ko": "kr", "en": "us"}.get(language, "")
+    poster_path = row.get("poster_path") or ""
+    return {
+        "title_cn": row.get("title") or row.get("name") or "",
+        "title_raw": row.get("original_title") or row.get("original_name") or "",
+        "poster_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+        "summary": row.get("overview") or "",
+        "year": year,
+        "month": month,
+        "region": region,
+        "tags_json": json.dumps(keywords, ensure_ascii=False),
+        "tmdb_score": float(row.get("vote_average") or 0),
+    }
 
 
 async def fetch_tmdb_keywords(client: httpx.AsyncClient, media_type: str, item_id: str) -> list[str]:
@@ -157,6 +193,14 @@ def subject_month(subject: dict[str, Any]) -> int:
     return value if 1 <= value <= 12 else 0
 
 
+def subject_score(subject: dict[str, Any]) -> float:
+    rating = subject.get("rating") or {}
+    try:
+        return float(rating.get("score") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def chinese_summary(value: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -189,11 +233,11 @@ async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
     if not entry:
         return
 
-    bangumi_id = entry["bangumi_id"]
+    bangumi_id = str(entry["bangumi_id"] or "").strip()
+    if not bangumi_id:
+        log("warn", f"跳过 Bangumi 元数据: {entry['display_title']} - 缺少 Bangumi ID")
+        return
     try:
-        if not bangumi_id:
-            log("warn", f"跳过 Bangumi 元数据: {entry['display_title']} - 缺少 Bangumi ID")
-            return
         subject = await fetch_bangumi_subject(bangumi_id, proxy)
     except Exception as exc:
         log("error", f"Bangumi 元数据失败: {entry['display_title']} - {exc}")
@@ -206,16 +250,24 @@ async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
     tags_json = subject_tags_json(subject)
     year = subject_year(subject) or entry["year"]
     month = subject_month(subject) or entry["month"]
+    bangumi_score = subject_score(subject)
     with connect() as conn:
         conn.execute(
             """
             UPDATE entries
-            SET title_cn=?, display_title=CASE WHEN display_title='' THEN ? ELSE display_title END,
-                bangumi_id=?, poster_url=?, summary=?, year=?, month=?, tags_json=?,
+            SET title_cn=CASE WHEN title_cn='' THEN ? ELSE title_cn END,
+                display_title=CASE WHEN display_title='' THEN ? ELSE display_title END,
+                bangumi_id=?,
+                poster_url=CASE WHEN poster_url='' THEN ? ELSE poster_url END,
+                summary=CASE WHEN summary='' THEN ? ELSE summary END,
+                year=CASE WHEN year=0 THEN ? ELSE year END,
+                month=CASE WHEN month=0 THEN ? ELSE month END,
+                tags_json=CASE WHEN tags_json='[]' THEN ? ELSE tags_json END,
+                bangumi_score=?,
                 metadata_source='bangumi', updated_at=?
             WHERE id=?
             """,
-            (title_cn, title_cn, bangumi_id, poster, summary, year, month, tags_json, now(), entry_id),
+            (title_cn, title_cn, bangumi_id, poster, summary, year, month, tags_json, bangumi_score, now(), entry_id),
         )
         if series:
             conn.execute(

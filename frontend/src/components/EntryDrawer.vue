@@ -22,6 +22,7 @@ export default appContextComponent()
                   <el-tag size="small" type="info">{{ regionLabel(selectedEntry.region) }}</el-tag>
                   <el-tag v-if="selectedEntryDomain === 'seasonal'" size="small" type="success">可观看 {{ watchableCount(selectedEntryStats) }} 集</el-tag>
                   <el-tag v-if="selectedEntryDomain === 'seasonal'" size="small" type="primary">追番中</el-tag>
+                  <el-tag v-for="score in metadataScores(selectedEntry)" :key="score.key" size="small" type="warning">{{ score.label }}</el-tag>
                 </div>
               </div>
             </div>
@@ -38,6 +39,8 @@ export default appContextComponent()
               </el-descriptions-item>
               <el-descriptions-item label="首播月份">{{ selectedEntry.year || '-' }} / {{ selectedEntry.month || '-' }}</el-descriptions-item>
               <el-descriptions-item label="季 / 章节 / 部分">{{ normalizedSeasonLabel(selectedEntry) }}</el-descriptions-item>
+              <el-descriptions-item label="Bangumi 评分">{{ selectedEntry.bangumi_score ? Number(selectedEntry.bangumi_score).toFixed(1) : '-' }}</el-descriptions-item>
+              <el-descriptions-item label="TMDB 评分">{{ selectedEntry.tmdb_score ? Number(selectedEntry.tmdb_score).toFixed(1) : '-' }}</el-descriptions-item>
               <el-descriptions-item label="国家 / 地区">{{ regionLabel(selectedEntry.region) }}</el-descriptions-item>
               <el-descriptions-item label="追番状态">{{ selectedEntryDomain === 'seasonal' ? '追番中' : '普通媒体库条目' }}</el-descriptions-item>
               <el-descriptions-item label="别名" :span="2">{{ selectedEntry.title_romaji || selectedEntry.title_raw || '-' }}</el-descriptions-item>

@@ -65,6 +65,8 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
     summary = payload.summary.strip()
     genres_json = normalize_json_list_text(payload.genres_json)
     tags_json = normalize_json_list_text(payload.tags_json)
+    bangumi_score = max(0.0, float(payload.bangumi_score or 0))
+    tmdb_score = max(0.0, float(payload.tmdb_score or 0))
     ts = now()
     work_key = fingerprint(title, bangumi_id or tmdb_id)
     entry_key = fingerprint(f"{media_type}:{bangumi_id or tmdb_id or title}:S{season_number}", "")
@@ -92,8 +94,8 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
             INSERT INTO entries
               (work_id, fingerprint, domain_kind, media_type, region, source_provider, metadata_provider,
                external_id, target_library_id, display_title, title_root, title_raw, title_cn,
-               bangumi_id, tmdb_id, year, month, season_number, poster_url, summary, genres_json, tags_json, created_at, updated_at)
-            VALUES (?, ?, 'library', ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               bangumi_id, tmdb_id, bangumi_score, tmdb_score, year, month, season_number, poster_url, summary, genres_json, tags_json, created_at, updated_at)
+            VALUES (?, ?, 'library', ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(fingerprint) DO UPDATE SET
               media_type=excluded.media_type,
               region=excluded.region,
@@ -103,6 +105,8 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
               title_cn=excluded.title_cn,
               bangumi_id=CASE WHEN entries.bangumi_id='' THEN excluded.bangumi_id ELSE entries.bangumi_id END,
               tmdb_id=CASE WHEN entries.tmdb_id='' THEN excluded.tmdb_id ELSE entries.tmdb_id END,
+              bangumi_score=CASE WHEN excluded.bangumi_score>0 THEN excluded.bangumi_score ELSE entries.bangumi_score END,
+              tmdb_score=CASE WHEN excluded.tmdb_score>0 THEN excluded.tmdb_score ELSE entries.tmdb_score END,
               year=CASE WHEN excluded.year>0 THEN excluded.year ELSE entries.year END,
               month=CASE WHEN excluded.month>0 THEN excluded.month ELSE entries.month END,
               poster_url=CASE WHEN excluded.poster_url!='' THEN excluded.poster_url ELSE entries.poster_url END,
@@ -125,6 +129,8 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
                 title,
                 bangumi_id,
                 tmdb_id,
+                bangumi_score,
+                tmdb_score,
                 year,
                 month,
                 season_number,
@@ -543,6 +549,8 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
             SET title_cn=?,
                 bangumi_id=?,
                 tmdb_id=?,
+                bangumi_score=?,
+                tmdb_score=?,
                 year=?,
                 month=?,
                 season_number=?,
@@ -561,6 +569,8 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 payload.title_cn.strip(),
                 payload.bangumi_id.strip(),
                 payload.tmdb_id.strip(),
+                max(0.0, float(payload.bangumi_score or 0)),
+                max(0.0, float(payload.tmdb_score or 0)),
                 payload.year,
                 max(0, min(12, int(payload.month or 0))),
                 payload.season_number,
