@@ -90,15 +90,28 @@ async def run_schedule_action(action: str, trigger_source: str = "manual") -> st
     if action == "rss_scan":
         from .runtime_service import run_scan_source
 
-        return await run_scan_source(get_settings())
+        operation_id = runtime_store.start_operation_sync("扫描全部", f"定时器触发: {trigger_source}")
+        try:
+            message = await run_scan_source(get_settings(), operation_id)
+        except Exception as exc:
+            runtime_store.finish_operation_sync(operation_id, "failed", str(exc))
+            raise
+        runtime_store.finish_operation_sync(operation_id, "completed", message)
+        return message
     if action == "rss_cache_cleanup":
+        operation_id = runtime_store.start_operation_sync("清理 RSS 缓存", f"定时器触发: {trigger_source}")
         count = clear_processing_cache_type("rss_resource_processed")
-        log("info", f"RSS 缓存已清理: {count} 条")
-        return f"RSS 缓存已清理: {count} 条"
+        message = f"RSS 缓存已清理: {count} 条"
+        runtime_store.finish_operation_sync(operation_id, "completed", message)
+        log("info", message)
+        return message
     if action == "expired_cache_cleanup":
+        operation_id = runtime_store.start_operation_sync("清理过期缓存", f"定时器触发: {trigger_source}")
         count = clear_expired_processing_cache()
-        log("info", f"过期缓存已清理: {count} 条")
-        return f"过期缓存已清理: {count} 条"
+        message = f"过期缓存已清理: {count} 条"
+        runtime_store.finish_operation_sync(operation_id, "completed", message)
+        log("info", message)
+        return message
     raise ValueError(f"未知定时器动作: {action}")
 
 
@@ -131,4 +144,3 @@ def trigger_schedule(schedule_id: int, trigger_source: str = "manual") -> int:
 
     asyncio.create_task(runner())
     return run_id
-

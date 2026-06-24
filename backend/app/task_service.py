@@ -176,7 +176,10 @@ async def pause_task(task_id: str) -> bool:
         return await runtime_store.pause_task(int(raw))
     if kind == "download" and raw.isdigit():
         with connect() as conn:
-            conn.execute("UPDATE download_jobs SET phase='paused', progress_text='已暂停', updated_at=? WHERE id=?", (now(), int(raw)))
+            conn.execute(
+                "UPDATE download_jobs SET status='paused', phase='paused', progress_text='已暂停', updated_at=? WHERE id=?",
+                (now(), int(raw)),
+            )
         return True
     return False
 
@@ -187,7 +190,14 @@ async def resume_task(task_id: str) -> bool:
         return await runtime_store.resume_task(int(raw))
     if kind == "download" and raw.isdigit():
         with connect() as conn:
-            conn.execute("UPDATE download_jobs SET phase=status, progress_text='', updated_at=? WHERE id=?", (now(), int(raw)))
+            conn.execute(
+                """
+                UPDATE download_jobs
+                SET status='pending', phase='pending', progress=0, progress_text='等待下载', updated_at=?
+                WHERE id=? AND status='paused'
+                """,
+                (now(), int(raw)),
+            )
         return True
     return False
 
