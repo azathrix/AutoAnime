@@ -7,10 +7,10 @@ from typing import Any
 from fastapi import HTTPException
 
 from .database import connect
-from .db import get_settings, log, merge_duplicate_series, now
+from .db import log, now
 from .parser import fingerprint
 from .pipeline_orchestrator import start_pipeline
-from .runtime_service import ACTIVE_DOWNLOAD_STATUSES, DOWNLOAD_RUNTIME_PROCESSORS, trigger_queue
+from .runtime_service import ACTIVE_DOWNLOAD_STATUSES, DOWNLOAD_RUNTIME_PROCESSORS
 from .runtime_store import runtime_store
 from .schemas import EntryPayload, MediaCreatePayload
 from .utils import normalize_json_list_text, parsed_episode_required, row_to_dict, subtitle_embedded_value, rows_to_dicts, enrich_catalog_entry
@@ -604,7 +604,6 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 entry_id,
             ),
         )
-        should_refresh_seasonal = domain_kind == "seasonal"
         if domain_kind == "seasonal":
             conn.execute(
                 """
@@ -623,30 +622,8 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                     payload.bangumi_id.strip(),
                 ),
             )
-    if should_refresh_seasonal:
-        start_pipeline(
-            "seasonal_mikan_tracking",
-            trigger_source="settings",
-            first_step_key="release_selection",
-            subject_type="entry",
-            subject_id=entry_id,
-            payload={"entry_id": entry_id, "domain_kind": "seasonal"},
-            message="番剧规则变更，重新计算自动选集",
-        )
-        start_pipeline(
-            "seasonal_mikan_tracking",
-            trigger_source="settings",
-            first_step_key="season_backfill",
-            subject_type="entry",
-            subject_id=entry_id,
-            payload={"entry_id": entry_id, "domain_kind": "seasonal"},
-            message="番剧规则变更，重新执行补全",
-        )
-        trigger_queue("processor", delay=0)
     if domain_kind == "seasonal":
         log("info", f"新番条目设置已保存: {payload.title_cn}")
-        with connect() as conn:
-            merge_duplicate_series(conn)
     else:
         log("info", f"番剧库条目已保存: {payload.title_cn}")
     return build_entry_response(entry_id)
