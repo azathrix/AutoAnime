@@ -67,6 +67,8 @@ def list_tasks(task_type: str = "") -> list[dict[str, Any]]:
     for queue in snapshot.get("queues", []):
         for item in queue.get("items", []):
             item_type = runtime_task_type(item)
+            if item_type == "download":
+                continue
             if selected_type and item_type != selected_type:
                 continue
             payload = item.get("payload") or {}
@@ -157,6 +159,9 @@ async def cancel_task(task_id: str) -> bool:
 
         return await cancel_operation(int(raw))
     if kind == "download" and raw.isdigit():
+        from .download_worker_service import cancel_download_job_worker
+
+        cancel_download_job_worker(int(raw))
         with connect() as conn:
             conn.execute(
                 """
@@ -198,6 +203,9 @@ async def resume_task(task_id: str) -> bool:
                 """,
                 (now(), int(raw)),
             )
+        from .download_worker_service import trigger_download_worker
+
+        trigger_download_worker(delay=0)
         return True
     return False
 

@@ -6,6 +6,7 @@ from typing import Any
 from .database import connect
 from .db import get_settings, log, now
 from .download_task_service import queue_download_for_release
+from .download_worker_service import trigger_download_worker
 from .maintenance import refresh_local_status
 from .metadata import fetch_tmdb_metadata, refresh_entry_metadata
 from .parser import ParsedRelease
@@ -308,6 +309,7 @@ async def process_rss_item(settings: dict[str, str], item: ParsedRelease, stats:
             result = queue_download_for_release(release_id)
             if result.get("queued"):
                 stats.queued_downloads += 1
+                trigger_download_worker(delay=0)
                 update_candidate_status(candidate_id, "completed", "已生成下载任务", item)
             else:
                 reason = str(result.get("reason") or "未生成下载任务")

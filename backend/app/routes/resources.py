@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from ..database import connect
 from ..db import log, now
 from ..download_task_service import queue_download_for_episode, queue_download_for_release
+from ..download_worker_service import cancel_all_download_workers, cancel_download_job_worker, trigger_download_worker
 from ..config import MEDIA_ROOT
 from ..maintenance import match_entry_local_files, organize_local_files, refresh_local_status
 from ..media_service import build_entry_response, reset_orphaned_download_jobs_in_conn
@@ -665,28 +666,13 @@ async def api_download_episode_resource(episode_id: int) -> dict[str, Any]:
     release_id = int(refreshed_episode["release_id"] or 0) if refreshed_episode else int(episode_data.get("release_id") or 0)
     if release_id <= 0:
         return {"status": "skipped", "message": "该集没有可下载资源"}
-    run_id = start_pipeline(
-        "library_backfill",
-        trigger_source="episode_download",
-        first_step_key="download",
-        subject_type="release",
-        subject_id=release_id,
-        payload={
-            "_dedupe_key": f"download:entry:{int(episode_data['entry_id'])}:episode:{int(episode_data['episode_number'])}",
-            "entry_id": int(episode_data["entry_id"]),
-            "release_id": release_id,
-            "episode_number": int(episode_data["episode_number"]),
-            "domain_kind": "library",
-        },
-        message=f"手动下载集数: entry_id={episode_data['entry_id']} episode={episode_data['episode_number']}",
-    )
-    trigger_queue("processor", delay=0)
+    trigger_download_worker(delay=0)
     log(
         "info",
         f"单集下载请求: entry_id={int(episode_data['entry_id'])} episode={int(episode_data['episode_number'])} "
-        f"release_id={release_id} run_id={run_id}",
+        f"release_id={release_id}",
     )
-    return {"status": "started", "download_run_id": run_id, "message": "已加入下载队列"}
+    return {"status": "started", "message": "已加入下载队列"}
 
 
 @router.post("/api/entries/{entry_id}/download")
@@ -724,8 +710,6 @@ async def api_download_entry_resources(entry_id: int) -> dict[str, Any]:
         if episode_number <= 0 or episode_id <= 0 or episode_number in seen_episodes:
             continue
         seen_episodes.add(episode_number)
-        if runtime_store.has_active_episode_task(entry_id, episode_number, DOWNLOAD_RUNTIME_PROCESSORS):
-            continue
         queued = queue_download_for_episode(episode_id)
         if not queued.get("queued"):
             continue
@@ -735,36 +719,17 @@ async def api_download_entry_resources(entry_id: int) -> dict[str, Any]:
         if release_id <= 0:
             continue
         rows.append({"entry_id": entry_id, "episode_number": episode_number, "release_id": release_id})
-    run_ids: list[int] = []
-    for row in rows:
-        run_id = start_pipeline(
-            "library_backfill",
-            trigger_source="entry_batch_download",
-            first_step_key="download",
-            subject_type="release",
-            subject_id=int(row["release_id"]),
-            payload={
-                "_dedupe_key": f"download:entry:{entry_id}:episode:{int(row['episode_number'])}",
-                "entry_id": entry_id,
-                "release_id": int(row["release_id"]),
-                "episode_number": int(row["episode_number"]),
-                "domain_kind": "library",
-            },
-            message=f"批量下载集数: entry_id={entry_id} episode={row['episode_number']}",
-        )
-        run_ids.append(run_id)
-    if run_ids:
-        trigger_queue("processor", delay=0)
+    if rows:
+        trigger_download_worker(delay=0)
     log(
         "info",
-        f"批量下载请求: entry_id={entry_id} candidates={len(rows)} runs={len(run_ids)} "
-        f"message={'已提交下载流水线' if run_ids else '没有符合条件的待下载集数'}",
+        f"批量下载请求: entry_id={entry_id} candidates={len(rows)} "
+        f"message={'已提交下载任务' if rows else '没有符合条件的待下载集数'}",
     )
     return {
-        "status": "started" if run_ids else "skipped",
-        "count": len(run_ids),
-        "download_run_ids": run_ids,
-        "message": f"已加入 {len(run_ids)} 个下载任务" if run_ids else "没有需要批量下载的集数",
+        "status": "started" if rows else "skipped",
+        "count": len(rows),
+        "message": f"已加入 {len(rows)} 个下载任务" if rows else "没有需要批量下载的集数",
     }
 
 
@@ -792,6 +757,7 @@ async def api_cancel_download_by_entry_episode(payload: EpisodeDownloadActionPay
 async def api_cancel_all_downloads() -> dict[str, Any]:
     cancelled_runtime = await runtime_store.cancel_processor_tasks(DOWNLOAD_RUNTIME_PROCESSORS)
     cancelled_active = await cancel_active_processor_tasks(DOWNLOAD_RUNTIME_PROCESSORS)
+    cancelled_workers = cancel_all_download_workers()
     ts = now()
     active_placeholders = ",".join("?" for _ in ACTIVE_DOWNLOAD_STATUSES)
     with connect() as conn:
@@ -813,11 +779,16 @@ async def api_cancel_all_downloads() -> dict[str, Any]:
             """,
             (ts,),
         )
-    log("warn", f"已取消全部下载任务: runtime={cancelled_runtime} active={cancelled_active} jobs={changed_jobs}")
+    log(
+        "warn",
+        f"已取消全部下载任务: runtime={cancelled_runtime} active={cancelled_active} "
+        f"workers={cancelled_workers} jobs={changed_jobs}",
+    )
     return {
         "status": "cancelled",
         "runtime_cancelled": cancelled_runtime,
         "active_cancelled": cancelled_active,
+        "worker_cancelled": cancelled_workers,
         "download_jobs": changed_jobs,
         "message": f"已取消全部下载任务: {changed_jobs} 条记录",
     }
@@ -843,6 +814,14 @@ async def _set_episode_download_state_by_entry_episode(
     ts = now()
     active_placeholders = ",".join("?" for _ in ACTIVE_DOWNLOAD_STATUSES)
     with connect() as conn:
+        active_rows = conn.execute(
+            f"""
+            SELECT id
+            FROM download_jobs
+            WHERE entry_id=? AND episode_number=? AND status IN ({active_placeholders}, 'failed', 'paused')
+            """,
+            (entry_id, episode_number, *ACTIVE_DOWNLOAD_STATUSES),
+        ).fetchall()
         conn.execute(
             f"""
             UPDATE download_jobs
@@ -869,7 +848,17 @@ async def _set_episode_download_state_by_entry_episode(
         entry_id=entry_id,
         episode_number=episode_number,
     )
-    return {"status": status, "runtime_cancelled": cancelled, "active_cancelled": active_cancelled, "message": message}
+    worker_cancelled = 0
+    for row in active_rows:
+        if cancel_download_job_worker(int(row["id"] or 0)):
+            worker_cancelled += 1
+    return {
+        "status": status,
+        "runtime_cancelled": cancelled,
+        "active_cancelled": active_cancelled,
+        "worker_cancelled": worker_cancelled,
+        "message": message,
+    }
 
 
 @router.post("/api/entries/{entry_id}/refresh-resources")

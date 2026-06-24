@@ -8,9 +8,10 @@ from fastapi import HTTPException
 
 from .database import connect
 from .db import log, now
+from .download_task_service import queue_download_for_release
+from .download_worker_service import trigger_download_worker
 from .library import parse_entry_labels
 from .parser import fingerprint
-from .pipeline_orchestrator import start_pipeline
 from .runtime_service import ACTIVE_DOWNLOAD_STATUSES, DOWNLOAD_RUNTIME_PROCESSORS
 from .runtime_store import runtime_store
 from .schemas import EntryPayload, MediaCreatePayload
@@ -303,26 +304,14 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
                         ts,
                     ),
                 )
-    run_id = 0
+    queued_download: dict[str, Any] = {"queued": False, "reason": ""}
     if release_id > 0:
-        run_id = start_pipeline(
-            "library_backfill",
-            trigger_source="media_wizard",
-            first_step_key="download",
-            subject_type="release",
-            subject_id=release_id,
-            payload={
-                "_dedupe_key": f"download:entry:{entry_id}:episode:{episode_number}",
-                "entry_id": entry_id,
-                "release_id": release_id,
-                "episode_number": episode_number,
-                "domain_kind": "library",
-            },
-            message=f"媒体向导收录后下载: {title}",
-        )
+        queued_download = queue_download_for_release(release_id)
+        if queued_download.get("queued"):
+            trigger_download_worker(delay=0)
     log("info", f"媒体条目已收录: type={media_type} entry_id={entry_id} release_id={release_id} title={title}")
     detail = build_entry_response(entry_id)
-    detail["download_run_id"] = run_id
+    detail["download_task"] = queued_download
     return detail
 
 def empty_entry_response() -> dict[str, Any]:

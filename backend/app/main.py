@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import APP_DIR
 from .db import get_settings, init_db, log
+from .download_worker_service import trigger_download_worker
 from .media_service import reset_orphaned_download_jobs
 from .processors import register_builtin_processors
 from .routes import cache, dashboard, downloads, files, media, resources, rss, runtime, schedules, settings, tasks
@@ -24,6 +25,7 @@ async def lifespan(_: FastAPI):
     recovered = reset_orphaned_download_jobs()
     if recovered:
         log("warn", f"已恢复中断下载状态: {recovered} 个")
+    trigger_download_worker(delay=1)
     register_builtin_processors()
     reschedule()
     scheduler.start()

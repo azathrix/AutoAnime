@@ -7,8 +7,9 @@ from fastapi import APIRouter, HTTPException
 from ..database import connect
 from ..db import log, now
 from ..download_task_service import download_overview, list_download_tasks, queue_download_for_episode, queue_download_for_release
-from ..pipeline_orchestrator import cancel_active_processor_tasks, start_pipeline
-from ..runtime_service import DOWNLOAD_RUNTIME_PROCESSORS, trigger_queue
+from ..download_worker_service import cancel_download_job_worker, trigger_download_worker
+from ..pipeline_orchestrator import cancel_active_processor_tasks
+from ..runtime_service import DOWNLOAD_RUNTIME_PROCESSORS
 from ..runtime_store import runtime_store
 
 
@@ -56,11 +57,13 @@ async def api_cancel_download_task(task_id: int) -> dict[str, Any]:
         entry_id=entry_id,
         episode_number=episode_number,
     )
+    worker_cancelled = cancel_download_job_worker(task_id)
     log("warn", f"下载任务已取消: task_id={task_id} entry_id={entry_id} episode={episode_number}")
     return {
         "status": "cancelled",
         "runtime_cancelled": runtime_cancelled,
         "active_cancelled": active_cancelled,
+        "worker_cancelled": worker_cancelled,
         "message": "下载任务已取消",
     }
 
@@ -82,23 +85,8 @@ async def api_retry_download_task(task_id: int) -> dict[str, Any]:
         release_id = int(refreshed["release_id"] or release_id) if refreshed else release_id
     if release_id <= 0:
         return {"status": "skipped", "message": "该任务没有可下载资源"}
-    run_id = start_pipeline(
-        "library_backfill",
-        trigger_source="download_task_retry",
-        first_step_key="download",
-        subject_type="release",
-        subject_id=release_id,
-        payload={
-            "_dedupe_key": f"download-task:{task_id}",
-            "release_id": release_id,
-            "entry_id": int((queued.get("task") or {}).get("entry_id") or row["entry_id"] or 0),
-            "episode_number": int((queued.get("task") or {}).get("episode_number") or row["episode_number"] or 0),
-            "domain_kind": "library",
-        },
-        message=f"重试下载任务: task_id={task_id}",
-    )
-    trigger_queue("processor", delay=0)
-    return {"status": "started", "download_run_id": run_id, "message": "下载任务已重新入队"}
+    trigger_download_worker(delay=0)
+    return {"status": "started", "message": "下载任务已重新排队"}
 
 
 @router.post("/api/download-tasks/clear-completed")

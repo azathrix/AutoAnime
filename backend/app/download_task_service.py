@@ -405,6 +405,12 @@ def list_download_tasks(limit: int = 200) -> list[dict[str, Any]]:
         if status == "completed":
             item["progress"] = 0
             item["progress_text"] = "可观看"
+        elif status == "failed":
+            item["progress"] = 0
+            item["progress_text"] = item.get("last_error") or "失败"
+        elif status == "cancelled":
+            item["progress"] = 0
+            item["progress_text"] = "已取消"
         item["display_title"] = item.get("display_title") or item.get("title_cn") or item.get("title_raw") or "未命名条目"
         item["resource_title"] = item.get("resource_title") or item.get("normalized_name") or item.get("source_ref") or "-"
         item["active"] = status in ACTIVE_DOWNLOAD_STATUSES
