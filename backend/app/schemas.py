@@ -100,6 +100,17 @@ class EpisodeSubtitlePayload(BaseModel):
     file_name: str = ""
     selected: bool = True
 
+class EpisodePayload(BaseModel):
+    resource_ref: str = ""
+    subtitle_ref: str = ""
+    local_path: str = ""
+    subtitle_path: str = ""
+    subtitle_group: str = ""
+    resolution: str = ""
+    language: str = ""
+    subtitle_format: str = ""
+    source_title: str = ""
+
 class EpisodeDownloadActionPayload(BaseModel):
     entry_id: int = 0
     episode_number: int = 0

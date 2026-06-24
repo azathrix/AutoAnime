@@ -7,7 +7,7 @@ from pathlib import Path
 from .database import connect
 from .downloader_service import download_to_local, list_remote_files, provider_key, remote_file_id
 from .db import log, now
-from .library import local_library_root, media_root_for_type, render_episode_name, render_season_dir, render_series_dir
+from .library import expected_local_episode_path, media_root_for_type
 from .parser import normalize_title_key, parse_episode
 
 
@@ -80,22 +80,8 @@ def ensure_sync_rule(entry_id: int, settings: dict[str, str], enabled: bool | No
 
 
 def local_episode_path(download_artifact: dict, entry: dict, settings: dict[str, str]) -> str:
-    root = Path(local_library_root(entry, settings))
-    series_dir = render_series_dir(entry, settings)
     suffix = Path(download_artifact.get("artifact_name") or "").suffix
-    if str(entry.get("media_type") or "").lower() == "movie":
-        filename = f"{series_dir}{suffix}"
-        return str(root / series_dir / filename)
-    season_dir = render_season_dir(int(entry.get("season_number") or 1), settings)
-    filename = render_episode_name(
-        entry,
-        int(download_artifact.get("episode_number") or 0),
-        "",
-        settings,
-    )
-    if suffix:
-        filename = f"{filename}{suffix}"
-    return str(root / series_dir / season_dir / filename)
+    return expected_local_episode_path(entry, int(download_artifact.get("episode_number") or 0), suffix, settings)
 
 
 def normalize_local_target_path(target_path: str, source_name: str = "") -> str:

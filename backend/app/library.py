@@ -194,6 +194,17 @@ def local_series_path(entry: dict, settings: dict[str, str]) -> Path:
     return Path(local_library_root(entry, settings)) / render_series_dir(entry, settings)
 
 
+def expected_local_episode_path(entry: dict, episode_number: int, suffix: str, settings: dict[str, str]) -> str:
+    root = Path(local_library_root(entry, settings))
+    series_dir = render_series_dir(entry, settings)
+    normalized_suffix = suffix if str(suffix or "").startswith(".") else f".{suffix}" if suffix else ""
+    if str(entry.get("media_type") or "").lower() == "movie":
+        return str(root / series_dir / f"{series_dir}{normalized_suffix}")
+    season_dir = render_season_dir(int(entry.get("season_number") or 1), settings)
+    filename = render_episode_name(entry, int(episode_number or 0), "", settings)
+    return str(root / series_dir / season_dir / f"{filename}{normalized_suffix}")
+
+
 def target_dir(series: dict, settings: dict[str, str]) -> str:
     root = settings.get("library_root") or "/Anime"
     active_json = settings.get("_active_downloader_json") or ""

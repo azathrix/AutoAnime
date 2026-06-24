@@ -9,7 +9,7 @@ from typing import Any
 from .config import DATA_DIR, DB_PATH
 from .database import connect
 from .db import get_settings, log
-from .library import local_library_root, render_series_dir
+from .library import expected_local_episode_path, local_library_root, render_series_dir
 from .sync_service import local_episode_path
 
 
@@ -385,6 +385,209 @@ def cleanup_invalid_episode_data() -> dict[str, Any]:
         f"发布 {summary['releases']} 条，字幕 {summary['episode_subtitles']} 条，"
         f"下载记录 {summary['download_jobs'] + summary['download_artifacts'] + summary['local_assets']} 条"
     )
+    log("info", message)
+    return {"status": "completed", "message": message, **summary}
+
+
+def backup_database(reason: str) -> str:
+    backup_dir = DATA_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    safe_reason = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in reason).strip("-") or "backup"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    target = backup_dir / f"autoanime-{safe_reason}-{stamp}.db"
+    shutil.copy2(DB_PATH, target)
+    return str(target)
+
+
+def _video_suffix(*values: str) -> str:
+    for value in values:
+        suffix = Path(str(value or "")).suffix
+        if suffix.lower() in {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"}:
+            return suffix
+    text = " ".join(str(value or "").lower() for value in values)
+    for suffix in (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"):
+        if suffix in text:
+            return suffix
+    return ".mkv"
+
+
+def migrate_episode_model() -> dict[str, Any]:
+    backup_path = backup_database("before-episode-model")
+    summary = {"episodes": 0, "updated": 0, "watchable": 0, "backup_path": backup_path}
+    settings = get_settings()
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT ep.*,
+                   e.display_title, e.title_raw, e.title_cn, e.bangumi_id, e.tmdb_id,
+                   e.year, e.season_number, e.media_type, e.target_library_id,
+                   er.id AS resource_id,
+                   er.release_id AS resource_release_id,
+                   er.title AS resource_title,
+                   er.source_ref AS resource_ref,
+                   er.torrent_url,
+                   er.magnet,
+                   er.subtitle_group,
+                   er.resolution,
+                   er.language,
+                   er.subtitle_format,
+                   er.local_path AS resource_local_path,
+                   es.subtitle_url,
+                   es.subtitle_path,
+                   la.local_path AS asset_local_path,
+                   la.status AS asset_status,
+                   dj.id AS download_job_id
+            FROM episodes ep
+            JOIN entries e ON e.id=ep.entry_id
+            LEFT JOIN episode_resources er ON er.id=(
+              SELECT id FROM episode_resources
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number
+              ORDER BY selected DESC, id DESC
+              LIMIT 1
+            )
+            LEFT JOIN episode_subtitles es ON es.id=(
+              SELECT id FROM episode_subtitles
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number
+              ORDER BY selected DESC, id DESC
+              LIMIT 1
+            )
+            LEFT JOIN local_assets la ON la.id=(
+              SELECT id FROM local_assets
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number
+              ORDER BY CASE status WHEN 'synced' THEN 0 ELSE 1 END, updated_at DESC, id DESC
+              LIMIT 1
+            )
+            LEFT JOIN download_jobs dj ON dj.id=(
+              SELECT id FROM download_jobs
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number
+              ORDER BY updated_at DESC, id DESC
+              LIMIT 1
+            )
+            WHERE ep.episode_number > 0
+            ORDER BY ep.entry_id, ep.episode_number
+            """
+        ).fetchall()
+        ts = _now()
+        for row in rows:
+            summary["episodes"] += 1
+            entry = dict(row)
+            source_ref = str(row["magnet"] or row["torrent_url"] or row["resource_ref"] or row["resource_ref"] or "")
+            local_path = str(row["asset_local_path"] or row["resource_local_path"] or row["local_path"] or "")
+            suffix = _video_suffix(local_path, str(row["resource_title"] or ""), source_ref)
+            expected_path = local_path or expected_local_episode_path(entry, int(row["episode_number"] or 0), suffix, settings)
+            watchable = bool(expected_path and Path(expected_path).exists())
+            if watchable:
+                summary["watchable"] += 1
+            conn.execute(
+                """
+                UPDATE episodes
+                SET resource_ref=CASE WHEN resource_ref='' THEN ? ELSE resource_ref END,
+                    subtitle_ref=CASE WHEN subtitle_ref='' THEN ? ELSE subtitle_ref END,
+                    local_path=CASE WHEN local_path='' THEN ? ELSE local_path END,
+                    subtitle_path=CASE WHEN subtitle_path='' THEN ? ELSE subtitle_path END,
+                    watchable=?,
+                    subtitle_group=CASE WHEN subtitle_group='' THEN ? ELSE subtitle_group END,
+                    resolution=CASE WHEN resolution='' THEN ? ELSE resolution END,
+                    language=CASE WHEN language='' THEN ? ELSE language END,
+                    subtitle_format=CASE WHEN subtitle_format='' THEN ? ELSE subtitle_format END,
+                    source_title=CASE WHEN source_title='' THEN ? ELSE source_title END,
+                    source_type='magnet',
+                    release_id=CASE WHEN release_id=0 THEN ? ELSE release_id END,
+                    last_download_job_id=CASE WHEN last_download_job_id=0 THEN ? ELSE last_download_job_id END,
+                    status=CASE WHEN ?=1 THEN 'downloaded' WHEN status='missing' THEN 'available' ELSE status END,
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    source_ref,
+                    str(row["subtitle_url"] or ""),
+                    expected_path,
+                    str(row["subtitle_path"] or ""),
+                    1 if watchable else 0,
+                    str(row["subtitle_group"] or ""),
+                    str(row["resolution"] or ""),
+                    str(row["language"] or ""),
+                    str(row["subtitle_format"] or ""),
+                    str(row["resource_title"] or ""),
+                    int(row["resource_release_id"] or row["release_id"] or 0),
+                    int(row["download_job_id"] or 0),
+                    1 if watchable else 0,
+                    ts,
+                    int(row["id"] or 0),
+                ),
+            )
+            summary["updated"] += 1
+    message = f"集数模型迁移完成: 集数 {summary['episodes']} 条，更新 {summary['updated']} 条，可观看 {summary['watchable']} 条，备份 {backup_path}"
+    log("info", message)
+    return {"status": "completed", "message": message, **summary}
+
+
+def refresh_local_status(entry_id: int = 0) -> dict[str, Any]:
+    summary = {"checked": 0, "watchable": 0, "missing": 0}
+    settings = get_settings()
+    with connect() as conn:
+        params: tuple[Any, ...]
+        where = "WHERE ep.episode_number > 0 AND COALESCE(e.hidden, 0)=0"
+        params = ()
+        if entry_id > 0:
+            where += " AND ep.entry_id=?"
+            params = (entry_id,)
+        rows = conn.execute(
+            f"""
+            SELECT ep.*, e.display_title, e.title_raw, e.title_cn, e.bangumi_id, e.tmdb_id,
+                   e.year, e.season_number, e.media_type, e.target_library_id
+            FROM episodes ep
+            JOIN entries e ON e.id=ep.entry_id
+            {where}
+            ORDER BY ep.entry_id, ep.episode_number
+            """,
+            params,
+        ).fetchall()
+        ts = _now()
+        for row in rows:
+            summary["checked"] += 1
+            entry = dict(row)
+            current_path = str(row["local_path"] or "")
+            suffix = _video_suffix(current_path, str(row["source_title"] or ""), str(row["resource_ref"] or ""))
+            expected_path = current_path or expected_local_episode_path(entry, int(row["episode_number"] or 0), suffix, settings)
+            exists = bool(expected_path and Path(expected_path).exists())
+            if exists:
+                summary["watchable"] += 1
+            else:
+                summary["missing"] += 1
+            conn.execute(
+                """
+                UPDATE episodes
+                SET local_path=?, watchable=?, status=CASE WHEN ?=1 THEN 'downloaded' ELSE 'available' END, updated_at=?
+                WHERE id=?
+                """,
+                (expected_path, 1 if exists else 0, 1 if exists else 0, ts, int(row["id"] or 0)),
+            )
+            if exists:
+                conn.execute(
+                    """
+                    INSERT INTO local_assets
+                      (download_artifact_id, release_id, series_id, entry_id, episode_number, local_path,
+                       nfo_status, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'disabled', 'synced', ?, ?)
+                    ON CONFLICT(download_artifact_id) DO UPDATE SET
+                      local_path=excluded.local_path,
+                      status='synced',
+                      updated_at=excluded.updated_at
+                    """,
+                    (
+                        -abs(int(row["id"] or 0)),
+                        int(row["release_id"] or 0),
+                        int(row["series_id"] or 0),
+                        int(row["entry_id"] or 0),
+                        int(row["episode_number"] or 0),
+                        expected_path,
+                        ts,
+                        ts,
+                    ),
+                )
+    scope = f"entry_id={entry_id}" if entry_id > 0 else "全部"
+    message = f"本地状态刷新完成({scope}): 检查 {summary['checked']} 集，可观看 {summary['watchable']} 集，缺失 {summary['missing']} 集"
     log("info", message)
     return {"status": "completed", "message": message, **summary}
 

@@ -415,7 +415,42 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
         if not entry:
             return empty_entry_response()
         episodes = conn.execute(
-            "SELECT * FROM episodes WHERE entry_id=? AND episode_number > 0 ORDER BY episode_number ASC, id ASC",
+            """
+            SELECT ep.*,
+                   dj.id AS download_job_id,
+                   dj.status AS download_status,
+                   dj.progress AS download_progress,
+                   dj.progress_text AS download_progress_text,
+                   dj.retry_after AS download_retry_after,
+                   dj.last_error AS download_error,
+                   la.id AS local_asset_id,
+                   la.local_path AS local_asset_path
+            FROM episodes ep
+            LEFT JOIN download_jobs dj ON dj.id=(
+              SELECT id
+              FROM download_jobs
+              WHERE entry_id=ep.entry_id
+                AND episode_number=ep.episode_number
+              ORDER BY CASE status
+                WHEN 'local_copying' THEN 0
+                WHEN 'remote_completed' THEN 1
+                WHEN 'remote_downloading' THEN 2
+                WHEN 'submitting' THEN 3
+                WHEN 'pending' THEN 4
+                WHEN 'failed' THEN 5
+                WHEN 'cancelled' THEN 6
+                WHEN 'completed' THEN 7
+                ELSE 8
+              END, updated_at DESC, id DESC
+              LIMIT 1
+            )
+            LEFT JOIN local_assets la
+              ON la.entry_id=ep.entry_id
+             AND la.episode_number=ep.episode_number
+             AND la.status='synced'
+            WHERE ep.entry_id=? AND ep.episode_number > 0
+            ORDER BY ep.episode_number ASC, ep.id ASC
+            """,
             (entry_id,),
         ).fetchall()
         episode_resources = conn.execute(
@@ -478,9 +513,9 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
             """,
             (entry_id,),
         ).fetchall()
-    groups = sorted({r["subtitle_group"] for r in episode_resources if r["subtitle_group"]})
-    resolutions = sorted({r["resolution"] for r in episode_resources if r["resolution"]})
-    languages = sorted({r["language"] for r in episode_resources if r["language"]})
+    groups = sorted({r["subtitle_group"] for r in episodes if r["subtitle_group"]})
+    resolutions = sorted({r["resolution"] for r in episodes if r["resolution"]})
+    languages = sorted({r["language"] for r in episodes if r["language"]})
     entry_payload = enrich_catalog_entry({**row_to_dict(entry), "domain_kind": entry["domain_kind"]})
     for legacy_key in ("auto_download", "selected_group", "selected_resolution", "backfill_mode"):
         entry_payload.pop(legacy_key, None)

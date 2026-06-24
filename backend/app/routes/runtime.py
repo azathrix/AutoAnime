@@ -3,7 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from ..db import log
-from ..maintenance import cleanup_invalid_episode_data, clear_runtime_data, migrate_media_folders, repair_local_paths
+from ..maintenance import (
+    cleanup_invalid_episode_data,
+    clear_runtime_data,
+    migrate_episode_model,
+    migrate_media_folders,
+    refresh_local_status,
+    repair_local_paths,
+)
 from ..pipeline_orchestrator import run_ready_tasks, start_pipeline
 from ..pipeline_runtime import pipeline_overview
 from ..runtime_service import (
@@ -200,6 +207,16 @@ async def api_cleanup_invalid_episodes() -> dict:
 @router.post("/api/maintenance/repair-local-paths")
 async def api_repair_local_paths() -> dict:
     return repair_local_paths()
+
+
+@router.post("/api/maintenance/migrate-episode-model")
+async def api_migrate_episode_model() -> dict:
+    return migrate_episode_model()
+
+
+@router.post("/api/maintenance/refresh-local-status")
+async def api_refresh_all_local_status() -> dict:
+    return refresh_local_status()
 
 
 @router.post("/api/system/clear-data")

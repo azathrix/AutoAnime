@@ -200,6 +200,17 @@ async def sync_download_artifact_to_local(
         )
         conn.execute(
             """
+            UPDATE episodes
+            SET local_path=?,
+                watchable=1,
+                status='downloaded',
+                updated_at=?
+            WHERE entry_id=? AND episode_number=?
+            """,
+            (target, ts, int(row["entry_id"] or 0), int(row["episode_number"] or 0)),
+        )
+        conn.execute(
+            """
             UPDATE download_jobs
             SET status='completed',
                 phase='completed',

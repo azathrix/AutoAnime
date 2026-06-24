@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 from typing import Any
+import hashlib
 
 from .database import connect
 from .db import get_settings, now
@@ -89,6 +90,94 @@ def selected_episode_resource(conn, entry_id: int, episode_number: int):
         """,
         (entry_id, episode_number),
     ).fetchone()
+
+
+def _source_to_release_fields(source_ref: str) -> tuple[str, str]:
+    text = str(source_ref or "").strip()
+    if text.startswith("magnet:"):
+        return "", text
+    return text, ""
+
+
+def ensure_release_for_episode(conn, episode) -> int:
+    release_id = int(episode["release_id"] or 0)
+    if release_id > 0:
+        exists = conn.execute("SELECT id FROM releases WHERE id=?", (release_id,)).fetchone()
+        if exists:
+            return release_id
+    source_ref = str(episode["resource_ref"] or "").strip()
+    if not source_ref:
+        return 0
+    entry = conn.execute(
+        """
+        SELECT id, display_title, title_cn, title_raw, season_number, year, media_type
+        FROM entries
+        WHERE id=?
+        """,
+        (int(episode["entry_id"] or 0),),
+    ).fetchone()
+    if not entry:
+        return 0
+    torrent_url, magnet = _source_to_release_fields(source_ref)
+    digest = hashlib.sha1(source_ref.encode("utf-8", errors="ignore")).hexdigest()[:24]
+    guid = f"episode:{int(episode['entry_id'] or 0)}:{int(episode['episode_number'] or 0)}:{digest}"
+    ts = now()
+    title = str(episode["source_title"] or entry["display_title"] or entry["title_cn"] or entry["title_raw"] or source_ref)
+    conn.execute(
+        """
+        INSERT INTO releases
+          (series_id, entry_id, episode_number, guid, title, subtitle_group, resolution, language,
+           subtitle_format, torrent_url, magnet, published_at, selected, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        ON CONFLICT(guid) DO UPDATE SET
+          title=excluded.title,
+          subtitle_group=excluded.subtitle_group,
+          resolution=excluded.resolution,
+          language=excluded.language,
+          subtitle_format=excluded.subtitle_format,
+          torrent_url=excluded.torrent_url,
+          magnet=excluded.magnet,
+          selected=1,
+          updated_at=excluded.updated_at
+        """,
+        (
+            int(episode["series_id"] or episode["entry_id"] or 0),
+            int(episode["entry_id"] or 0),
+            int(episode["episode_number"] or 0),
+            guid,
+            title,
+            str(episode["subtitle_group"] or ""),
+            str(episode["resolution"] or ""),
+            str(episode["language"] or ""),
+            str(episode["subtitle_format"] or ""),
+            torrent_url,
+            magnet,
+            ts,
+            ts,
+            ts,
+        ),
+    )
+    row = conn.execute("SELECT id FROM releases WHERE guid=?", (guid,)).fetchone()
+    release_id = int(row["id"] or 0) if row else 0
+    if release_id > 0:
+        conn.execute(
+            "UPDATE episodes SET release_id=?, updated_at=? WHERE id=?",
+            (release_id, ts, int(episode["id"] or 0)),
+        )
+    return release_id
+
+
+def queue_download_for_episode(episode_id: int, *, reset_cancelled: bool = False) -> dict[str, Any]:
+    if episode_id <= 0:
+        return {"queued": False, "reason": "缺少 episode_id"}
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            return {"queued": False, "reason": "集数不存在"}
+        if int(episode["watchable"] or 0) == 1:
+            return {"queued": False, "reason": "本地文件已存在"}
+        release_id = ensure_release_for_episode(conn, episode)
+    return queue_download_for_release(release_id, reset_cancelled=reset_cancelled)
 
 
 def queue_download_for_release(release_id: int, *, reset_cancelled: bool = False) -> dict[str, Any]:
@@ -225,12 +314,14 @@ def list_download_tasks(limit: int = 200) -> list[dict[str, Any]]:
                    e.title_cn,
                    e.title_raw,
                    e.media_type AS entry_media_type,
-                   er.title AS resource_title,
-                   er.source_ref AS resource_ref,
+                   COALESCE(ep.source_title, er.title, '') AS resource_title,
+                   COALESCE(ep.resource_ref, er.source_ref, '') AS resource_ref,
+                   ep.watchable AS episode_watchable,
                    la.id AS local_asset_id,
                    la.local_path AS local_asset_path
             FROM download_jobs dj
             LEFT JOIN entries e ON e.id=dj.entry_id
+            LEFT JOIN episodes ep ON ep.id=dj.episode_id
             LEFT JOIN episode_resources er ON er.id=dj.episode_resource_id
             LEFT JOIN local_assets la
               ON la.entry_id=dj.entry_id
@@ -258,6 +349,9 @@ def list_download_tasks(limit: int = 200) -> list[dict[str, Any]]:
         item["status"] = status
         item["phase"] = download_phase(str(item.get("phase") or status))
         item["status_text"] = download_status_text(status)
+        if status == "completed":
+            item["progress"] = 0
+            item["progress_text"] = "可观看"
         item["display_title"] = item.get("display_title") or item.get("title_cn") or item.get("title_raw") or "未命名条目"
         item["resource_title"] = item.get("resource_title") or item.get("normalized_name") or item.get("source_ref") or "-"
         item["active"] = status in ACTIVE_DOWNLOAD_STATUSES

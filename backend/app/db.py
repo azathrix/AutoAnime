@@ -202,6 +202,20 @@ def init_db() -> None:
                 title TEXT NOT NULL DEFAULT '',
                 air_date TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'missing',
+                resource_ref TEXT NOT NULL DEFAULT '',
+                subtitle_ref TEXT NOT NULL DEFAULT '',
+                local_path TEXT NOT NULL DEFAULT '',
+                subtitle_path TEXT NOT NULL DEFAULT '',
+                watchable INTEGER NOT NULL DEFAULT 0,
+                subtitle_group TEXT NOT NULL DEFAULT '',
+                resolution TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                subtitle_format TEXT NOT NULL DEFAULT '',
+                source_title TEXT NOT NULL DEFAULT '',
+                source_type TEXT NOT NULL DEFAULT 'magnet',
+                release_id INTEGER NOT NULL DEFAULT 0,
+                last_download_job_id INTEGER NOT NULL DEFAULT 0,
+                status_note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(series_id, episode_number)
@@ -797,6 +811,25 @@ def migrate(conn: sqlite3.Connection) -> None:
     }
     if "entry_id" not in episode_columns:
         conn.execute("ALTER TABLE episodes ADD COLUMN entry_id INTEGER NOT NULL DEFAULT 0")
+    episode_additions = {
+        "resource_ref": "TEXT NOT NULL DEFAULT ''",
+        "subtitle_ref": "TEXT NOT NULL DEFAULT ''",
+        "local_path": "TEXT NOT NULL DEFAULT ''",
+        "subtitle_path": "TEXT NOT NULL DEFAULT ''",
+        "watchable": "INTEGER NOT NULL DEFAULT 0",
+        "subtitle_group": "TEXT NOT NULL DEFAULT ''",
+        "resolution": "TEXT NOT NULL DEFAULT ''",
+        "language": "TEXT NOT NULL DEFAULT ''",
+        "subtitle_format": "TEXT NOT NULL DEFAULT ''",
+        "source_title": "TEXT NOT NULL DEFAULT ''",
+        "source_type": "TEXT NOT NULL DEFAULT 'magnet'",
+        "release_id": "INTEGER NOT NULL DEFAULT 0",
+        "last_download_job_id": "INTEGER NOT NULL DEFAULT 0",
+        "status_note": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, ddl in episode_additions.items():
+        if column not in episode_columns:
+            conn.execute(f"ALTER TABLE episodes ADD COLUMN {column} {ddl}")
     for table in ["download_jobs", "download_artifacts", "sync_rules", "local_assets"]:
         columns = {
             row["name"]

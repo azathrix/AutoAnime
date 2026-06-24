@@ -8,8 +8,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from ..database import connect
-from ..db import log, now
-from ..download_task_service import queue_download_for_release
+from ..db import get_settings, log, now
+from ..download_task_service import queue_download_for_episode, queue_download_for_release
+from ..library import expected_local_episode_path
+from ..maintenance import refresh_local_status
 from ..media_service import build_entry_response, reset_orphaned_download_jobs_in_conn
 from ..runtime_service import ACTIVE_DOWNLOAD_STATUSES
 from ..pipeline_orchestrator import cancel_active_processor_tasks, start_pipeline
@@ -18,6 +20,7 @@ from ..runtime_store import runtime_store
 from ..schemas import (
     BatchSubtitlePayload,
     EpisodeDownloadActionPayload,
+    EpisodePayload,
     EpisodeImportPayload,
     EpisodeResourcePayload,
     EpisodeSubtitlePayload,
@@ -130,6 +133,38 @@ async def api_import_entry_resources(entry_id: int, payload: EpisodeImportPayloa
                 )
                 release = conn.execute("SELECT id FROM releases WHERE guid=?", (guid,)).fetchone()
                 release_id = int(release["id"] or 0) if release else 0
+            suffix = Path(line).suffix if Path(line).suffix.lower() in {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"} else ".mkv"
+            local_path = expected_local_episode_path(dict(entry), episode_number, suffix, get_settings())
+            conn.execute(
+                """
+                UPDATE episodes
+                SET resource_ref=?,
+                    source_title=?,
+                    source_type='magnet',
+                    subtitle_group=CASE WHEN subtitle_group='' THEN ? ELSE subtitle_group END,
+                    resolution=CASE WHEN resolution='' THEN ? ELSE resolution END,
+                    language=CASE WHEN language='' THEN ? ELSE language END,
+                    subtitle_format=CASE WHEN subtitle_format='' THEN ? ELSE subtitle_format END,
+                    local_path=CASE WHEN local_path='' THEN ? ELSE local_path END,
+                    release_id=CASE WHEN ? > 0 THEN ? ELSE release_id END,
+                    status='available',
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    line,
+                    item.title.strip() or line,
+                    "",
+                    "",
+                    (item.language or payload.language).strip(),
+                    (item.subtitle_format or payload.subtitle_format).strip(),
+                    local_path,
+                    release_id,
+                    release_id,
+                    ts,
+                    episode_id,
+                ),
+            )
             conn.execute("UPDATE episode_resources SET selected=0 WHERE entry_id=? AND episode_number=?", (entry_id, episode_number))
             conn.execute(
                 """
@@ -202,6 +237,10 @@ async def api_import_entry_resources(entry_id: int, payload: EpisodeImportPayloa
                     ts,
                 ),
             )
+            conn.execute(
+                "UPDATE episodes SET subtitle_ref=CASE WHEN subtitle_ref='' THEN ? ELSE subtitle_ref END, updated_at=? WHERE id=?",
+                (line, ts, int(episode["id"])),
+            )
     log("info", f"手动导入集数资源: entry_id={entry_id} count={created}")
     return {"status": "saved", "count": created, "detail": build_entry_response(entry_id)}
 
@@ -251,6 +290,10 @@ async def api_batch_entry_subtitles(entry_id: int, payload: BatchSubtitlePayload
                     ts,
                     ts,
                 ),
+            )
+            conn.execute(
+                "UPDATE episodes SET subtitle_ref=CASE WHEN subtitle_ref='' THEN ? ELSE subtitle_ref END, updated_at=? WHERE id=?",
+                (item, ts, int(episode["id"])),
             )
             saved += 1
     log("info", f"批量配置字幕: entry_id={entry_id} count={saved}")
@@ -368,6 +411,55 @@ async def api_update_episode_subtitle(episode_id: int, payload: EpisodeSubtitleP
     return {"status": "saved", "item": row_to_dict(row)}
 
 
+@router.put("/api/episodes/{episode_id}")
+async def api_update_episode(episode_id: int, payload: EpisodePayload) -> dict[str, Any]:
+    ts = now()
+    with connect() as conn:
+        episode = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        if not episode:
+            raise HTTPException(status_code=404, detail="集数不存在")
+        resource_ref = payload.resource_ref.strip()
+        source_title = payload.source_title.strip()
+        local_path = payload.local_path.strip()
+        watchable = 1 if local_path and Path(local_path).exists() else int(episode["watchable"] or 0)
+        conn.execute(
+            """
+            UPDATE episodes
+            SET resource_ref=CASE WHEN ?='' THEN resource_ref ELSE ? END,
+                subtitle_ref=CASE WHEN ?='' THEN subtitle_ref ELSE ? END,
+                local_path=CASE WHEN ?='' THEN local_path ELSE ? END,
+                subtitle_path=CASE WHEN ?='' THEN subtitle_path ELSE ? END,
+                subtitle_group=CASE WHEN ?='' THEN subtitle_group ELSE ? END,
+                resolution=CASE WHEN ?='' THEN resolution ELSE ? END,
+                language=CASE WHEN ?='' THEN language ELSE ? END,
+                subtitle_format=CASE WHEN ?='' THEN subtitle_format ELSE ? END,
+                source_title=CASE WHEN ?='' THEN source_title ELSE ? END,
+                source_type='magnet',
+                release_id=CASE WHEN ?!='' THEN 0 ELSE release_id END,
+                watchable=?,
+                updated_at=?
+            WHERE id=?
+            """,
+            (
+                resource_ref, resource_ref,
+                payload.subtitle_ref.strip(), payload.subtitle_ref.strip(),
+                local_path, local_path,
+                payload.subtitle_path.strip(), payload.subtitle_path.strip(),
+                payload.subtitle_group.strip(), payload.subtitle_group.strip(),
+                payload.resolution.strip(), payload.resolution.strip(),
+                payload.language.strip(), payload.language.strip(),
+                payload.subtitle_format.strip(), payload.subtitle_format.strip(),
+                source_title, source_title,
+                resource_ref,
+                watchable,
+                ts,
+                episode_id,
+            ),
+        )
+        row = conn.execute("SELECT * FROM episodes WHERE id=?", (episode_id,)).fetchone()
+    return {"status": "saved", "item": row_to_dict(row)}
+
+
 @router.delete("/api/episode-resources/{resource_id}")
 async def api_delete_episode_resource(resource_id: int) -> dict[str, Any]:
     with connect() as conn:
@@ -436,6 +528,13 @@ async def api_refresh_episode_resource_state(episode_id: int) -> dict[str, Any]:
         if not episode:
             raise HTTPException(status_code=404, detail="集数不存在")
         reset_orphaned_download_jobs_in_conn(conn, int(episode["entry_id"]), int(episode["episode_number"]))
+        local_path = str(episode["local_path"] or "")
+        exists = bool(local_path and Path(local_path).exists())
+        conn.execute(
+            "UPDATE episodes SET watchable=?, status=CASE WHEN ?=1 THEN 'downloaded' ELSE 'available' END, updated_at=? WHERE id=?",
+            (1 if exists else 0, 1 if exists else 0, now(), episode_id),
+        )
+        refreshed += 1
         resources = conn.execute(
             "SELECT * FROM episode_resources WHERE episode_id=? OR (entry_id=? AND episode_number=?)",
             (episode_id, episode["entry_id"], episode["episode_number"]),
@@ -455,32 +554,27 @@ async def api_download_episode_resource(episode_id: int) -> dict[str, Any]:
         if not episode:
             raise HTTPException(status_code=404, detail="集数不存在")
         reset_orphaned_download_jobs_in_conn(conn, int(episode["entry_id"]), int(episode["episode_number"]))
-        selected = conn.execute(
-            """
-            SELECT * FROM episode_resources
-            WHERE episode_id=? OR (entry_id=? AND episode_number=?)
-            ORDER BY selected DESC, id DESC
-            LIMIT 1
-            """,
-            (episode_id, episode["entry_id"], episode["episode_number"]),
-        ).fetchone()
-        if not selected or int(selected["release_id"] or 0) <= 0:
+        if not str(episode["resource_ref"] or "").strip() and int(episode["release_id"] or 0) <= 0:
             raise HTTPException(status_code=400, detail="该集没有可下载资源")
         episode_data = row_to_dict(episode)
-        selected_data = row_to_dict(selected)
-    queued = queue_download_for_release(int(selected_data["release_id"]), reset_cancelled=True)
+    queued = queue_download_for_episode(episode_id, reset_cancelled=True)
     if not queued.get("queued") and queued.get("reason") != "已有活跃下载任务":
         return {"status": "skipped", "message": str(queued.get("reason") or "没有需要下载的资源")}
+    with connect() as conn:
+        refreshed_episode = conn.execute("SELECT release_id FROM episodes WHERE id=?", (episode_id,)).fetchone()
+    release_id = int(refreshed_episode["release_id"] or 0) if refreshed_episode else int(episode_data.get("release_id") or 0)
+    if release_id <= 0:
+        return {"status": "skipped", "message": "该集没有可下载资源"}
     run_id = start_pipeline(
         "library_backfill",
         trigger_source="episode_download",
         first_step_key="download",
         subject_type="release",
-        subject_id=int(selected_data["release_id"]),
+        subject_id=release_id,
         payload={
             "_dedupe_key": f"download:entry:{int(episode_data['entry_id'])}:episode:{int(episode_data['episode_number'])}",
             "entry_id": int(episode_data["entry_id"]),
-            "release_id": int(selected_data["release_id"]),
+            "release_id": release_id,
             "episode_number": int(episode_data["episode_number"]),
             "domain_kind": "library",
         },
@@ -490,7 +584,7 @@ async def api_download_episode_resource(episode_id: int) -> dict[str, Any]:
     log(
         "info",
         f"单集下载请求: entry_id={int(episode_data['entry_id'])} episode={int(episode_data['episode_number'])} "
-        f"release_id={int(selected_data['release_id'])} run_id={run_id}",
+        f"release_id={release_id} run_id={run_id}",
     )
     return {"status": "started", "download_run_id": run_id, "message": "已加入下载队列"}
 
@@ -506,31 +600,39 @@ async def api_download_entry_resources(entry_id: int) -> dict[str, Any]:
         active_placeholders = ",".join("?" for _ in ACTIVE_DOWNLOAD_STATUSES)
         candidates = conn.execute(
             f"""
-            SELECT er.entry_id, er.episode_number, er.release_id
-            FROM episode_resources er
-            LEFT JOIN local_assets la ON la.entry_id=er.entry_id AND la.episode_number=er.episode_number AND la.status='synced'
-            WHERE er.entry_id=? AND er.selected=1 AND er.release_id > 0
-              AND COALESCE(er.downloaded, 0)=0 AND la.id IS NULL
+            SELECT ep.id AS episode_id, ep.entry_id, ep.episode_number, ep.release_id, ep.resource_ref
+            FROM episodes ep
+            LEFT JOIN local_assets la ON la.entry_id=ep.entry_id AND la.episode_number=ep.episode_number AND la.status='synced'
+            WHERE ep.entry_id=?
+              AND ep.episode_number > 0
+              AND COALESCE(ep.watchable, 0)=0
+              AND (ep.release_id > 0 OR ep.resource_ref != '')
+              AND la.id IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM download_jobs dj
-                WHERE dj.entry_id=er.entry_id AND dj.episode_number=er.episode_number
+                WHERE dj.entry_id=ep.entry_id AND dj.episode_number=ep.episode_number
                   AND dj.status IN ({active_placeholders})
               )
-            ORDER BY er.episode_number ASC, er.id DESC
+            ORDER BY ep.episode_number ASC, ep.id ASC
             """,
             (entry_id, *ACTIVE_DOWNLOAD_STATUSES),
         ).fetchall()
     seen_episodes: set[int] = set()
     for candidate in candidates:
         episode_number = int(candidate["episode_number"] or 0)
-        release_id = int(candidate["release_id"] or 0)
-        if episode_number <= 0 or release_id <= 0 or episode_number in seen_episodes:
+        episode_id = int(candidate["episode_id"] or 0)
+        if episode_number <= 0 or episode_id <= 0 or episode_number in seen_episodes:
             continue
         seen_episodes.add(episode_number)
         if runtime_store.has_active_episode_task(entry_id, episode_number, DOWNLOAD_RUNTIME_PROCESSORS):
             continue
-        queued = queue_download_for_release(release_id)
+        queued = queue_download_for_episode(episode_id)
         if not queued.get("queued"):
+            continue
+        with connect() as conn:
+            release_row = conn.execute("SELECT release_id FROM episodes WHERE id=?", (episode_id,)).fetchone()
+        release_id = int(release_row["release_id"] or 0) if release_row else 0
+        if release_id <= 0:
             continue
         rows.append({"entry_id": entry_id, "episode_number": episode_number, "release_id": release_id})
     run_ids: list[int] = []
@@ -679,3 +781,8 @@ async def api_refresh_entry_resource_state(entry_id: int) -> dict[str, Any]:
         result = await api_refresh_episode_resource_state(int(episode["id"]))
         count += int(result.get("count") or 0)
     return {"status": "refreshed", "count": count}
+
+
+@router.post("/api/entries/{entry_id}/refresh-local-status")
+async def api_refresh_entry_local_status(entry_id: int) -> dict[str, Any]:
+    return refresh_local_status(entry_id)

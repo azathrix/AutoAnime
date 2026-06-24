@@ -10,7 +10,7 @@ import feedparser
 
 from .database import connect
 from .db import get_settings, hide_orphan_series, log, merge_duplicate_series, now
-from .library import parse_entry_labels
+from .library import expected_local_episode_path, parse_entry_labels
 from .metadata import fetch_bangumi_metadata
 from .parser import ParsedRelease, fingerprint, normalize_title_key, parse_entry, parse_episode, parse_group, parse_language, parse_resolution, parse_series_title, parse_subtitle_format, parse_year, split_lines
 from .processing_cache import first_resource_ref, get_cached_json, set_cached_json
@@ -332,7 +332,16 @@ def release_has_downstream(conn, release_id: int) -> bool:
 
 def sync_episode_resource_for_release(conn, release_id: int, ts: str | None = None) -> None:
     ts = ts or now()
-    release = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
+    release = conn.execute(
+        """
+        SELECT r.*, e.display_title, e.title_raw, e.title_cn, e.bangumi_id, e.tmdb_id,
+               e.year, e.season_number, e.media_type, e.target_library_id
+        FROM releases r
+        JOIN entries e ON e.id=r.entry_id
+        WHERE r.id=?
+        """,
+        (release_id,),
+    ).fetchone()
     if not release:
         return
     if int(release["episode_number"] or 0) <= 0:
@@ -345,7 +354,45 @@ def sync_episode_resource_for_release(conn, release_id: int, ts: str | None = No
     ).fetchone()
     if episode:
         episode_id = int(episode["id"])
-    source_ref = str(release["guid"] or release["id"])
+    episode_source_ref = str(release["magnet"] or release["torrent_url"] or release["guid"] or "")
+    legacy_source_ref = str(release["guid"] or release["id"])
+    suffix = ".mkv"
+    title_lower = str(release["title"] or "").lower()
+    for candidate_suffix in (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"):
+        if candidate_suffix in title_lower:
+            suffix = candidate_suffix
+            break
+    local_path = expected_local_episode_path(dict(release), int(release["episode_number"] or 0), suffix, get_settings())
+    conn.execute(
+        """
+        UPDATE episodes
+        SET resource_ref=CASE WHEN resource_ref='' THEN ? ELSE resource_ref END,
+            source_title=CASE WHEN source_title='' THEN ? ELSE source_title END,
+            source_type='magnet',
+            subtitle_group=CASE WHEN subtitle_group='' THEN ? ELSE subtitle_group END,
+            resolution=CASE WHEN resolution='' THEN ? ELSE resolution END,
+            language=CASE WHEN language='' THEN ? ELSE language END,
+            subtitle_format=CASE WHEN subtitle_format='' THEN ? ELSE subtitle_format END,
+            local_path=CASE WHEN local_path='' THEN ? ELSE local_path END,
+            release_id=CASE WHEN release_id=0 THEN ? ELSE release_id END,
+            status=CASE WHEN status='missing' THEN 'available' ELSE status END,
+            updated_at=?
+        WHERE entry_id=? AND episode_number=?
+        """,
+        (
+            episode_source_ref,
+            release["title"],
+            release["subtitle_group"],
+            release["resolution"],
+            release["language"],
+            release["subtitle_format"],
+            local_path,
+            release_id,
+            ts,
+            release["entry_id"],
+            release["episode_number"],
+        ),
+    )
     conn.execute(
         """
         INSERT INTO episode_resources
@@ -371,7 +418,7 @@ def sync_episode_resource_for_release(conn, release_id: int, ts: str | None = No
             release["entry_id"],
             episode_id,
             release["episode_number"],
-            source_ref,
+            legacy_source_ref,
             release_id,
             release["title"],
             release["subtitle_group"],
