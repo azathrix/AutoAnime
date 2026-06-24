@@ -181,9 +181,13 @@ export default appContextComponent({ draggable, PriorityList })
                   <div><span>运行队列</span><strong>{{ dashboard.console_overview?.running_queue_count || 0 }}</strong></div>
                 </div>
                 <div class="maintenance-actions maintenance-pane">
-                  <el-button type="primary" plain @click="runAction('/tasks/process?force=true')">立即处理任务队列</el-button>
-                  <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载状态</el-button>
-                  <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
+                  <el-button type="primary" plain @click="runAction('/cache/rss/clear')">清除 RSS 缓存</el-button>
+                  <el-button type="primary" plain @click="runAction('/cache/expired/clear')">清除过期缓存</el-button>
+                  <el-popconfirm title="会清空全部处理缓存，包括元数据和匹配缓存。确定？" @confirm="runAction('/cache/clear')">
+                    <template #reference>
+                      <el-button type="warning">清除全部处理缓存</el-button>
+                    </template>
+                  </el-popconfirm>
                   <el-button type="primary" @click="refreshAllLocalStatus">刷新全部本地状态</el-button>
                   <el-popconfirm title="会把已绑定且存在的本地文件整理到当前命名规则路径，目标同名文件会被覆盖。确定执行？" @confirm="organizeAllLocalFiles">
                     <template #reference>
