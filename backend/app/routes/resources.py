@@ -11,7 +11,8 @@ from ..database import connect
 from ..db import get_settings, log, now
 from ..download_task_service import queue_download_for_episode, queue_download_for_release
 from ..library import expected_local_episode_path
-from ..maintenance import refresh_local_status
+from ..config import MEDIA_ROOT
+from ..maintenance import match_entry_local_files, organize_local_files, refresh_local_status
 from ..media_service import build_entry_response, reset_orphaned_download_jobs_in_conn
 from ..runtime_service import ACTIVE_DOWNLOAD_STATUSES
 from ..pipeline_orchestrator import cancel_active_processor_tasks, start_pipeline
@@ -24,6 +25,7 @@ from ..schemas import (
     EpisodeImportPayload,
     EpisodeResourcePayload,
     EpisodeSubtitlePayload,
+    LocalPathMatchPayload,
 )
 from ..utils import (
     is_valid_resource_reference,
@@ -36,6 +38,22 @@ from ..utils import (
 
 
 router = APIRouter()
+
+
+def _validated_media_path(value: str) -> Path:
+    root = Path(MEDIA_ROOT).resolve()
+    raw = str(value or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="请选择媒体目录或文件")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    resolved = path.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise HTTPException(status_code=400, detail="只能选择媒体目录下的文件")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="路径不存在")
+    return resolved
 
 
 @router.post("/api/entries/{entry_id}/resources/import")
@@ -830,3 +848,35 @@ async def api_refresh_entry_resource_state(entry_id: int) -> dict[str, Any]:
 @router.post("/api/entries/{entry_id}/refresh-local-status")
 async def api_refresh_entry_local_status(entry_id: int) -> dict[str, Any]:
     return refresh_local_status(entry_id)
+
+
+@router.post("/api/entries/{entry_id}/match-local-files")
+async def api_match_entry_local_files(entry_id: int, payload: LocalPathMatchPayload) -> dict[str, Any]:
+    target = _validated_media_path(payload.path)
+    return match_entry_local_files(entry_id, str(target))
+
+
+@router.post("/api/entries/{entry_id}/organize-local-files")
+async def api_organize_entry_local_files(entry_id: int) -> dict[str, Any]:
+    return organize_local_files(entry_id=entry_id)
+
+
+@router.post("/api/entries/{entry_id}/backfill-current-season")
+async def api_backfill_entry_current_season(entry_id: int) -> dict[str, str]:
+    with connect() as conn:
+        entry = conn.execute("SELECT id, domain_kind FROM entries WHERE id=? AND COALESCE(hidden, 0)=0", (entry_id,)).fetchone()
+        if not entry:
+            raise HTTPException(status_code=404, detail="媒体条目不存在")
+    run_id = start_pipeline(
+        "seasonal_mikan_tracking",
+        trigger_source="manual_backfill",
+        first_step_key="season_backfill",
+        subject_type="entry",
+        subject_id=entry_id,
+        payload={"entry_id": entry_id, "domain_kind": str(entry["domain_kind"] or "seasonal")},
+        message=f"手动补全本季: entry_id={entry_id}",
+    )
+    if run_id <= 0:
+        raise HTTPException(status_code=400, detail="补全流水线不可用")
+    trigger_queue("processor", delay=0)
+    return {"status": "started", "run_id": str(run_id), "message": "已加入补全本季任务"}

@@ -42,7 +42,6 @@ export default appContextComponent()
               <el-descriptions-item label="Bangumi 评分">{{ selectedEntry.bangumi_score ? Number(selectedEntry.bangumi_score).toFixed(1) : '-' }}</el-descriptions-item>
               <el-descriptions-item label="TMDB 评分">{{ selectedEntry.tmdb_score ? Number(selectedEntry.tmdb_score).toFixed(1) : '-' }}</el-descriptions-item>
               <el-descriptions-item label="国家 / 地区">{{ regionLabel(selectedEntry.region) }}</el-descriptions-item>
-              <el-descriptions-item label="追番状态">{{ selectedEntryDomain === 'seasonal' ? '追番中' : '普通媒体库条目' }}</el-descriptions-item>
               <el-descriptions-item label="别名" :span="2">{{ selectedEntry.title_romaji || selectedEntry.title_raw || '-' }}</el-descriptions-item>
               <el-descriptions-item label="标签" :span="2">
                 <div class="mini-tag-row">
@@ -56,13 +55,20 @@ export default appContextComponent()
               <el-button type="primary" @click="openEntryEditDialog">编辑信息</el-button>
               <el-popconfirm
                 v-if="selectedEntryDomain === 'seasonal'"
-                title="归档后新番页不再显示，番剧库仍会保留该动画条目。确定归档？"
+                title="取消追番后新番页不再显示，番剧库仍会保留该动画条目。确定取消？"
                 @confirm="archiveCurrentEntry"
               >
                 <template #reference>
-                  <el-button plain>归档</el-button>
+                  <el-button plain>取消追番</el-button>
                 </template>
               </el-popconfirm>
+              <el-button
+                v-if="selectedEntryDomain !== 'seasonal'"
+                plain
+                @click="setCurrentEntryFollowing(!Number(selectedEntry.following || 0))"
+              >
+                {{ Number(selectedEntry.following || 0) ? '取消追番' : '追番' }}
+              </el-button>
               <el-popconfirm title="删除后只隐藏/清理数据库记录，不删除本地媒体文件。确定删除？" @confirm="deleteCurrentEntry">
                 <template #reference>
                   <el-button type="danger" plain>删除条目</el-button>
@@ -74,6 +80,9 @@ export default appContextComponent()
             <div class="resource-toolbar">
               <el-button type="primary" @click="downloadCurrentEntryResources">批量下载</el-button>
               <el-button plain @click="refreshCurrentEntryLocalStatus">刷新</el-button>
+              <el-button plain @click="backfillCurrentEntrySeason">补全本季</el-button>
+              <el-button plain @click="openServerFileBrowser('match')">批量匹配本地资源</el-button>
+              <el-button plain @click="organizeCurrentEntryLocalFiles">整理</el-button>
               <el-button plain @click="openEpisodeImportDialog">手动导入集数</el-button>
             </div>
             <el-table

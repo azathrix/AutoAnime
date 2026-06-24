@@ -10,6 +10,7 @@ from .config import DATA_DIR, DB_PATH
 from .database import connect
 from .db import get_settings, log
 from .library import expected_local_episode_path, local_library_root, render_series_dir
+from .parser import parse_episode
 from .sync_service import local_episode_path
 
 
@@ -530,19 +531,34 @@ def _candidate_existing_path(*values: str) -> str:
     return ""
 
 
+VIDEO_SUFFIXES = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm")
+
+
+def _expected_existing_path(entry: dict[str, Any], episode_number: int, suffix: str, settings: dict[str, str]) -> str:
+    suffixes = [suffix] if suffix else []
+    for candidate in VIDEO_SUFFIXES:
+        if candidate not in suffixes:
+            suffixes.append(candidate)
+    for candidate in suffixes:
+        path = expected_local_episode_path(entry, episode_number, candidate, settings)
+        if path and Path(path).exists():
+            return path
+    return ""
+
+
 def _refresh_episode_row(conn: sqlite3.Connection, row: Any, settings: dict[str, str], ts: str) -> bool:
     entry = dict(row)
     current_path = str(row["local_path"] or "")
     asset_path = str(row["asset_local_path"] or "")
     resource_path = str(row["resource_local_path"] or "")
-    existing_path = _candidate_existing_path(current_path, asset_path, resource_path)
-    suffix = _video_suffix(existing_path, current_path, asset_path, resource_path, str(row["source_title"] or ""), str(row["resource_ref"] or ""))
-    expected_path = expected_local_episode_path(entry, int(row["episode_number"] or 0), suffix, settings)
-    final_path = existing_path or _candidate_existing_path(expected_path)
-    exists = bool(final_path)
     episode_id = int(row["id"] or row["episode_id"] or 0)
     entry_id = int(row["entry_id"] or 0)
     episode_number = int(row["episode_number"] or 0)
+    existing_path = _candidate_existing_path(current_path, asset_path, resource_path)
+    suffix = _video_suffix(existing_path, current_path, asset_path, resource_path, str(row["source_title"] or ""), str(row["resource_ref"] or ""))
+    expected_path = _expected_existing_path(entry, episode_number, suffix, settings)
+    final_path = existing_path or expected_path
+    exists = bool(final_path)
     conn.execute(
         """
         UPDATE episodes
@@ -562,6 +578,14 @@ def _refresh_episode_row(conn: sqlite3.Connection, row: Any, settings: dict[str,
         (1 if exists else 0, 1 if exists else 0, final_path, 1 if exists else 0, ts, entry_id, episode_number),
     )
     if exists:
+        conn.execute(
+            """
+            UPDATE local_assets
+            SET status='removed', updated_at=?
+            WHERE entry_id=? AND episode_number=? AND status='synced' AND local_path != ?
+            """,
+            (ts, entry_id, episode_number, final_path),
+        )
         conn.execute(
             """
             INSERT INTO local_assets
@@ -646,6 +670,158 @@ def refresh_local_status(entry_id: int = 0, episode_id: int = 0) -> dict[str, An
     else:
         scope = f"entry_id={entry_id}" if entry_id > 0 else "全部"
     message = f"本地状态刷新完成({scope}): 检查 {summary['checked']} 集，可观看 {summary['watchable']} 集，缺失 {summary['missing']} 集"
+    log("info", message)
+    return {"status": "completed", "message": message, **summary}
+
+
+def _video_files_under(path: Path) -> list[Path]:
+    if path.is_file():
+        return [path] if path.suffix.lower() in VIDEO_SUFFIXES else []
+    return [item for item in path.rglob("*") if item.is_file() and item.suffix.lower() in VIDEO_SUFFIXES]
+
+
+def _bind_episode_local_path(
+    conn: sqlite3.Connection,
+    episode: Any,
+    entry: dict[str, Any],
+    local_path: str,
+    ts: str,
+) -> None:
+    episode_id = int(episode["id"] or 0)
+    entry_id = int(episode["entry_id"] or 0)
+    episode_number = int(episode["episode_number"] or 0)
+    release_id = int(episode["release_id"] or 0)
+    series_id = int(episode["series_id"] or 0) or entry_id
+    conn.execute(
+        """
+        UPDATE episodes
+        SET local_path=?, watchable=1, status='downloaded', updated_at=?
+        WHERE id=?
+        """,
+        (local_path, ts, episode_id),
+    )
+    conn.execute(
+        """
+        UPDATE episode_resources
+        SET downloaded=1, local_path=?, status='downloaded', updated_at=?
+        WHERE entry_id=? AND episode_number=?
+        """,
+        (local_path, ts, entry_id, episode_number),
+    )
+    conn.execute(
+        """
+        UPDATE local_assets
+        SET status='removed', updated_at=?
+        WHERE entry_id=? AND episode_number=? AND status='synced' AND local_path != ?
+        """,
+        (ts, entry_id, episode_number, local_path),
+    )
+    conn.execute(
+        """
+        INSERT INTO local_assets
+          (download_artifact_id, release_id, series_id, entry_id, episode_number, local_path,
+           nfo_status, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'disabled', 'synced', ?, ?)
+        ON CONFLICT(download_artifact_id) DO UPDATE SET
+          local_path=excluded.local_path,
+          status='synced',
+          updated_at=excluded.updated_at
+        """,
+        (-abs(episode_id), release_id, series_id, entry_id, episode_number, local_path, ts, ts),
+    )
+
+
+def match_entry_local_files(entry_id: int, path: str) -> dict[str, Any]:
+    target = Path(path)
+    if not target.exists():
+        return {"status": "failed", "message": "路径不存在", "matched": 0, "unmatched": 0}
+    files = _video_files_under(target)
+    summary = {"matched": 0, "unmatched": 0, "checked": len(files)}
+    ts = _now()
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=? AND COALESCE(hidden, 0)=0", (entry_id,)).fetchone()
+        if not entry:
+            return {"status": "not_found", "message": "媒体条目不存在", **summary}
+        entry_data = dict(entry)
+        media_type = str(entry["media_type"] or "").lower()
+        for file_path in files:
+            episode_number = 1 if media_type == "movie" else parse_episode(file_path.name)
+            if episode_number <= 0:
+                summary["unmatched"] += 1
+                continue
+            episode = conn.execute(
+                "SELECT * FROM episodes WHERE entry_id=? AND episode_number=? ORDER BY id DESC LIMIT 1",
+                (entry_id, episode_number),
+            ).fetchone()
+            if not episode:
+                summary["unmatched"] += 1
+                continue
+            _bind_episode_local_path(conn, episode, entry_data, str(file_path), ts)
+            summary["matched"] += 1
+    message = f"本地资源批量匹配完成: 检查 {summary['checked']} 个，匹配 {summary['matched']} 个，未匹配 {summary['unmatched']} 个"
+    log("info", f"{message} entry_id={entry_id} path={path}")
+    return {"status": "completed", "message": message, **summary}
+
+
+def organize_local_files(entry_id: int = 0) -> dict[str, Any]:
+    summary = {"checked": 0, "moved": 0, "missing": 0, "skipped": 0}
+    settings = get_settings()
+    ts = _now()
+    with connect() as conn:
+        params: tuple[Any, ...] = ()
+        where = "WHERE ep.episode_number > 0 AND COALESCE(e.hidden, 0)=0"
+        if entry_id > 0:
+            where += " AND ep.entry_id=?"
+            params = (entry_id,)
+        rows = conn.execute(
+            f"""
+            SELECT ep.*, e.display_title, e.title_raw, e.title_cn, e.bangumi_id, e.tmdb_id,
+                   e.year, e.season_number, e.media_type, e.target_library_id,
+                   la.local_path AS asset_local_path,
+                   er.local_path AS resource_local_path
+            FROM episodes ep
+            JOIN entries e ON e.id=ep.entry_id
+            LEFT JOIN local_assets la ON la.id=(
+              SELECT id FROM local_assets
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number AND status='synced'
+              ORDER BY updated_at DESC, id DESC
+              LIMIT 1
+            )
+            LEFT JOIN episode_resources er ON er.id=(
+              SELECT id FROM episode_resources
+              WHERE entry_id=ep.entry_id AND episode_number=ep.episode_number
+              ORDER BY selected DESC, id DESC
+              LIMIT 1
+            )
+            {where}
+            ORDER BY ep.entry_id, ep.episode_number
+            """,
+            params,
+        ).fetchall()
+        for row in rows:
+            summary["checked"] += 1
+            entry = dict(row)
+            source = _candidate_existing_path(str(row["local_path"] or ""), str(row["asset_local_path"] or ""), str(row["resource_local_path"] or ""))
+            if not source:
+                summary["missing"] += 1
+                continue
+            expected = expected_local_episode_path(entry, int(row["episode_number"] or 0), Path(source).suffix or ".mkv", settings)
+            if not expected:
+                summary["skipped"] += 1
+                continue
+            source_path = Path(source)
+            expected_path = Path(expected)
+            if source_path.resolve() != expected_path.resolve():
+                expected_path.parent.mkdir(parents=True, exist_ok=True)
+                if expected_path.exists():
+                    expected_path.unlink()
+                shutil.move(str(source_path), str(expected_path))
+                summary["moved"] += 1
+            else:
+                summary["skipped"] += 1
+            _bind_episode_local_path(conn, row, entry, str(expected_path), ts)
+    scope = f"entry_id={entry_id}" if entry_id > 0 else "全部"
+    message = f"本地资源整理完成({scope}): 检查 {summary['checked']} 集，移动 {summary['moved']} 个，缺失 {summary['missing']} 个"
     log("info", message)
     return {"status": "completed", "message": message, **summary}
 

@@ -89,9 +89,6 @@ export default appContextComponent()
                 <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
                 <el-tag v-for="score in metadataScores(item)" :key="score.key" size="small" type="warning">{{ score.label }}</el-tag>
               </div>
-              <div class="card-actions">
-                <el-button size="small" plain @click.stop="refreshEntryMetadata(item, 'seasonal', 'anime')">刷新元数据</el-button>
-              </div>
             </div>
           </article>
           <el-empty v-if="!filteredSeries.length" description="没有匹配的新番条目" />

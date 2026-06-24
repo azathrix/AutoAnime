@@ -205,7 +205,7 @@ export function listTextFromJson(value) {
 }
 
 export function jsonFromListText(value) {
-  const items = String(value || '').replace(/,/g, '\n').split('\n').map(item => item.trim()).filter(Boolean)
+  const items = String(value || '').replace(/[，,、]/g, '\n').split('\n').map(item => item.trim()).filter(Boolean)
   return JSON.stringify(Array.from(new Set(items)))
 }
 

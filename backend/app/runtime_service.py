@@ -228,9 +228,7 @@ def reschedule() -> None:
     ensure_queue_handlers()
     settings = get_settings()
     minutes = int_setting(settings.get("scan_interval_minutes"), 60, 1)
-    queue_minutes = int_setting(settings.get("queue_dispatch_interval_minutes"), 1, 1)
     rss_enabled = bool_setting(settings.get("auto_scan", "false"))
-    queue_dispatch_enabled = bool_setting(settings.get("queue_dispatch_enabled", "true"))
     runtime_store.set_scheduler_sync(
         "rss_scan",
         interval_minutes=minutes,
@@ -239,8 +237,8 @@ def reschedule() -> None:
     )
     runtime_store.set_scheduler_sync(
         "queue_dispatch",
-        interval_minutes=queue_minutes,
-        enabled=int(queue_dispatch_enabled),
+        interval_minutes=0,
+        enabled=0,
         debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS),
         updated_at=now(),
     )
@@ -248,8 +246,6 @@ def reschedule() -> None:
         runtime_store.set_scheduler_sync(queue_job_key(name), debounce_seconds=int(QUEUE_DEBOUNCE_SECONDS), updated_at=now())
     if rss_enabled:
         scheduler.add_job(lambda: asyncio.create_task(scheduled_scan()), "interval", minutes=minutes, id="rss_scan")
-    if queue_dispatch_enabled:
-        scheduler.add_job(lambda: asyncio.create_task(dispatch_ready_queues()), "interval", minutes=queue_minutes, id="queue_dispatch")
 
 def runtime_generation_alive(expected: str) -> bool:
     return get_runtime_generation() == expected

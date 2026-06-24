@@ -1,7 +1,7 @@
 import { ElMessage } from 'element-plus'
 
 export function createFileBrowserActions(app, deps) {
-  const { getAction, apiErrorMessage } = deps
+  const { getAction, postAction, apiErrorMessage } = deps
 
   async function browseServerFiles(path = '') {
     app.fileBrowser.loading = true
@@ -26,6 +26,23 @@ export function createFileBrowserActions(app, deps) {
 
   function selectServerFile(item) {
     if (!item) return
+    if (app.fileBrowser.mode === 'match') {
+      if (item.kind === 'directory' && !item.selectCurrent) {
+        browseServerFiles(item.path)
+        return
+      }
+      const entryId = Number(app.selectedEntry?.id || 0)
+      if (!entryId) return
+      postAction(`/entries/${entryId}/match-local-files`, { path: item.path })
+        .then(async result => {
+          ElMessage.success(result?.message || '本地资源已匹配')
+          app.fileBrowser.open = false
+          await app.openEntry(entryId, app.selectedEntryDomain, app.selectedEntryMediaType)
+          await app.reload()
+        })
+        .catch(error => ElMessage.error(apiErrorMessage(error)))
+      return
+    }
     if (item.kind === 'directory') {
       browseServerFiles(item.path)
       return

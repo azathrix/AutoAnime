@@ -159,6 +159,9 @@ class ScheduledJobPayload(BaseModel):
 class ProcessorSettingsPayload(BaseModel):
     download_concurrency: int = 2
 
+class LocalPathMatchPayload(BaseModel):
+    path: str = ""
+
 class PipelineStartPayload(BaseModel):
     trigger_source: str = "manual"
     first_step_key: str = ""

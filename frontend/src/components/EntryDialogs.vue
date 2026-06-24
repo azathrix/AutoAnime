@@ -119,7 +119,7 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="fileBrowser.open" :title="fileBrowser.mode === 'subtitle' ? '选择本地字幕文件' : '选择本地视频文件'" width="760px" top="6vh">
+    <el-dialog v-model="fileBrowser.open" :title="fileBrowser.mode === 'match' ? '批量匹配本地资源' : fileBrowser.mode === 'subtitle' ? '选择本地字幕文件' : '选择本地视频文件'" width="760px" top="6vh">
       <div class="file-browser">
         <div class="file-browser-toolbar">
           <el-button :disabled="!fileBrowser.parent" @click="browseServerFiles(fileBrowser.parent)">上一级</el-button>
@@ -141,12 +141,13 @@ export default appContextComponent()
           <el-table-column prop="path" label="路径" min-width="280" show-overflow-tooltip />
           <el-table-column label="操作" width="90">
             <template #default="{ row }">
-              <el-button size="small" type="primary" @click="selectServerFile(row)">{{ row.kind === 'directory' ? '进入' : '选择' }}</el-button>
+              <el-button size="small" type="primary" @click="selectServerFile(row)">{{ row.kind === 'directory' ? '进入' : fileBrowser.mode === 'match' ? '匹配' : '选择' }}</el-button>
             </template>
           </el-table-column>
         </el-table>
       </div>
       <template #footer>
+        <el-button v-if="fileBrowser.mode === 'match'" type="primary" @click="selectServerFile({ kind: 'directory', path: fileBrowser.current, selectCurrent: true })">匹配当前目录</el-button>
         <el-button @click="fileBrowser.open = false">关闭</el-button>
       </template>
     </el-dialog>

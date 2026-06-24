@@ -13,6 +13,7 @@ from ..media_service import (
     media_items_response,
     normalize_api_media_type,
     save_entry_payload,
+    set_entry_following,
 )
 from ..metadata import fetch_tmdb_metadata, refresh_entry_metadata
 from ..schemas import EntryPayload, MediaCreatePayload, MetadataFetchPayload
@@ -51,6 +52,18 @@ async def api_delete_media_entry(media_type: str, entry_id: int) -> dict[str, st
         success_message="已删除媒体条目，本地文件不会被删除",
         log_prefix="已删除媒体条目",
     )
+
+
+@router.post("/api/media/{media_type}/{entry_id}/follow")
+async def api_follow_media_entry(media_type: str, entry_id: int) -> dict[str, str]:
+    normalize_api_media_type(media_type)
+    return set_entry_following(entry_id, True)
+
+
+@router.post("/api/media/{media_type}/{entry_id}/unfollow")
+async def api_unfollow_media_entry(media_type: str, entry_id: int) -> dict[str, str]:
+    normalize_api_media_type(media_type)
+    return set_entry_following(entry_id, False)
 
 
 @router.post("/api/media/{media_type}/{entry_id}/metadata/fetch")

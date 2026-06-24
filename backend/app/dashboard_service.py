@@ -153,6 +153,8 @@ def scheduled_jobs_summary() -> list[dict[str, Any]]:
             latest_runs[job_key] = dict(run)
     result = []
     for job in sorted(snapshot.get("scheduler", []), key=lambda item: str(item.get("job_key") or "")):
+        if str(job.get("job_key") or "") == "queue_dispatch":
+            continue
         item = dict(job)
         item.setdefault("id", 0)
         item.setdefault("job_type", "runtime")
@@ -304,7 +306,6 @@ def console_sections() -> list[dict[str, Any]]:
         {"key": "queue:cleanup", "name": "清理", "kind": "queue", "queue_key": "cleanup"},
         {"key": "scheduler", "name": "定时任务", "kind": "group"},
         {"key": "scheduler:rss_scan", "name": "RSS 定时扫描", "kind": "scheduled", "job_key": "rss_scan"},
-        {"key": "scheduler:queue_dispatch", "name": "恢复调度", "kind": "scheduled", "job_key": "queue_dispatch"},
         {"key": "logs", "name": "服务日志", "kind": "logs"},
         {"key": "maintenance", "name": "维护", "kind": "maintenance"},
     ]

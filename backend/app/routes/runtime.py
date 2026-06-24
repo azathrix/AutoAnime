@@ -8,6 +8,7 @@ from ..maintenance import (
     clear_runtime_data,
     migrate_episode_model,
     migrate_media_folders,
+    organize_local_files,
     refresh_local_status,
     repair_local_paths,
 )
@@ -217,6 +218,11 @@ async def api_migrate_episode_model() -> dict:
 @router.post("/api/maintenance/refresh-local-status")
 async def api_refresh_all_local_status() -> dict:
     return refresh_local_status()
+
+
+@router.post("/api/maintenance/organize-local-files")
+async def api_organize_all_local_files() -> dict:
+    return organize_local_files()
 
 
 @router.post("/api/system/clear-data")

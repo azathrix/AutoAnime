@@ -162,6 +162,11 @@ export default appContextComponent({ draggable, PriorityList })
                   <el-button :icon="Refresh" @click="runAction('/tasks/poll')">刷新下载状态</el-button>
                   <el-button type="warning" @click="runAction('/tasks/retry-failed')">重试失败任务</el-button>
                   <el-button type="primary" @click="refreshAllLocalStatus">刷新全部本地状态</el-button>
+                  <el-popconfirm title="会把已绑定且存在的本地文件整理到当前命名规则路径，目标同名文件会被覆盖。确定执行？" @confirm="organizeAllLocalFiles">
+                    <template #reference>
+                      <el-button type="primary">整理全部本地资源</el-button>
+                    </template>
+                  </el-popconfirm>
                   <el-popconfirm title="迁移前会自动备份数据库。确定把旧资源模型迁移为每集一条资源，并按纯作品名目录计算路径？" @confirm="migrateEpisodeModel">
                     <template #reference>
                       <el-button type="primary">迁移集数模型</el-button>

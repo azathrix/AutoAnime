@@ -420,6 +420,7 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
         entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
         if not entry:
             return empty_entry_response()
+        seasonal = conn.execute("SELECT following, archived FROM seasonal_entries WHERE entry_id=?", (entry_id,)).fetchone()
         episodes = conn.execute(
             """
             SELECT ep.*,
@@ -451,9 +452,14 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
               LIMIT 1
             )
             LEFT JOIN local_assets la
-              ON la.entry_id=ep.entry_id
-             AND la.episode_number=ep.episode_number
-             AND la.status='synced'
+              ON la.id=(
+                SELECT id FROM local_assets
+                WHERE entry_id=ep.entry_id
+                  AND episode_number=ep.episode_number
+                  AND status='synced'
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+              )
             WHERE ep.entry_id=? AND ep.episode_number > 0
             ORDER BY ep.episode_number ASC, ep.id ASC
             """,
@@ -493,9 +499,14 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
               LIMIT 1
             )
             LEFT JOIN local_assets la
-              ON la.entry_id=er.entry_id
-             AND la.episode_number=er.episode_number
-             AND la.status='synced'
+              ON la.id=(
+                SELECT id FROM local_assets
+                WHERE entry_id=er.entry_id
+                  AND episode_number=er.episode_number
+                  AND status='synced'
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+              )
             WHERE er.entry_id=? AND er.episode_number > 0
               AND EXISTS (
                 SELECT 1 FROM episodes ep
@@ -522,7 +533,14 @@ def build_entry_response(entry_id: int) -> dict[str, Any]:
     groups = sorted({r["subtitle_group"] for r in episodes if r["subtitle_group"]})
     resolutions = sorted({r["resolution"] for r in episodes if r["resolution"]})
     languages = sorted({r["language"] for r in episodes if r["language"]})
-    entry_payload = enrich_catalog_entry({**row_to_dict(entry), "domain_kind": entry["domain_kind"]})
+    entry_payload = enrich_catalog_entry(
+        {
+            **row_to_dict(entry),
+            "domain_kind": entry["domain_kind"],
+            "following": int(seasonal["following"] or 0) if seasonal else 0,
+            "seasonal_archived": int(seasonal["archived"] or 0) if seasonal else 0,
+        }
+    )
     for legacy_key in ("auto_download", "selected_group", "selected_resolution", "backfill_mode"):
         entry_payload.pop(legacy_key, None)
     return {
@@ -725,3 +743,25 @@ def archive_seasonal_entry(entry_id: int) -> dict[str, str]:
         )
     log("info", f"新番已归档到番剧库: {entry['display_title']}")
     return {"status": "completed", "message": "已归档到番剧库"}
+
+
+def set_entry_following(entry_id: int, following: bool) -> dict[str, str]:
+    ts = now()
+    with connect() as conn:
+        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            return {"status": "not_found", "message": "条目不存在"}
+        conn.execute(
+            """
+            INSERT INTO seasonal_entries (entry_id, source_type, source_ref, following, sync_enabled, archived, created_at, updated_at)
+            VALUES (?, 'manual', '', ?, 1, ?, ?, ?)
+            ON CONFLICT(entry_id) DO UPDATE SET
+              following=excluded.following,
+              archived=excluded.archived,
+              updated_at=excluded.updated_at
+            """,
+            (entry_id, 1 if following else 0, 0 if following else 1, ts, ts),
+        )
+    message = "已加入追番" if following else "已取消追番"
+    log("info", f"{message}: {entry['display_title']}")
+    return {"status": "completed", "message": message}
