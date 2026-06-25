@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import re
 import json
+import re
 from pathlib import Path
 
 from .config import MEDIA_ROOT
@@ -166,6 +166,37 @@ def render_episode_name(series: dict, episode_number: int, episode_title: str, s
         year=year or "0000",
         year_suffix=f" ({year})" if year > 0 else "",
     )
+
+
+VIDEO_SUFFIXES = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"}
+
+
+def infer_video_suffix(*hints: str) -> str:
+    for hint in hints:
+        text = str(hint or "")
+        suffix = Path(text).suffix.lower()
+        if suffix in VIDEO_SUFFIXES:
+            return suffix
+        match = re.search(
+            r"(?i)(?:^|[\s\[\]()._-])(mkv|mp4|webm|avi|mov|wmv|m2ts|ts|flv)(?:$|[\s\[\]()._-])",
+            text,
+        )
+        if match:
+            return f".{match.group(1).lower()}"
+    return ".mkv"
+
+
+def render_episode_file_name(
+    series: dict,
+    episode_number: int,
+    episode_title: str,
+    settings: dict[str, str],
+    *suffix_hints: str,
+) -> str:
+    name = render_episode_name(series, episode_number, episode_title, settings)
+    if Path(name).suffix.lower() in VIDEO_SUFFIXES:
+        return name
+    return f"{name}{infer_video_suffix(*suffix_hints)}"
 
 
 def media_root_for_type(media_type: str = "anime") -> str:

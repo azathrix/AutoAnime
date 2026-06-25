@@ -7,7 +7,7 @@ import hashlib
 from .database import connect
 from .db import get_settings, now
 from .downloader_service import provider_key, settings_for_attempt
-from .library import render_episode_name, target_dir
+from .library import render_episode_file_name, target_dir
 from .runtime_service import ACTIVE_DOWNLOAD_STATUSES
 from .sync_service import local_episode_path
 from .utils import row_to_dict
@@ -237,7 +237,14 @@ def queue_download_for_release(release_id: int, *, reset_cancelled: bool = False
         ).fetchone()
         source_ref = str((resource and resource["source_ref"]) or release["magnet"] or release["torrent_url"] or "")
         remote_target = target_dir(dict(release), settings)
-        remote_name = render_episode_name(dict(release), episode_number, "", settings)
+        remote_name = render_episode_file_name(
+            dict(release),
+            episode_number,
+            "",
+            settings,
+            str(release["title"] or ""),
+            source_ref,
+        )
         remote_path = str(PurePosixPath(remote_target) / remote_name)
         target_local_path = local_episode_path({"artifact_name": remote_name, "episode_number": episode_number}, dict(release), settings)
         provider = provider_key(settings)
