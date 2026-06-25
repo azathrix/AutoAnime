@@ -12,6 +12,7 @@ from ..maintenance import (
     refresh_local_status,
     repair_local_paths,
 )
+from ..metadata import refresh_all_metadata
 from ..pipeline_orchestrator import run_ready_tasks, start_pipeline
 from ..pipeline_runtime import pipeline_overview
 from ..runtime_service import (
@@ -223,6 +224,11 @@ async def api_refresh_all_local_status() -> dict:
 @router.post("/api/maintenance/organize-local-files")
 async def api_organize_all_local_files() -> dict:
     return organize_local_files()
+
+
+@router.post("/api/maintenance/refresh-metadata")
+async def api_refresh_all_metadata() -> dict:
+    return await refresh_all_metadata()
 
 
 @router.post("/api/system/clear-data")

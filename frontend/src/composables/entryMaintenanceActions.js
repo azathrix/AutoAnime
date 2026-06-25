@@ -54,6 +54,16 @@ export function createEntryMaintenanceActions(app, deps) {
     }
   }
 
+  async function refreshAllMetadata() {
+    try {
+      const result = await postAction('/maintenance/refresh-metadata')
+      ElMessage.success(result?.message || '全部元数据已刷新')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
   async function organizeAllLocalFiles() {
     try {
       const result = await postAction('/maintenance/organize-local-files')
@@ -89,6 +99,7 @@ export function createEntryMaintenanceActions(app, deps) {
     migrateEpisodeModel,
     organizeAllLocalFiles,
     organizeCurrentEntryLocalFiles,
+    refreshAllMetadata,
     refreshAllLocalStatus,
     refreshCurrentEntryLocalStatus,
     repairLocalPaths,

@@ -198,6 +198,7 @@ def init_db() -> None:
                 year INTEGER NOT NULL DEFAULT 0,
                 month INTEGER NOT NULL DEFAULT 0,
                 season_number INTEGER NOT NULL DEFAULT 1,
+                episode_offset INTEGER NOT NULL DEFAULT 0,
                 poster_url TEXT NOT NULL DEFAULT '',
                 poster_path TEXT NOT NULL DEFAULT '',
                 summary TEXT NOT NULL DEFAULT '',
@@ -680,6 +681,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             year INTEGER NOT NULL DEFAULT 0,
             month INTEGER NOT NULL DEFAULT 0,
             season_number INTEGER NOT NULL DEFAULT 1,
+            episode_offset INTEGER NOT NULL DEFAULT 0,
             poster_url TEXT NOT NULL DEFAULT '',
             poster_path TEXT NOT NULL DEFAULT '',
             summary TEXT NOT NULL DEFAULT '',
@@ -780,6 +782,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         "month": "INTEGER NOT NULL DEFAULT 0",
         "bangumi_score": "REAL NOT NULL DEFAULT 0",
         "tmdb_score": "REAL NOT NULL DEFAULT 0",
+        "episode_offset": "INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in entry_additions.items():
         if column not in entry_columns:

@@ -114,6 +114,7 @@ def settings_response() -> dict[str, Any]:
         "queue_dispatch_enabled": bool_setting(settings.get("queue_dispatch_enabled", "true")),
         "queue_dispatch_interval_minutes": int_setting(settings.get("queue_dispatch_interval_minutes"), 1, 1),
         "auto_generate_nfo": bool_setting(settings.get("auto_generate_nfo", "false")),
+        "generate_bangumi_ini": bool_setting(settings.get("generate_bangumi_ini", "false")),
         "backfill_current_season": bool_setting(settings.get("backfill_current_season", "false")),
         "subtitle_priority": split_setting(settings.get("subtitle_priority", "")),
         "resolution_priority": split_setting(settings.get("resolution_priority", "")),

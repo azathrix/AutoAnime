@@ -146,6 +146,13 @@ export default appContextComponent({ draggable, PriorityList })
                   <div><span>电影</span><code>media/movies</code></div>
                   <div><span>电视剧</span><code>media/tv</code></div>
                 </div>
+                <el-form-item label="Bangumi 配置">
+                  <el-switch
+                    v-model="settings.generate_bangumi_ini"
+                    active-text="生成 bangumi.ini"
+                    inactive-text="关闭"
+                  />
+                </el-form-item>
                 <el-form-item label="动画命名模板"><el-input v-model="settings.episode_name_template" /></el-form-item>
                 <el-form-item label="电影命名模板"><el-input v-model="settings.movie_name_template" /></el-form-item>
                 <el-form-item label="电视剧命名模板"><el-input v-model="settings.tv_name_template" /></el-form-item>
@@ -189,6 +196,11 @@ export default appContextComponent({ draggable, PriorityList })
                     </template>
                   </el-popconfirm>
                   <el-button type="primary" @click="refreshAllLocalStatus">刷新全部本地状态</el-button>
+                  <el-popconfirm title="会按现有 Bangumi/TMDB ID 刷新所有条目元数据；如果开启 Bangumi 配置，会同步生成 bangumi.ini。确定执行？" @confirm="refreshAllMetadata">
+                    <template #reference>
+                      <el-button type="primary">刷新全部元数据</el-button>
+                    </template>
+                  </el-popconfirm>
                   <el-popconfirm title="会把已绑定且存在的本地文件整理到当前命名规则路径，目标同名文件会被覆盖。确定执行？" @confirm="organizeAllLocalFiles">
                     <template #reference>
                       <el-button type="primary">整理全部本地资源</el-button>

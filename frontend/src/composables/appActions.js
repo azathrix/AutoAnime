@@ -21,6 +21,7 @@ export function createAppActions(app, deps) {
     migrateEpisodeModel,
     organizeAllLocalFiles,
     organizeCurrentEntryLocalFiles,
+    refreshAllMetadata,
     refreshAllLocalStatus,
     refreshCurrentEntryLocalStatus,
     repairLocalPaths,
@@ -1123,6 +1124,7 @@ export function createAppActions(app, deps) {
     app.settings.tv_source_priority = Array.isArray(app.settings.tv_source_priority) ? app.settings.tv_source_priority : []
     app.settings.tv_subtitle_priority = Array.isArray(app.settings.tv_subtitle_priority) ? app.settings.tv_subtitle_priority : []
     app.settings.downloaders = Array.isArray(app.settings.downloaders) ? app.settings.downloaders : []
+    app.settings.generate_bangumi_ini = Boolean(app.settings.generate_bangumi_ini)
     app.settings.movie_name_template = app.settings.movie_name_template || '{title_base}/{title_base}'
     app.settings.tv_name_template = app.settings.tv_name_template || '{title_base}/Season {season:02d}/{title_base} - S{season:02d}E{episode:02d} - 第 {episode:02d} 话'
     app.settings.episode_name_template = app.settings.episode_name_template || '{title_base} - S{season:02d}E{episode:02d} - 第 {episode:02d} 话'
@@ -1235,7 +1237,7 @@ export function createAppActions(app, deps) {
     deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
     editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
     openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
-    openScheduledSettings, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, pauseGenericTask, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, resumeGenericTask, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+    openScheduledSettings, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, pauseGenericTask, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, resumeGenericTask, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
     removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
     saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
     confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,

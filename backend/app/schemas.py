@@ -11,6 +11,7 @@ class SettingsPayload(BaseModel):
     queue_dispatch_enabled: bool = True
     queue_dispatch_interval_minutes: int = 1
     auto_generate_nfo: bool = False
+    generate_bangumi_ini: bool = False
     backfill_current_season: bool = False
     subtitle_priority: list[str] = Field(default_factory=list)
     resolution_priority: list[str] = Field(default_factory=list)

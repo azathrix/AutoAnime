@@ -6,9 +6,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from .bangumi_config import generate_bangumi_ini
 from .catalog_service import catalog_response
 from .database import connect
-from .db import log, now
+from .db import get_settings, log, now
 from .download_task_service import canonical_download_status, queue_download_for_release
 from .download_worker_service import trigger_download_worker
 from .library import parse_entry_labels
@@ -773,6 +774,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 display_title=?,
                 title_root=?,
                 bangumi_id=?,
+                episode_offset=CASE WHEN bangumi_id!=? THEN 0 ELSE episode_offset END,
                 tmdb_id=?,
                 bangumi_score=?,
                 tmdb_score=?,
@@ -794,6 +796,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 title_cn,
                 title_cn,
                 title_root,
+                payload.bangumi_id.strip(),
                 payload.bangumi_id.strip(),
                 payload.tmdb_id.strip(),
                 max(0.0, float(payload.bangumi_score or 0)),
@@ -851,6 +854,7 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                     payload.bangumi_id.strip(),
                 ),
             )
+    generate_bangumi_ini(entry_id, get_settings())
     if domain_kind == "seasonal":
         log("info", f"新番条目设置已保存: {payload.title_cn}")
     else:

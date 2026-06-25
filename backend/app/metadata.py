@@ -3,13 +3,15 @@ from __future__ import annotations
 import html
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from .bangumi_config import generate_bangumi_ini, setting_enabled
 from .database import connect
-from .db import log, merge_duplicate_series, now
+from .db import get_settings, log, merge_duplicate_series, now
 from .library import local_library_root, parse_entry_labels, render_episode_name, render_season_dir, render_series_dir
 from .parser import clean_name
 from .processing_cache import get_cached_json, set_cached_json
@@ -55,6 +57,63 @@ async def fetch_bangumi_metadata(subject_id: str, proxy: str = "") -> dict[str, 
         "tags_json": subject_tags_json(subject),
         "bangumi_score": subject_score(subject),
     }
+
+
+async def fetch_bangumi_episodes(subject_id: str, proxy: str = "") -> list[dict[str, Any]]:
+    subject_id = str(subject_id or "").strip()
+    if not subject_id:
+        return []
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    limit = 100
+    async with httpx.AsyncClient(
+        proxy=proxy or None,
+        timeout=BANGUMI_TIMEOUT,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    ) as client:
+        while True:
+            resp = await client.get(
+                f"{BANGUMI_API}/v0/episodes",
+                params={"subject_id": subject_id, "type": 0, "limit": limit, "offset": offset},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            batch = data.get("data") if isinstance(data, dict) else []
+            if not isinstance(batch, list) or not batch:
+                break
+            rows.extend([item for item in batch if isinstance(item, dict)])
+            total = int(data.get("total") or len(rows)) if isinstance(data, dict) else len(rows)
+            offset += len(batch)
+            if offset >= total or len(batch) < limit:
+                break
+
+    return rows
+
+
+def _number_value(value: Any) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def bangumi_episode_offset(episodes: list[dict[str, Any]]) -> int:
+    offsets: list[int] = []
+    for item in episodes or []:
+        sort_number = _number_value(item.get("sort"))
+        ep_number = _number_value(item.get("ep"))
+        if sort_number <= 0 or ep_number <= 0 or sort_number == ep_number:
+            continue
+        smaller = min(sort_number, ep_number)
+        larger = max(sort_number, ep_number)
+        if smaller > 36:
+            continue
+        offset = larger - smaller
+        if offset > 0:
+            offsets.append(offset)
+    if not offsets:
+        return 0
+    return int(Counter(offsets).most_common(1)[0][0])
 
 
 async def search_bangumi(keyword: str, proxy: str = "") -> list[dict[str, Any]]:
@@ -261,6 +320,11 @@ async def apply_bangumi_metadata(entry_id: int, bangumi_id: str, proxy: str = ""
     year = subject_year(subject) or entry["year"]
     month = subject_month(subject) or entry["month"]
     bangumi_score = subject_score(subject)
+    try:
+        episode_offset = bangumi_episode_offset(await fetch_bangumi_episodes(bangumi_id, proxy))
+    except Exception as exc:
+        episode_offset = int(entry["episode_offset"] or 0) if "episode_offset" in entry.keys() else 0
+        log("warn", f"Bangumi 集数 offset 获取失败: entry_id={entry_id} bangumi_id={bangumi_id} error={exc}")
     with connect() as conn:
         if force:
             conn.execute(
@@ -283,6 +347,7 @@ async def apply_bangumi_metadata(entry_id: int, bangumi_id: str, proxy: str = ""
                     month=?,
                     tags_json=?,
                     bangumi_score=?,
+                    episode_offset=?,
                     metadata_source='bangumi',
                     metadata_provider='bangumi',
                     updated_at=?
@@ -306,6 +371,7 @@ async def apply_bangumi_metadata(entry_id: int, bangumi_id: str, proxy: str = ""
                     month,
                     tags_json,
                     bangumi_score,
+                    episode_offset,
                     now(),
                     entry_id,
                 ),
@@ -316,13 +382,14 @@ async def apply_bangumi_metadata(entry_id: int, bangumi_id: str, proxy: str = ""
                 UPDATE entries
                 SET bangumi_id=?,
                     bangumi_score=?,
+                    episode_offset=CASE WHEN ?!=0 THEN ? ELSE episode_offset END,
                     poster_url=CASE WHEN poster_url='' THEN ? ELSE poster_url END,
                     summary=CASE WHEN summary='' THEN ? ELSE summary END,
                     tags_json=CASE WHEN tags_json='[]' THEN ? ELSE tags_json END,
                     updated_at=?
                 WHERE id=?
                 """,
-                (bangumi_id, bangumi_score, poster, summary, tags_json, now(), entry_id),
+                (bangumi_id, bangumi_score, episode_offset, episode_offset, poster, summary, tags_json, now(), entry_id),
             )
         if int(entry["work_id"] or 0) > 0 and force:
             conn.execute(
@@ -355,6 +422,9 @@ async def apply_bangumi_metadata(entry_id: int, bangumi_id: str, proxy: str = ""
                 (title_raw, title_cn, bangumi_id, poster, summary, year, month, now(), series["id"]),
             )
             merge_duplicate_series(conn)
+    settings = get_settings()
+    if setting_enabled(settings.get("generate_bangumi_ini", "false")):
+        generate_bangumi_ini(entry_id, settings)
     log("info", f"已刷新 Bangumi 元数据: {title_cn}")
     return True
 
@@ -529,6 +599,41 @@ async def refresh_entry_metadata(entry_id: int, proxy: str = "") -> None:
         log("warn", f"跳过 Bangumi 元数据: {entry['display_title']} - 缺少 Bangumi ID")
         return
     await apply_bangumi_metadata(entry_id, bangumi_id, proxy, force=True)
+
+
+async def refresh_all_metadata() -> dict[str, Any]:
+    settings = get_settings()
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, media_type, bangumi_id, tmdb_id, display_title
+            FROM entries
+            WHERE COALESCE(hidden, 0)=0
+              AND (bangumi_id!='' OR tmdb_id!='')
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    refreshed = 0
+    skipped = 0
+    failed = 0
+    for row in rows:
+        try:
+            providers = await refresh_entry_metadata_by_ids(
+                int(row["id"] or 0),
+                str(row["media_type"] or "anime"),
+                tmdb_token=settings.get("tmdb_token", "").strip(),
+                proxy=settings.get("rss_proxy", ""),
+            )
+            if providers:
+                refreshed += 1
+            else:
+                skipped += 1
+        except Exception as exc:
+            failed += 1
+            log("error", f"刷新全部元数据失败: entry_id={row['id']} title={row['display_title']} error={exc}")
+    message = f"刷新全部元数据完成: 成功 {refreshed} 个，跳过 {skipped} 个，失败 {failed} 个"
+    log("info", message)
+    return {"message": message, "refreshed": refreshed, "skipped": skipped, "failed": failed}
 
 
 def xml_text(value: str) -> str:
