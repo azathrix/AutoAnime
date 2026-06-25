@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from .catalog_service import catalog_response
 from .database import connect
 from .db import log, now
-from .download_task_service import queue_download_for_release
+from .download_task_service import canonical_download_status, queue_download_for_release
 from .download_worker_service import trigger_download_worker
 from .library import parse_entry_labels
 from .parser import fingerprint
@@ -374,24 +374,57 @@ def reset_orphaned_download_jobs_in_conn(conn, entry_id: int = 0, episode_number
                 (local_path, ts, row_entry_id, row_episode_number),
             )
         else:
+            status = canonical_download_status(str(row["status"] or "pending"))
+            artifact = conn.execute(
+                """
+                SELECT id
+                FROM download_artifacts
+                WHERE entry_id=? AND episode_number=? AND status='available'
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+                """,
+                (row_entry_id, row_episode_number),
+            ).fetchone()
+            if artifact:
+                next_status = "remote_completed"
+                next_text = "下载器产物已完成，等待下载到本地"
+            elif status in {"submitting", "running"}:
+                next_status = "pending"
+                next_text = "下载流程中断，等待重新提交下载器"
+            elif status in {"remote_completed", "local_copying"}:
+                next_status = "remote_completed"
+                next_text = "等待下载到本地"
+            elif status in {"remote_downloading", "submitted", "downloading"}:
+                next_status = "remote_downloading"
+                next_text = "等待云存储完成"
+            else:
+                next_status = "pending"
+                next_text = "等待下载"
+            resource_status = {
+                "pending": "available",
+                "remote_downloading": "downloading",
+                "remote_completed": "remote_completed",
+            }.get(next_status, "available")
             conn.execute(
                 """
                 UPDATE download_jobs
-                SET status='failed', phase='failed', retry_after='', last_error='下载流程已中断，请重新下载', updated_at=?
+                SET status=?, phase=?, retry_after='', last_error='', progress_text=?, updated_at=?, last_seen_at=?
                 WHERE id=?
                 """,
-                (ts, row["id"]),
+                (next_status, next_status, next_text, ts, ts, row["id"]),
             )
             conn.execute(
                 """
                 UPDATE episode_resources
-                SET status='available', updated_at=?
+                SET status=?, updated_at=?
                 WHERE entry_id=? AND episode_number=? AND selected=1 AND downloaded=0
                   AND status IN ('queued','downloading','remote_completed','local_copying','remote_downloading','submitting')
                 """,
-                (ts, row_entry_id, row_episode_number),
+                (resource_status, ts, row_entry_id, row_episode_number),
             )
         reset_count += 1
+    if reset_count:
+        trigger_download_worker(delay=0)
     return reset_count
 
 def reset_orphaned_download_jobs(entry_id: int = 0, episode_number: int = 0) -> int:

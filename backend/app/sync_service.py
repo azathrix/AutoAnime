@@ -8,7 +8,7 @@ from .database import connect
 from .downloader_service import download_to_local, list_remote_files, provider_key, remote_file_id
 from .db import log, now
 from .library import expected_local_episode_path, media_root_for_type
-from .parser import normalize_title_key
+from .parser import normalize_title_key, parse_episode
 
 
 
@@ -109,14 +109,20 @@ async def find_existing_remote_episode(
             return None
         raise
     normalized_expected = normalize_title_key(expected_name)
+    episode_candidates: list[dict] = []
     for item in files:
         if item.get("is_dir"):
             continue
         name = str(item.get("name") or "")
-        if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
+        suffix = Path(name).suffix.lower()
+        if suffix and suffix not in VIDEO_SUFFIXES:
             continue
         if normalized_expected and normalize_title_key(name) == normalized_expected:
             return item
+        if episode_number > 0 and parse_episode(name) == episode_number:
+            episode_candidates.append(item)
+    if len(episode_candidates) == 1:
+        return episode_candidates[0]
     return None
 
 
