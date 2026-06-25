@@ -14,6 +14,7 @@ export function createMetadataActions(app, deps) {
       month: 0,
       release_month: '',
       season_number: 1,
+      episode_offset: 0,
       media_type: app.selectedEntryMediaType || app.currentMediaType || 'anime',
       region: 'jp',
       title_romaji: '',

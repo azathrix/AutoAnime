@@ -51,7 +51,7 @@ async def api_update_settings(payload: SettingsPayload) -> dict:
             "queue_dispatch_interval_minutes": payload.queue_dispatch_interval_minutes,
             "auto_download_unique": "true",
             "auto_download_by_priority": "true",
-            "auto_generate_nfo": "false",
+            "auto_generate_nfo": str(payload.auto_generate_nfo).lower(),
             "generate_bangumi_ini": str(payload.generate_bangumi_ini).lower(),
             "backfill_current_season": str(payload.backfill_current_season).lower(),
             "default_backfill": "season" if payload.backfill_current_season else "none",

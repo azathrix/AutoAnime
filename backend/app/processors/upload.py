@@ -7,6 +7,7 @@ from pathlib import Path
 from ..config import DATA_DIR
 from ..database import connect
 from ..db import get_settings, log, now, upsert_calendar_entry
+from ..nfo_service import generate_jellyfin_nfo_for_entry
 from ..pipeline_models import ProcessorContext, ProcessorResult
 from ..sync_service import local_episode_path, normalize_local_target_path, task_retry_after
 
@@ -95,6 +96,7 @@ async def process_upload(context: ProcessorContext, payload: dict) -> ProcessorR
             (target, ts, entry_id, episode_number),
         )
         upsert_calendar_entry(conn, entry_id, episode_number, ts, True)
+    generate_jellyfin_nfo_for_entry(entry_id, settings)
     log("info", f"上传整理完成: entry_id={entry_id} episode={episode_number} target={target}")
     return ProcessorResult.success(
         "上传整理完成",

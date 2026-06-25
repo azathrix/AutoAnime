@@ -237,6 +237,7 @@ const entryEditForm = reactive({
   month: 0,
   release_month: '',
   season_number: 1,
+  episode_offset: 0,
   media_type: 'anime',
   region: 'jp',
   title_romaji: '',

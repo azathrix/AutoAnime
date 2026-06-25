@@ -51,7 +51,12 @@ export default appContextComponent()
             <el-input-number v-model="entryEditForm.tmdb_score" :min="0" :max="10" :precision="1" :step="0.1" controls-position="right" />
           </el-form-item>
         </div>
-        <el-form-item label="原名"><el-input v-model="entryEditForm.title_raw" /></el-form-item>
+        <div class="form-row">
+          <el-form-item label="原名"><el-input v-model="entryEditForm.title_raw" /></el-form-item>
+          <el-form-item label="Bangumi 集数偏移">
+            <el-input-number v-model="entryEditForm.episode_offset" :min="0" :max="999" controls-position="right" />
+          </el-form-item>
+        </div>
         <el-form-item label="海报 URL"><el-input v-model="entryEditForm.poster_url" /></el-form-item>
         <el-form-item label="标签">
           <el-input v-model="entryEditForm.tags_text" type="textarea" :rows="3" placeholder="逗号分隔，例如 轻改，校园，智斗" />

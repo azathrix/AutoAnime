@@ -260,6 +260,33 @@
   font-weight: 800;
 }
 
+.settings-subtitle {
+  color: #0f172a;
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+
+.config-toggle-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.config-toggle-list label {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.config-toggle-list span {
+  color: #334155;
+  font-weight: 800;
+}
+
 .settings-section-toolbar {
   align-items: center;
   background: linear-gradient(90deg, rgba(255, 122, 182, .10), rgba(79, 124, 255, .08));

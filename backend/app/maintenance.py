@@ -10,6 +10,7 @@ from .config import DATA_DIR, DB_PATH
 from .database import connect
 from .db import get_settings, log
 from .library import expected_local_episode_path, local_library_root, render_series_dir
+from .nfo_service import generate_jellyfin_nfo_for_entry
 from .parser import parse_episode
 from .sync_service import local_episode_path
 
@@ -234,6 +235,20 @@ def _remove_empty_parents(path: Path, stop: Path) -> int:
     return removed
 
 
+def _move_sidecar_nfo(source: Path, target: Path) -> int:
+    source_nfo = source.with_suffix(".nfo")
+    target_nfo = target.with_suffix(".nfo")
+    if not source_nfo.exists() or not source_nfo.is_file() or target_nfo.exists():
+        return 0
+    try:
+        target_nfo.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_nfo), str(target_nfo))
+        return 1
+    except OSError as exc:
+        log("warn", f"NFO 跟随移动失败: source={source_nfo} target={target_nfo} error={exc}")
+        return 0
+
+
 def _move_existing_file(old_path: str, expected: str, library_root: Path) -> dict[str, int]:
     result = {"moved_files": 0, "move_conflicts": 0, "removed_dirs": 0}
     if not old_path or not expected or old_path == expected:
@@ -248,6 +263,7 @@ def _move_existing_file(old_path: str, expected: str, library_root: Path) -> dic
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(source), str(target))
     result["moved_files"] += 1
+    result["moved_files"] += _move_sidecar_nfo(source, target)
     result["removed_dirs"] += _remove_empty_parents(source, library_root)
     return result
 
@@ -281,6 +297,7 @@ def migrate_media_folders() -> dict[str, Any]:
         "skipped": 0,
         "details": [],
     }
+    touched_entry_ids: set[int] = set()
     for entry in entries:
         entry_id = int(entry.get("id") or 0)
         root = local_library_root(entry, settings)
@@ -307,14 +324,18 @@ def migrate_media_folders() -> dict[str, Any]:
                     }
                 )
                 handled = True
+                touched_entry_ids.add(entry_id)
                 continue
             if new_dir.exists():
                 updates = _update_entry_path_prefix(entry_id, old_dir, new_dir)
                 if updates:
                     summary["path_updates"] += updates
                     handled = True
+                    touched_entry_ids.add(entry_id)
         if not handled:
             summary["skipped"] += 1
+    for touched_entry_id in sorted(touched_entry_ids):
+        generate_jellyfin_nfo_for_entry(touched_entry_id, settings)
     message = (
         f"媒体目录迁移完成: 目录 {summary['migrated_dirs']} 个，"
         f"合并 {summary['merged_items']} 项，路径更新 {summary['path_updates']} 条，"
@@ -761,6 +782,8 @@ def match_entry_local_files(entry_id: int, path: str) -> dict[str, Any]:
                 continue
             _bind_episode_local_path(conn, episode, entry_data, str(file_path), ts)
             summary["matched"] += 1
+    if summary["matched"] > 0:
+        generate_jellyfin_nfo_for_entry(entry_id, get_settings())
     message = f"本地资源批量匹配完成: 检查 {summary['checked']} 个，匹配 {summary['matched']} 个，未匹配 {summary['unmatched']} 个"
     log("info", f"{message} entry_id={entry_id} path={path}")
     return {"status": "completed", "message": message, **summary}
@@ -770,6 +793,7 @@ def organize_local_files(entry_id: int = 0) -> dict[str, Any]:
     summary = {"checked": 0, "moved": 0, "missing": 0, "skipped": 0}
     settings = get_settings()
     ts = _now()
+    touched_entry_ids: set[int] = set()
     with connect() as conn:
         params: tuple[Any, ...] = ()
         where = "WHERE ep.episode_number > 0 AND COALESCE(e.hidden, 0)=0"
@@ -804,6 +828,7 @@ def organize_local_files(entry_id: int = 0) -> dict[str, Any]:
         for row in rows:
             summary["checked"] += 1
             entry = dict(row)
+            row_entry_id = int(row["entry_id"] or 0)
             source = _candidate_existing_path(str(row["local_path"] or ""), str(row["asset_local_path"] or ""), str(row["resource_local_path"] or ""))
             if not source:
                 summary["missing"] += 1
@@ -819,10 +844,14 @@ def organize_local_files(entry_id: int = 0) -> dict[str, Any]:
                 if expected_path.exists():
                     expected_path.unlink()
                 shutil.move(str(source_path), str(expected_path))
+                _move_sidecar_nfo(source_path, expected_path)
                 summary["moved"] += 1
             else:
                 summary["skipped"] += 1
             _bind_episode_local_path(conn, row, entry, str(expected_path), ts)
+            touched_entry_ids.add(row_entry_id)
+    for touched_entry_id in sorted(touched_entry_ids):
+        generate_jellyfin_nfo_for_entry(touched_entry_id, settings)
     scope = f"entry_id={entry_id}" if entry_id > 0 else "全部"
     message = f"本地资源整理完成({scope}): 检查 {summary['checked']} 集，移动 {summary['moved']} 个，缺失 {summary['missing']} 个"
     log("info", message)
@@ -833,6 +862,7 @@ def organize_episode_file(episode_id: int) -> dict[str, Any]:
     settings = get_settings()
     ts = _now()
     summary = {"checked": 1, "video_moved": 0, "subtitle_moved": 0, "missing": 0, "skipped": 0}
+    entry_id = 0
     with connect() as conn:
         row = conn.execute(
             """
@@ -868,6 +898,7 @@ def organize_episode_file(episode_id: int) -> dict[str, Any]:
         if not row:
             return {"status": "not_found", "message": "集数不存在", **summary}
         entry = dict(row)
+        entry_id = int(row["entry_id"] or 0)
         episode_number = int(row["episode_number"] or 0)
         video_source = _candidate_existing_path(
             str(row["local_path"] or ""),
@@ -884,6 +915,7 @@ def organize_episode_file(episode_id: int) -> dict[str, Any]:
                 if expected_path.exists():
                     expected_path.unlink()
                 shutil.move(str(source_path), str(expected_path))
+                _move_sidecar_nfo(source_path, expected_path)
                 summary["video_moved"] += 1
             else:
                 summary["skipped"] += 1
@@ -959,6 +991,8 @@ def organize_episode_file(episode_id: int) -> dict[str, Any]:
                     )
         if not video_source and not subtitle_source:
             summary["missing"] += 1
+    if entry_id > 0:
+        generate_jellyfin_nfo_for_entry(entry_id, settings)
     message = (
         f"单集整理完成: episode_id={episode_id} "
         f"视频移动 {summary['video_moved']} 个，字幕移动 {summary['subtitle_moved']} 个，缺失 {summary['missing']} 个"
@@ -978,6 +1012,7 @@ def repair_local_paths() -> dict[str, Any]:
         "move_conflicts": 0,
         "removed_dirs": 0,
     }
+    touched_entry_ids: set[int] = set()
     with connect() as conn:
         rows = conn.execute(
             """
@@ -1031,6 +1066,7 @@ def repair_local_paths() -> dict[str, Any]:
                 summary["moved_files"] += move_result["moved_files"]
                 summary["move_conflicts"] += move_result["move_conflicts"]
                 summary["removed_dirs"] += move_result["removed_dirs"]
+                touched_entry_ids.add(int(row["entry_id"] or 0))
             expected_exists = Path(expected).exists()
             if expected != old_path:
                 summary["rewritten"] += 1
@@ -1053,6 +1089,7 @@ def repair_local_paths() -> dict[str, Any]:
                     """,
                     (expected, ts, row["entry_id"], row["episode_number"]),
                 )
+                touched_entry_ids.add(int(row["entry_id"] or 0))
                 continue
             summary["missing"] += 1
             if row["local_asset_id"]:
@@ -1068,6 +1105,9 @@ def repair_local_paths() -> dict[str, Any]:
                 """,
                 (expected, ts, row["entry_id"], row["episode_number"]),
             )
+    for touched_entry_id in sorted(touched_entry_ids):
+        if touched_entry_id > 0:
+            generate_jellyfin_nfo_for_entry(touched_entry_id, settings)
     message = (
         f"本地路径修复完成: 检查 {summary['checked']} 集，"
         f"移动文件 {summary['moved_files']} 个，重写路径 {summary['rewritten']} 条，"

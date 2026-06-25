@@ -13,6 +13,7 @@ from .db import get_settings, log, now
 from .download_task_service import canonical_download_status, queue_download_for_release
 from .download_worker_service import trigger_download_worker
 from .library import parse_entry_labels
+from .nfo_service import generate_jellyfin_nfo_for_entry
 from .parser import fingerprint
 from .runtime_service import ACTIVE_DOWNLOAD_STATUSES, DOWNLOAD_RUNTIME_PROCESSORS
 from .runtime_store import runtime_store
@@ -363,6 +364,7 @@ def create_media_entry(media_type: str, payload: MediaCreatePayload) -> dict[str
         queued_download = queue_download_for_release(release_id)
         if queued_download.get("queued"):
             trigger_download_worker(delay=0)
+    generate_jellyfin_nfo_for_entry(entry_id, get_settings())
     log("info", f"媒体条目已收录: type={media_type} entry_id={entry_id} release_id={release_id} title={title}")
     detail = build_entry_response(entry_id)
     detail["download_task"] = queued_download
@@ -481,6 +483,7 @@ def collect_media_entry(media_type: str, payload: MediaCollectPayload) -> dict[s
                 queued.append({"episode_id": episode_id, **result})
         if queued:
             trigger_download_worker(delay=0)
+    generate_jellyfin_nfo_for_entry(entry_id, get_settings())
 
     log(
         "info",
@@ -774,13 +777,13 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 display_title=?,
                 title_root=?,
                 bangumi_id=?,
-                episode_offset=CASE WHEN bangumi_id!=? THEN 0 ELSE episode_offset END,
                 tmdb_id=?,
                 bangumi_score=?,
                 tmdb_score=?,
                 year=?,
                 month=?,
                 season_number=?,
+                episode_offset=?,
                 media_type=?,
                 region=?,
                 title_romaji=?,
@@ -797,13 +800,13 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 title_cn,
                 title_root,
                 payload.bangumi_id.strip(),
-                payload.bangumi_id.strip(),
                 payload.tmdb_id.strip(),
                 max(0.0, float(payload.bangumi_score or 0)),
                 max(0.0, float(payload.tmdb_score or 0)),
                 payload.year,
                 max(0, min(12, int(payload.month or 0))),
                 payload.season_number,
+                max(0, int(payload.episode_offset or 0)),
                 normalize_api_media_type(payload.media_type),
                 payload.region.strip() or "jp",
                 payload.title_romaji.strip(),
@@ -854,7 +857,9 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                     payload.bangumi_id.strip(),
                 ),
             )
-    generate_bangumi_ini(entry_id, get_settings())
+    settings = get_settings()
+    generate_bangumi_ini(entry_id, settings)
+    generate_jellyfin_nfo_for_entry(entry_id, settings)
     if domain_kind == "seasonal":
         log("info", f"新番条目设置已保存: {payload.title_cn}")
     else:

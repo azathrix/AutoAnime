@@ -146,13 +146,17 @@ export default appContextComponent({ draggable, PriorityList })
                   <div><span>电影</span><code>media/movies</code></div>
                   <div><span>电视剧</span><code>media/tv</code></div>
                 </div>
-                <el-form-item label="Bangumi 配置">
-                  <el-switch
-                    v-model="settings.generate_bangumi_ini"
-                    active-text="生成 bangumi.ini"
-                    inactive-text="关闭"
-                  />
-                </el-form-item>
+                <h3 class="settings-subtitle">生成配置</h3>
+                <div class="config-toggle-list">
+                  <label>
+                    <span>生成 bangumi.ini</span>
+                    <el-switch v-model="settings.generate_bangumi_ini" />
+                  </label>
+                  <label>
+                    <span>生成 TMDB NFO</span>
+                    <el-switch v-model="settings.auto_generate_nfo" />
+                  </label>
+                </div>
                 <el-form-item label="动画命名模板"><el-input v-model="settings.episode_name_template" /></el-form-item>
                 <el-form-item label="电影命名模板"><el-input v-model="settings.movie_name_template" /></el-form-item>
                 <el-form-item label="电视剧命名模板"><el-input v-model="settings.tv_name_template" /></el-form-item>

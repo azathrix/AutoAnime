@@ -27,8 +27,8 @@ export default appContextComponent()
               </div>
             </div>
             <el-descriptions :column="2" border class="entry-meta-descriptions">
-              <el-descriptions-item label="标题">{{ selectedEntry.title_cn || selectedEntry.display_title || '-' }}</el-descriptions-item>
               <el-descriptions-item label="媒体类型">{{ mediaTypeLabel(selectedEntry.media_type) }}</el-descriptions-item>
+              <el-descriptions-item label="原名">{{ selectedEntry.title_raw || '-' }}</el-descriptions-item>
               <el-descriptions-item label="Bangumi ID">
                 <a v-if="selectedEntry.bangumi_id" :href="`https://bgm.tv/subject/${selectedEntry.bangumi_id}`" target="_blank" rel="noreferrer">{{ selectedEntry.bangumi_id }}</a>
                 <span v-else>-</span>
@@ -38,11 +38,10 @@ export default appContextComponent()
                 <span v-else>-</span>
               </el-descriptions-item>
               <el-descriptions-item label="首播月份">{{ selectedEntry.year || '-' }} / {{ selectedEntry.month || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="季 / 章节 / 部分">{{ normalizedSeasonLabel(selectedEntry) }}</el-descriptions-item>
+              <el-descriptions-item label="Bangumi 偏移">{{ Number(selectedEntry.episode_offset || 0) }}</el-descriptions-item>
               <el-descriptions-item label="Bangumi 评分">{{ selectedEntry.bangumi_score ? Number(selectedEntry.bangumi_score).toFixed(1) : '-' }}</el-descriptions-item>
               <el-descriptions-item label="TMDB 评分">{{ selectedEntry.tmdb_score ? Number(selectedEntry.tmdb_score).toFixed(1) : '-' }}</el-descriptions-item>
               <el-descriptions-item label="国家 / 地区">{{ regionLabel(selectedEntry.region) }}</el-descriptions-item>
-              <el-descriptions-item label="别名" :span="2">{{ selectedEntry.title_romaji || selectedEntry.title_raw || '-' }}</el-descriptions-item>
               <el-descriptions-item label="标签" :span="2">
                 <div class="mini-tag-row">
                   <span v-for="tag in catalogTags(selectedEntry)" :key="tag">{{ tag }}</span>

@@ -39,6 +39,7 @@ class EntryPayload(BaseModel):
     year: int = 0
     month: int = 0
     season_number: int = 1
+    episode_offset: int = 0
     media_type: str = "anime"
     region: str = "jp"
     title_romaji: str = ""

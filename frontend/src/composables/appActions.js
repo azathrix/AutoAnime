@@ -804,6 +804,7 @@ export function createAppActions(app, deps) {
     fillIfEmpty(app.entryEditForm, 'summary', item.summary)
     fillIfEmpty(app.entryEditForm, 'bangumi_score', item.bangumi_score)
     fillIfEmpty(app.entryEditForm, 'tmdb_score', item.tmdb_score)
+    fillIfEmpty(app.entryEditForm, 'episode_offset', item.episode_offset)
     fillListIfEmpty(app.entryEditForm, 'tags_text', item.tags_json || item.tags)
     if (item.provider === 'bangumi') fillIfEmpty(app.entryEditForm, 'bangumi_id', String(item.id || ''))
     if (item.provider === 'tmdb') fillIfEmpty(app.entryEditForm, 'tmdb_id', String(item.id || ''))
@@ -1027,6 +1028,7 @@ export function createAppActions(app, deps) {
       month: Number(entry.month || 0),
       release_month: monthFieldValue(entry.year, entry.month),
       season_number: Number(entry.season_number || 1),
+      episode_offset: Number(entry.episode_offset || 0),
       media_type: entry.media_type || 'anime',
       region: entry.region || 'jp',
       title_romaji: entry.title_romaji || '',
@@ -1050,6 +1052,7 @@ export function createAppActions(app, deps) {
       year: release.year || Number(app.entryEditForm.year || 0),
       month: release.month || Number(app.entryEditForm.month || 0),
       season_number: Number(app.entryEditForm.season_number || 1),
+      episode_offset: Number(app.entryEditForm.episode_offset || 0),
       media_type: app.entryEditForm.media_type,
       region: app.entryEditForm.region,
       title_romaji: app.entryEditForm.title_romaji,
@@ -1083,6 +1086,7 @@ export function createAppActions(app, deps) {
         summary: entry.summary || app.entryEditForm.summary,
         bangumi_score: Number(entry.bangumi_score || app.entryEditForm.bangumi_score || 0),
         tmdb_score: Number(entry.tmdb_score || app.entryEditForm.tmdb_score || 0),
+        episode_offset: Number(entry.episode_offset || app.entryEditForm.episode_offset || 0),
         year: entry.year || app.entryEditForm.year,
         month: entry.month || app.entryEditForm.month,
         release_month: monthFieldValue(entry.year || app.entryEditForm.year, entry.month || app.entryEditForm.month),
@@ -1125,6 +1129,7 @@ export function createAppActions(app, deps) {
     app.settings.tv_subtitle_priority = Array.isArray(app.settings.tv_subtitle_priority) ? app.settings.tv_subtitle_priority : []
     app.settings.downloaders = Array.isArray(app.settings.downloaders) ? app.settings.downloaders : []
     app.settings.generate_bangumi_ini = Boolean(app.settings.generate_bangumi_ini)
+    app.settings.auto_generate_nfo = Boolean(app.settings.auto_generate_nfo)
     app.settings.movie_name_template = app.settings.movie_name_template || '{title_base}/{title_base}'
     app.settings.tv_name_template = app.settings.tv_name_template || '{title_base}/Season {season:02d}/{title_base} - S{season:02d}E{episode:02d} - 第 {episode:02d} 话'
     app.settings.episode_name_template = app.settings.episode_name_template || '{title_base} - S{season:02d}E{episode:02d} - 第 {episode:02d} 话'

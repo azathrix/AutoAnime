@@ -6,6 +6,7 @@ from pathlib import Path
 from ..database import connect
 from ..db import get_settings, log, now, upsert_calendar_entry
 from ..downloader_service import settings_for_provider
+from ..nfo_service import generate_jellyfin_nfo_for_entry
 from ..pipeline_models import ProcessorContext, ProcessorResult
 from ..runtime_store import runtime_store
 from ..sync_service import (
@@ -292,6 +293,7 @@ async def sync_download_artifact_to_local(
             ),
         )
     local_asset_id = int(local_asset["id"] or 0) if local_asset else 0
+    generate_jellyfin_nfo_for_entry(int(row["entry_id"] or 0), base_settings)
     final_size = 0
     try:
         final_size = target_file.stat().st_size if target_file.exists() else 0

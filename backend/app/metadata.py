@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import html
 import json
 import re
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,7 +10,8 @@ import httpx
 from .bangumi_config import generate_bangumi_ini, setting_enabled
 from .database import connect
 from .db import get_settings, log, merge_duplicate_series, now
-from .library import local_library_root, parse_entry_labels, render_episode_name, render_season_dir, render_series_dir
+from .library import parse_entry_labels
+from .nfo_service import generate_jellyfin_nfo_for_entry
 from .parser import clean_name
 from .processing_cache import get_cached_json, set_cached_json
 
@@ -266,10 +265,22 @@ def chinese_summary(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
+    def probably_chinese(candidate: str) -> bool:
+        cjk_count = len(re.findall(r"[\u4e00-\u9fff]", candidate))
+        kana_count = len(re.findall(r"[\u3040-\u30ff]", candidate))
+        return cjk_count > 0 and (kana_count == 0 or kana_count / max(1, cjk_count + kana_count) <= 0.08)
+
+    paragraphs = [part.strip() for part in re.split(r"(?:\r?\n){2,}", text) if part.strip()]
+    for paragraph in paragraphs:
+        if probably_chinese(paragraph):
+            return paragraph
     lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
-    chinese_lines = [line for line in lines if re.search(r"[\u4e00-\u9fff]", line)]
+    chinese_lines = [line for line in lines if probably_chinese(line)]
     if chinese_lines:
         return "\n".join(chinese_lines)
+    mixed_chinese_lines = [line for line in lines if re.search(r"[\u4e00-\u9fff]", line)]
+    if mixed_chinese_lines:
+        return "\n".join(mixed_chinese_lines)
     return text
 
 
@@ -425,6 +436,8 @@ async def apply_bangumi_metadata(entry_id: int, bangumi_id: str, proxy: str = ""
     settings = get_settings()
     if setting_enabled(settings.get("generate_bangumi_ini", "false")):
         generate_bangumi_ini(entry_id, settings)
+    if setting_enabled(settings.get("auto_generate_nfo", "false")):
+        generate_jellyfin_nfo_for_entry(entry_id, settings)
     log("info", f"已刷新 Bangumi 元数据: {title_cn}")
     return True
 
@@ -529,6 +542,9 @@ async def apply_tmdb_metadata(
                 """,
                 (title_root, title_raw, now(), int(entry["work_id"] or 0)),
             )
+    settings = get_settings()
+    if setting_enabled(settings.get("auto_generate_nfo", "false")):
+        generate_jellyfin_nfo_for_entry(entry_id, settings)
     log("info", f"已刷新 TMDB 元数据: {title_cn}")
     return True
 
@@ -636,58 +652,6 @@ async def refresh_all_metadata() -> dict[str, Any]:
     return {"message": message, "refreshed": refreshed, "skipped": skipped, "failed": failed}
 
 
-def xml_text(value: str) -> str:
-    return html.escape(value or "", quote=False)
-
-
-def write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-
-
 def generate_nfo_for_entry(entry_id: int, settings: dict[str, str]) -> None:
-    with connect() as conn:
-        entry = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE entry_id=? ORDER BY episode_number ASC",
-            (entry_id,),
-        ).fetchall()
-    if not entry:
-        return
-
-    entry_dict = dict(entry)
-    output_root = settings.get("nfo_output_root") or local_library_root(entry_dict, settings)
-    base = Path(output_root) / clean_name(render_series_dir(entry_dict, settings))
-    tvshow = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<tvshow>
-  <title>{xml_text(entry['title_cn'])}</title>
-  <originaltitle>{xml_text(entry['title_raw'])}</originaltitle>
-  <plot>{xml_text(entry['summary'])}</plot>
-  <year>{entry['year'] or ''}</year>
-  <uniqueid type="bangumi" default="true">{xml_text(entry['bangumi_id'])}</uniqueid>
-  <uniqueid type="tmdb">{xml_text(entry['tmdb_id'])}</uniqueid>
-</tvshow>
-"""
-    write_text(base / "tvshow.nfo", tvshow)
-
-    season_dir = base / render_season_dir(int(entry["season_number"] or 1), settings)
-    for ep in episodes:
-        name = render_episode_name(entry_dict, ep["episode_number"], ep["title"], settings)
-        nfo = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<episodedetails>
-  <title>{xml_text(ep['title'] or f"第{ep['episode_number']:02d}话")}</title>
-  <season>{entry['season_number'] or 1}</season>
-  <episode>{ep['episode_number']}</episode>
-  <showtitle>{xml_text(entry['title_cn'])}</showtitle>
-  <aired>{xml_text(ep['air_date'])}</aired>
-</episodedetails>
-"""
-        write_text(season_dir / f"{name}.nfo", nfo)
-
-    with connect() as conn:
-        conn.execute(
-            "UPDATE entries SET nfo_status='generated', updated_at=? WHERE id=?",
-            (now(), entry_id),
-        )
-    log("info", f"已生成 NFO: {entry['display_title'] or entry['title_cn']}")
+    generate_jellyfin_nfo_for_entry(entry_id, settings)
 
