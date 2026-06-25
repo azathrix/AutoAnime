@@ -53,6 +53,7 @@ export default appContextComponent()
             </el-descriptions>
             <div class="drawer-actions">
               <el-button type="primary" @click="openEntryEditDialog">编辑信息</el-button>
+              <el-button plain @click="refreshEntryMetadata(selectedEntry, selectedEntryDomain, selectedEntryMediaType)">刷新元数据</el-button>
               <el-popconfirm
                 v-if="selectedEntryDomain === 'seasonal'"
                 title="取消追番后新番页不再显示，番剧库仍会保留该动画条目。确定取消？"

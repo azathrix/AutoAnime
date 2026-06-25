@@ -61,7 +61,6 @@ export default appContextComponent()
       </el-form>
       <template #footer>
         <el-button plain @click="clearEntryEditForm">清空</el-button>
-        <el-button plain :loading="metadataFetching" @click="fetchEntryMetadata">按 ID 刷新元数据</el-button>
         <el-button @click="entryEditDialogOpen = false">取消</el-button>
         <el-button type="primary" @click="saveEntryEditForm">保存</el-button>
       </template>
