@@ -1,61 +1,109 @@
-# AniTrack
+<div align="center">
+  <img src="frontend/public/anitrack-logo.png" alt="AniTrack" width="240" />
 
-AniTrack 是面向 NAS 的新番追更和本地媒体库整理工具。当前主线是把 RSS 发布解析成标准集数资源，按规则自动选择资源，交给下载器下载，完成后整理到本地 `media` 目录，供 Jellyfin/Plex 扫描。
+  <h1>AniTrack</h1>
+  <p><strong>面向 NAS 的新番追更、自动下载与本地媒体库整理工具。</strong></p>
 
-```txt
-RSS 订阅 -> Mikan/Bangumi 匹配 -> 条目入库 -> 自动选集
--> 下载器下载 -> 本地整理 -> Jellyfin/Plex 扫描本地媒体库
+  <p>
+    <a href="#快速开始"><img alt="Quick Start" src="https://img.shields.io/badge/Quick%20Start-Docker-2563eb?style=for-the-badge"></a>
+    <a href="#功能特色"><img alt="Features" src="https://img.shields.io/badge/Features-RSS%20%2B%20Media%20Library-16a34a?style=for-the-badge"></a>
+    <a href="#docker-hub"><img alt="Docker Hub" src="https://img.shields.io/badge/Docker%20Hub-Coming%20Soon-0ea5e9?style=for-the-badge&logo=docker&logoColor=white"></a>
+  </p>
+
+  <p>
+    <img alt="Vue" src="https://img.shields.io/badge/Vue%203-42b883?style=flat-square&logo=vuedotjs&logoColor=white">
+    <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white">
+    <img alt="Python" src="https://img.shields.io/badge/Python%203.12-3776ab?style=flat-square&logo=python&logoColor=white">
+    <img alt="NAS" src="https://img.shields.io/badge/NAS-Friendly-f59e0b?style=flat-square">
+  </p>
+</div>
+
+---
+
+AniTrack 可以把 Mikan RSS 订阅解析成标准集数资源，自动匹配 Bangumi/TMDB 元数据，按字幕组、分辨率、语言和下载器优先级选择资源，然后下载并整理到 NAS 本地媒体目录，供 Jellyfin、Plex 等媒体服务器直接扫描。
+
+## 功能特色
+
+- 新番追更：支持 Mikan RSS 订阅扫描、按季/篇章入库、日历视图查看每周更新。
+- 自动选集：可配置字幕组、分辨率、语言、画质、来源与字幕优先级。
+- 多下载器：支持 PikPak rclone、PikPak API、aria2、qBittorrent，并可拖拽调整优先级。
+- 媒体库整理：统一管理新番、番剧、电影、电视剧，自动整理到 `/media/anime`、`/media/movies`、`/media/tv`。
+- 元数据补全：支持 Bangumi 与 TMDB 信息匹配，展示海报、评分、标签和简介。
+- 本地资源管理：支持手动收录、批量导入集数资源、选择服务器本地视频与字幕文件。
+- 控制台：实时查看扫描、元数据、下载、本地状态、缓存清理等任务进度。
+- 运维页面：支持日志搜索导出、定时任务、缓存清理、本地状态刷新、元数据刷新和资源整理。
+- Docker 部署：前后端一体镜像，适合部署在 NAS、家用服务器或轻量 Linux 主机。
+
+## 界面模块
+
+| 模块 | 用途 |
+| --- | --- |
+| 新番 | 添加 RSS、扫描订阅、查看本季条目与可观看集数 |
+| 日历 | 按周查看新番更新与下载状态 |
+| 番剧 / 电影 / 电视剧 | 管理本地媒体条目、手动收录、筛选和维护资源 |
+| 控制台 | 查看扫描器、下载队列、后台任务和任务进度 |
+| 日志 | 搜索、导出和清空服务日志 |
+| 设置 | 配置代理、下载器、自动选择规则、媒体库命名和定时器 |
+
+## 快速开始
+
+本地构建并启动：
+
+```sh
+docker compose up -d --build
 ```
 
-PikPak 只是下载器之一，不再作为媒体数据核心。媒体库以 NAS 本地文件为最终状态。
+默认访问地址：
 
-## 当前能力
-
-- Mikan RSS 订阅扫描。
-- 新番条目按季/篇章入库，不按作品折叠。
-- Bangumi 元数据补全。
-- 字幕组、分辨率、语言优先级自动选集。
-- 下载器优先级列表：PikPak rclone、PikPak API、aria2、qBittorrent。
-- 下载完成后整理到本地媒体目录。
-- 新番、番剧、电影、电视剧使用统一媒体库页面。
-- 控制台展示运行队列和定时任务，日志独立页面查看和导出。
-- NFO 暂时禁用，当前不作为主流程能力。
-
-## 媒体目录
-
-容器内媒体根目录固定为：
-
-```txt
-/media
+```text
+http://localhost:8096
 ```
 
-应用会按媒体类型使用以下目录，不存在时自动创建：
+NAS 部署时，建议把容器内目录映射到真实媒体库：
 
-```txt
+```yaml
+services:
+  anitrack:
+    image: anitrack:local
+    container_name: anitrack
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    environment:
+      APP_DATA_DIR: /data
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/data
+      - ./media:/media
+```
+
+媒体目录约定：
+
+```text
 /media/anime
 /media/movies
 /media/tv
 ```
 
-Docker 部署时通常映射到 NAS 的真实媒体目录，例如：
+## Docker Hub
+
+后续上传到 Docker Hub 后，可以把 `image` 替换成你的镜像名：
 
 ```yaml
-/volume1/Assets3/Media:/media
+image: your-dockerhub-name/anitrack:latest
 ```
 
-Jellyfin/Plex 只需要扫描 NAS 本地真实目录。
+然后直接启动：
 
-## Docker 部署
-
-当前镜像名、容器名和 NAS 上传目录统一为 `anitrack`：
-
-```txt
-image: anitrack:local
-container: anitrack
-deploy dir: /volume1/docker/anitrack
+```sh
+docker compose up -d
 ```
 
-先在本机生成干净源码目录：
+## NAS 打包部署
+
+项目内保留了干净打包与 NAS 上传脚本。
+
+在 Windows 本机生成干净源码包：
 
 ```bat
 package-clean.bat
@@ -63,27 +111,14 @@ package-clean.bat
 
 产物目录：
 
-```txt
+```text
 build\AniTrack-clean
 ```
 
-上传干净目录内容到 NAS：
+上传到 NAS：
 
 ```bat
 cd build\AniTrack-clean
-upload-clean.bat
-```
-
-`upload-clean.bat` 会上传脚本所在的当前目录，默认目标为：
-
-```txt
-\\InputName\docker\anitrack
-```
-
-如需改上传位置，可以设置：
-
-```bat
-set ANITRACK_UPLOAD_TARGET=\\InputName\docker\anitrack
 upload-clean.bat
 ```
 
@@ -95,62 +130,23 @@ chmod +x deploy-nas.sh
 ./deploy-nas.sh
 ```
 
-部署脚本会重新构建并启动 `anitrack` 容器，也会顺手移除旧的 `autoanime` 容器，避免历史容器占用端口。`./data` 和映射的 `/media` 不会被删除。
-
 如果 NAS 构建需要代理：
 
 ```sh
 ANITRACK_PROXY=http://192.168.31.146:10808 ./deploy-nas.sh
 ```
 
-访问地址：
+## 基础配置
 
-```txt
-http://NAS_IP:32888
-```
-
-## 上传包规则
-
-只上传 `build\AniTrack-clean` 目录内容，不要上传开发环境目录。清理包会排除：
-
-```txt
-frontend/node_modules
-data
-test-data
-*.zip
-*.log
-```
-
-`package-clean.bat` 会构建前端，并把 `backend/frontend_dist` 放入干净包中。
-
-## 配置要点
-
-- RSS 订阅在“新番”页面添加。
-- RSS 定时扫描和恢复调度在“控制台”的“定时任务”中配置。
-- 下载器在“设置 -> 下载器”中按优先级配置。
-- 命名模板在“设置 -> 媒体库”中配置。
-- 自动选集规则在“设置 -> 自动选择”中按动画、电影、电视剧分别配置。
-
-## GitHub 改名
-
-GitHub 仓库可以直接改名：进入仓库 `Settings -> General -> Repository name`，把仓库名改成 `AniTrack` 或 `anitrack`。
-
-改名后 GitHub 会保留旧地址跳转，但本地建议同步更新 remote：
-
-```sh
-git remote set-url origin git@github.com:<your-name>/AniTrack.git
-```
-
-如果你用 HTTPS：
-
-```sh
-git remote set-url origin https://github.com/<your-name>/AniTrack.git
-```
-
-Docker Hub 后续也建议使用 `anitrack` 作为镜像仓库名。
+1. 在“新番”页面添加 Mikan RSS 订阅。
+2. 在“设置 -> 下载器”中配置 PikPak、aria2 或 qBittorrent。
+3. 在“设置 -> 自动选择”中调整字幕组、分辨率、语言和来源优先级。
+4. 在“设置 -> 媒体库”中配置命名模板和可选的 bangumi.ini / NFO 生成。
+5. 在“控制台”或“设置 -> 定时器”中启用自动扫描与维护任务。
 
 ## 说明
 
-- 重启后运行队列可能丢失，最终媒体数据和配置会保留。
-- 导入老番、电影、电视剧的真实解析流程还在预留阶段。
-- Jellyfin/Plex API 刷新暂未接入，当前由媒体服务器自行扫描本地目录。
+- 媒体库以 NAS 本地文件为最终状态，PikPak 只是可选下载器之一。
+- Jellyfin/Plex 目前通过扫描本地媒体目录识别资源。
+- `./data` 保存应用数据和配置，升级容器时请保留该目录。
+- 旧番、电影、电视剧支持手动收录和本地资源管理，自动化程度会继续完善。
