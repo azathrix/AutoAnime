@@ -271,7 +271,7 @@
 
 .week-day-column {
   background: rgba(255, 255, 255, 0.85);
-  border: 2px solid var(--ani-line);
+  border: 2px dashed var(--ani-line); /* Notebook stitching dashed border */
   border-radius: 16px;
   display: grid;
   gap: 10px;
@@ -283,9 +283,9 @@
 }
 
 .week-day-column.today {
-  border-color: var(--ani-pink);
-  background: linear-gradient(180deg, rgba(255, 245, 249, 0.9) 0%, rgba(255, 255, 255, 0.8) 100%);
-  box-shadow: 0 0 16px rgba(255, 142, 187, 0.16);
+  border: 2.5px solid var(--ani-pink); /* Solid pink marker border */
+  background: linear-gradient(180deg, rgba(255, 245, 249, 0.9) 0%, rgba(255, 255, 255, 0.85) 100%);
+  box-shadow: 4px 4px 0px rgba(255, 142, 187, 0.15);
   position: relative;
 }
 
@@ -303,6 +303,7 @@
   border-radius: 20px;
   box-shadow: 0 4px 10px rgba(255, 142, 187, 0.3);
   letter-spacing: 0.5px;
+  z-index: 15;
 }
 
 .week-day-column header {
@@ -326,8 +327,17 @@
 
 .calendar-entry-card {
   background: #fff;
-  border: 1.5px solid var(--ani-line);
-  border-radius: 14px;
+  border: 2px solid var(--ani-line) !important;
+  border-radius: 12px !important;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-height: 112px;
+  padding: 10px;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+  box-shadow: 3px 3px 0px var(--ani-line) !important; /* Flat comic shadow */
+}
   cursor: pointer;
   display: grid;
   gap: 10px;
