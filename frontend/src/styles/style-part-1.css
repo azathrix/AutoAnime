@@ -1,15 +1,23 @@
 :root {
   color-scheme: light;
-  font-family: "Comfortaa", "Quicksand", "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: #fff5f9;
-  color: #1f2937;
-  --ani-blue: #829eff;
-  --ani-pink: #ff8ebb;
-  --ani-pink-hover: #ff73a1;
-  --ani-mint: #7bed9f;
-  --ani-ink: #564c7a;
-  --ani-line: #ecdce6;
-  --ani-soft: #fff9fb;
+  font-family: "Nunito", "Kosugi Maru", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #FDF9F9;
+  color: #5C525D;
+  --ani-pink: #FF8DA1;
+  --ani-pink-light: #FFF5F6;
+  --ani-pink-deep: #FF5E7E;
+  --ani-yellow: #FCD77F;
+  --ani-yellow-light: #FFFDF6;
+  --ani-blue: #82D9ED;
+  --ani-blue-light: #F3FCFD;
+  --ani-purple: #C79FE5;
+  --ani-purple-light: #FAF5FE;
+  --ani-mint: #8EE4D5;
+  --ani-mint-light: #F2FCFA;
+  --ani-dark: #5C525D;
+  --ani-dark-light: #8C808D;
+  --ani-line: #FFEBEF;
+  --ani-soft: #FFF5F6;
 }
 
 * {
@@ -22,41 +30,84 @@
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #fcf8ff;
-  border-radius: 10px;
+  background: #FFF5F6;
+  border-radius: 20px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #ffc4db;
-  border-radius: 10px;
-  border: 2px solid #fcf8ff;
+  background: #FF8DA1;
+  border-radius: 20px;
+  border: 2px solid #FFF5F6;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #ff8ebb;
+  background: #FF5E7E;
 }
 
-/* Kawaii Wobble animation for Logo */
-@keyframes wobble {
-  0% { transform: scale(1) rotate(0deg); }
-  15% { transform: scale(1.08) rotate(-3deg); }
-  30% { transform: scale(1.08) rotate(2deg); }
-  45% { transform: scale(1.08) rotate(-2deg); }
-  60% { transform: scale(1.08) rotate(1deg); }
-  75% { transform: scale(1.08) rotate(-1deg); }
-  100% { transform: scale(1) rotate(0deg); }
+/* Q弹果冻微动效 */
+@keyframes mini-jelly {
+  0%, 100% { transform: scale(1, 1); }
+  30% { transform: scale(0.96, 1.04); }
+  50% { transform: scale(1.04, 0.96); }
+  80% { transform: scale(0.98, 1.02); }
 }
 
-@keyframes float-gentle {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
+@keyframes bubble-float {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(3deg); }
+}
+
+@keyframes magic-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.hover-jelly:hover {
+  animation: mini-jelly 0.5s ease-in-out forwards;
+}
+
+.bubble-float-item {
+  animation: bubble-float 5s infinite ease-in-out;
+}
+
+/* Cat ears decoration (二次元猫耳装饰) */
+.cute-cat-ears {
+  position: relative;
+}
+.cute-cat-ears::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 20px;
+  width: 14px;
+  height: 12px;
+  background: inherit;
+  border-top: 2px solid var(--ani-line);
+  border-left: 2px solid var(--ani-line);
+  border-radius: 6px 0 0 0;
+  transform: rotate(24deg) skewX(-15deg);
+  z-index: 10;
+}
+.cute-cat-ears::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  right: 20px;
+  width: 14px;
+  height: 12px;
+  background: inherit;
+  border-top: 2px solid var(--ani-line);
+  border-right: 2px solid var(--ani-line);
+  border-radius: 0 6px 0 0;
+  transform: rotate(-24deg) skewX(15deg);
+  z-index: 10;
 }
 
 body {
   margin: 0;
-  background: #f7ebe6; /* Warm desk wood background color */
+  background: #FDF9F9;
+  color: var(--ani-dark);
+  /* Top soft macaron gradient */
   background-image: 
-    radial-gradient(rgba(255, 142, 187, 0.08) 1.5px, transparent 1.5px),
-    linear-gradient(135deg, #f4e9e5 0%, #e8dcd8 100%);
-  background-size: 24px 24px, 100% 100%;
+    linear-gradient(to bottom, #FFF0F2 0%, #FFF8F9 120px, #FDF9F9 260px);
 }
 
 .app-shell {
@@ -66,90 +117,94 @@ body {
   position: relative;
 }
 
-/* Beautiful Metallic Binder Rings (活页圈) */
-.app-shell::before {
-  content: "";
-  position: fixed;
-  top: 0;
-  left: 228px;
-  width: 16px;
-  height: 100vh;
-  z-index: 35;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0px,
-    transparent 24px,
-    #cbd5e1 24px,
-    #f8fafc 26px,
-    #ffffff 28px,
-    #94a3b8 30px,
-    #64748b 32px,
-    transparent 32px,
-    transparent 56px
-  );
-  filter: drop-shadow(2px 3px 3px rgba(86, 76, 126, 0.22));
-}
-
 .sidebar {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(16px) saturate(110%);
-  -webkit-backdrop-filter: blur(16px) saturate(110%);
-  border-right: 2px dashed var(--ani-line);
-  box-shadow: 6px 0 24px rgba(255, 142, 187, 0.04);
-  color: #564c7a;
+  background: #ffffff;
+  border: 1px solid var(--ani-line);
+  border-radius: 24px;
+  box-shadow: 0 10px 30px -5px rgba(255, 141, 161, 0.12), 0 4px 12px -2px rgba(255, 141, 161, 0.05);
+  color: var(--ani-dark);
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  left: 0;
-  padding: 20px 16px;
+  height: calc(100vh - 40px);
+  left: 20px;
+  padding: 24px 18px;
   position: fixed;
-  top: 0;
+  top: 20px;
   width: 236px;
   z-index: 30;
+}
+
+/* Add cat ears on sidebar */
+.sidebar::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 24px;
+  width: 14px;
+  height: 12px;
+  background: #ffffff;
+  border-top: 1px solid var(--ani-line);
+  border-left: 1px solid var(--ani-line);
+  border-radius: 6px 0 0 0;
+  transform: rotate(24deg) skewX(-15deg);
+  z-index: 10;
+}
+.sidebar::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  right: 24px;
+  width: 14px;
+  height: 12px;
+  background: #ffffff;
+  border-top: 1px solid var(--ani-line);
+  border-right: 1px solid var(--ani-line);
+  border-radius: 0 6px 0 0;
+  transform: rotate(-24deg) skewX(15deg);
+  z-index: 10;
 }
 
 .brand {
   align-items: center;
   display: flex;
   gap: 12px;
-  margin-bottom: 28px;
+  margin-bottom: 24px;
   min-width: 0;
 }
 
 .brand-logo {
   background: #fff;
-  border: 2px solid rgba(255, 142, 187, 0.32);
-  border-radius: 18px;
-  box-shadow: 0 10px 24px rgba(255, 142, 187, 0.18);
+  border: 1px solid var(--ani-line);
+  border-radius: 14px;
+  box-shadow: 0 8px 18px rgba(255, 141, 161, 0.08);
   display: block;
-  height: 58px;
+  height: 48px;
   object-fit: contain;
-  padding: 4px;
-  width: 58px;
+  padding: 3px;
+  width: 48px;
   transition: all 0.3s ease-in-out;
 }
 
 .brand-logo:hover {
-  animation: wobble 0.6s ease-in-out forwards;
+  animation: mini-jelly 0.5s ease-in-out forwards;
 }
 
 .brand-wordmark {
-  color: var(--ani-ink);
-  font-size: 19px;
-  font-weight: 800;
+  color: var(--ani-pink-deep);
+  font-size: 18px;
+  font-weight: 900;
   display: block;
   white-space: nowrap;
 }
 
 nav {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .nav-caption {
-  color: #a49cb5;
-  font-size: 11px;
+  color: var(--ani-dark-light);
+  font-size: 10px;
   font-weight: 800;
   margin: 12px 10px 2px;
   text-transform: uppercase;
@@ -161,22 +216,22 @@ nav button {
   background: transparent;
   border: 0;
   border-radius: 12px;
-  color: #645a85;
+  color: var(--ani-dark);
   cursor: pointer;
   display: flex;
   gap: 10px;
   font-weight: 700;
-  padding: 11px 14px;
+  padding: 10px 14px;
   text-align: left;
-  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 nav button.active,
 nav button:hover {
-  background: linear-gradient(135deg, rgba(255, 142, 187, 0.16) 0%, rgba(130, 158, 255, 0.14) 100%);
-  box-shadow: 0 6px 16px rgba(255, 142, 187, 0.08);
-  color: #ff73a1;
-  transform: translateX(4px);
+  background: var(--ani-pink-light);
+  color: var(--ani-pink-deep);
+  animation: mini-jelly 0.5s ease-in-out;
+  box-shadow: 0 4px 10px -2px rgba(255, 141, 161, 0.06);
 }
 
 .el-button.el-button--primary:not(.is-link):not(.is-text),
@@ -201,95 +256,69 @@ nav button:hover {
 }
 
 .el-button.el-button--warning.is-plain:not(.is-link):not(.is-text) {
-  background: #e6a23c;
-  border-color: #e6a23c;
+  background: var(--ani-yellow);
+  border-color: var(--ani-yellow);
 }
 
 .el-button.el-button--danger.is-plain:not(.is-link):not(.is-text) {
-  background: #f56c6c;
-  border-color: #f56c6c;
+  background: var(--ani-pink-deep);
+  border-color: var(--ani-pink-deep);
 }
 
 /* Notebook Page Spread styling (手撕线圈本内页) */
 .main {
-  margin-left: 256px;
+  margin-left: 276px;
   min-width: 0;
-  padding: 24px 32px 36px;
-  background: #fffdfa; /* Cream paper color */
-  border: 2px solid var(--ani-line);
-  border-left: 4px solid var(--ani-pink); /* Thick pink book spine edge */
-  border-radius: 4px 24px 24px 4px;
-  box-shadow: 
-    6px 6px 0px rgba(255, 142, 187, 0.12),
-    12px 12px 30px rgba(86, 76, 126, 0.08);
+  padding: 20px 24px 32px;
+  background: transparent;
   min-height: calc(100vh - 40px);
   margin-top: 20px;
   margin-bottom: 20px;
   margin-right: 20px;
-  position: relative;
-  /* Notebook pink grid line effect */
-  background-image: 
-    linear-gradient(rgba(255, 142, 187, 0.04) 1.5px, transparent 1.5px),
-    linear-gradient(90deg, rgba(255, 142, 187, 0.04) 1.5px, transparent 1.5px);
-  background-size: 22px 22px;
-}
-
-/* Notebook standard red margin vertical line */
-.main::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 48px;
-  width: 2px;
-  height: 100%;
-  background: rgba(255, 115, 161, 0.22);
-  pointer-events: none;
 }
 
 /* Washi Tape Pinned Card Header (胶带粘贴便签卡) */
 .hero {
   align-items: center;
   background: #fff !important;
-  border: 2px solid var(--ani-line) !important;
-  border-radius: 18px !important;
-  box-shadow: 4px 4px 0px var(--ani-line) !important;
+  border: 1px solid var(--ani-line) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 10px 30px -5px rgba(255, 141, 161, 0.12);
   display: flex;
   justify-content: space-between;
-  margin-bottom: 28px;
-  padding: 24px 28px !important;
+  margin-bottom: 24px;
+  padding: 20px 24px !important;
   position: relative;
   overflow: visible !important;
 }
 
-/* Pink transparent washi tape on the top left */
+/* Add cat ears on hero */
 .hero::before {
   content: "";
   position: absolute;
-  top: -12px;
+  top: -8px;
   left: 24px;
-  width: 90px;
-  height: 22px;
-  background: rgba(255, 142, 187, 0.42);
-  transform: rotate(-4deg);
-  border-left: 2px dashed rgba(255, 255, 255, 0.6);
-  border-right: 2px dashed rgba(255, 255, 255, 0.6);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+  width: 14px;
+  height: 12px;
+  background: #ffffff;
+  border-top: 1px solid var(--ani-line);
+  border-left: 1px solid var(--ani-line);
+  border-radius: 6px 0 0 0;
+  transform: rotate(24deg) skewX(-15deg);
   z-index: 10;
 }
-
-/* Blue transparent washi tape on the top right */
 .hero::after {
   content: "";
   position: absolute;
-  top: -10px;
+  top: -8px;
   right: 24px;
-  width: 90px;
-  height: 22px;
-  background: rgba(130, 158, 255, 0.42);
-  transform: rotate(3deg);
-  border-left: 2px dashed rgba(255, 255, 255, 0.6);
-  border-right: 2px dashed rgba(255, 255, 255, 0.6);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+  width: 14px;
+  height: 12px;
+  background: #ffffff;
+  border-top: 1px solid var(--ani-line);
+  border-right: 1px solid var(--ani-line);
+  border-radius: 0 6px 0 0;
+  transform: rotate(-24deg) skewX(15deg);
   z-index: 10;
 }
 
@@ -298,7 +327,7 @@ nav button:hover {
 }
 
 .eyebrow {
-  color: var(--ani-blue);
+  color: var(--ani-pink-deep);
   font-size: 13px;
   font-weight: 800;
   letter-spacing: 1px;
@@ -308,28 +337,28 @@ nav button:hover {
 
 h1 {
   font-size: 28px;
-  font-weight: 800;
-  color: var(--ani-ink);
-  background: linear-gradient(135deg, var(--ani-ink) 0%, #ff73a1 100%);
+  font-weight: 900;
+  color: var(--ani-dark);
+  background: linear-gradient(135deg, var(--ani-dark) 0%, var(--ani-pink-deep) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin: 0;
 }
 
 .hero-sub {
-  color: #8c82a5;
+  color: var(--ani-dark-light);
   font-weight: 600;
   margin: 8px 0 0;
 }
 
 .build-version {
-  color: #b0a7c4;
-  font-size: 12px;
+  color: var(--ani-dark-light);
+  font-size: 11px;
   margin-left: 10px;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--ani-pink-light);
   padding: 2px 8px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 142, 187, 0.15);
+  border: 1px solid var(--ani-line);
 }
 
 .hero-actions,
@@ -347,44 +376,44 @@ h1 {
 }
 
 .app-shell .el-card {
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 2px solid var(--ani-line);
-  border-radius: 18px;
-  box-shadow: 0 12px 28px rgba(255, 142, 187, 0.05);
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+  background: #ffffff;
+  border: 1px solid var(--ani-line);
+  border-radius: 20px;
+  box-shadow: 0 10px 30px -5px rgba(255, 141, 161, 0.12), 0 4px 12px -2px rgba(255, 141, 161, 0.05);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .app-shell .el-card:hover {
-  box-shadow: 0 16px 36px rgba(255, 142, 187, 0.12);
+  box-shadow: 0 12px 36px rgba(255, 141, 161, 0.18);
 }
 
 /* Global button tactile bouncy effect */
 .app-shell .el-button {
-  border-radius: 20px;
+  border-radius: 14px;
   font-weight: 700;
-  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.app-shell .el-button:hover {
+  animation: mini-jelly 0.5s ease-in-out forwards;
 }
 
 .app-shell .el-button:active {
-  transform: scale(0.95) translateY(1px);
+  transform: scale(0.96) translateY(1px);
 }
 
 .app-shell .el-button--primary {
-  background: linear-gradient(135deg, var(--ani-blue) 0%, var(--ani-pink) 100%);
-  border-color: transparent;
-  box-shadow: 0 4px 12px rgba(255, 142, 187, 0.2);
+  background: var(--ani-pink);
+  border-color: var(--ani-pink);
+  box-shadow: 0 4px 10px -2px rgba(255, 141, 161, 0.06);
   color: #fff !important;
 }
 
 .app-shell .el-button--primary:hover,
 .app-shell .el-button--primary:focus {
-  background: linear-gradient(135deg, #9bb2ff 0%, #ff9ebb 100%);
-  border-color: transparent;
-  box-shadow: 0 6px 16px rgba(255, 142, 187, 0.3);
+  background: var(--ani-pink-deep);
+  border-color: var(--ani-pink-deep);
   color: #fff !important;
-  transform: translateY(-2px);
 }
 
 .app-shell .el-button--primary.is-plain:not(.is-link):not(.is-text),
@@ -397,58 +426,54 @@ h1 {
 .app-shell .el-button--danger:not(.is-link):not(.is-text),
 .app-shell .el-button--info:not(.is-link):not(.is-text) {
   color: #fff !important;
-  box-shadow: 0 4px 10px rgba(86, 76, 126, 0.08);
+  box-shadow: 0 4px 10px rgba(86, 76, 126, 0.04);
 }
 
 .app-shell .el-button--success.is-plain:not(.is-link):not(.is-text),
 .app-shell .el-button--success:not(.is-link):not(.is-text) {
-  background: #7bed9f;
-  border-color: #7bed9f;
+  background: var(--ani-mint);
+  border-color: var(--ani-mint);
 }
 .app-shell .el-button--success:hover {
-  background: #90f5b0;
-  border-color: #90f5b0;
-  transform: translateY(-2px);
+  background: #7bd9c9;
+  border-color: #7bd9c9;
 }
 
 .app-shell .el-button--warning.is-plain:not(.is-link):not(.is-text),
 .app-shell .el-button--warning:not(.is-link):not(.is-text) {
-  background: #ffbe76;
-  border-color: #ffbe76;
+  background: var(--ani-yellow);
+  border-color: var(--ani-yellow);
 }
 .app-shell .el-button--warning:hover {
-  background: #ffca8f;
-  border-color: #ffca8f;
-  transform: translateY(-2px);
+  background: #fcd066;
+  border-color: #fcd066;
 }
 
 .app-shell .el-button--danger.is-plain:not(.is-link):not(.is-text),
 .app-shell .el-button--danger:not(.is-link):not(.is-text) {
-  background: #ff7675;
-  border-color: #ff7675;
+  background: var(--ani-pink-deep);
+  border-color: var(--ani-pink-deep);
 }
 .app-shell .el-button--danger:hover {
-  background: #ff8c8b;
-  border-color: #ff8c8b;
-  transform: translateY(-2px);
+  background: #ff476b;
+  border-color: #ff476b;
 }
 
 .app-shell .el-button--info.is-plain:not(.is-link):not(.is-text),
 .app-shell .el-button--info:not(.is-link):not(.is-text) {
-  background: #a49cb5;
-  border-color: #a49cb5;
+  background: var(--ani-purple);
+  border-color: var(--ani-purple);
 }
 .app-shell .el-button--info:hover {
-  background: #b5adc4;
-  border-color: #b5adc4;
-  transform: translateY(-2px);
+  background: #ba8fd9;
+  border-color: #ba8fd9;
 }
 
 .app-shell .el-tag.el-tag--primary {
-  background-color: rgba(255, 142, 187, 0.10);
-  border: 1px dashed rgba(255, 142, 187, 0.35);
-  color: #ff73a1;
-  border-radius: 20px;
+  background-color: var(--ani-pink-light);
+  border: 1px solid var(--ani-line);
+  color: var(--ani-pink-deep);
+  border-radius: 12px;
   font-weight: 700;
 }
 
@@ -460,34 +485,60 @@ h1 {
 
 .content-grid {
   display: grid;
-  gap: 20px;
+  gap: 16px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   padding-top: 10px;
 }
 
 .metric-card {
   background: #ffffff !important;
-  border: 2px solid var(--ani-line) !important;
-  border-radius: 4px 4px 18px 18px !important;
-  box-shadow: 4px 6px 16px rgba(86, 76, 126, 0.05) !important;
-  padding: 16px 16px 28px 16px !important; /* Thick bottom margin for handwritten label */
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+  border: 1px solid var(--ani-line) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 10px 30px -5px rgba(255, 141, 161, 0.12), 0 4px 12px -2px rgba(255, 141, 161, 0.05) !important;
+  padding: 16px 20px !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
   position: relative;
-  overflow: visible !important;
-  transform: rotate(-1.8deg);
-}
-
-.content-grid .metric-card:nth-child(even) {
-  transform: rotate(1.8deg);
+  overflow: hidden !important;
+  transform: none !important;
 }
 
 .metric-card:hover {
-  transform: translateY(-8px) rotate(0deg) scale(1.03) !important;
-  box-shadow: 0 16px 36px rgba(255, 142, 187, 0.15) !important;
-  z-index: 10;
+  transform: translateY(-4px) !important;
+  box-shadow: 0 12px 36px rgba(255, 141, 161, 0.18) !important;
   border-color: var(--ani-pink) !important;
 }
+
+/* Remove polaroid shadows & tape decorations */
+.metric-card::before,
+.metric-card::after {
+  display: none !important;
+}
+
+/* Metric candy color overrides inside the Polaroid frame */
+.content-grid .metric-card:nth-child(1) {
+  background: #ffffff !important;
+}
+.content-grid .metric-card:nth-child(1) span { color: var(--ani-dark-light); font-weight: 800; }
+.content-grid .metric-card:nth-child(1) strong { color: var(--ani-pink-deep); font-weight: 900; background: none; padding: 0; display: block; text-align: left; }
+
+.content-grid .metric-card:nth-child(2) {
+  background: #ffffff !important;
+}
+.content-grid .metric-card:nth-child(2) span { color: var(--ani-dark-light); font-weight: 800; }
+.content-grid .metric-card:nth-child(2) strong { color: var(--ani-blue); font-weight: 900; background: none; padding: 0; display: block; text-align: left; }
+
+.content-grid .metric-card:nth-child(3) {
+  background: #ffffff !important;
+}
+.content-grid .metric-card:nth-child(3) span { color: var(--ani-dark-light); font-weight: 800; }
+.content-grid .metric-card:nth-child(3) strong { color: var(--ani-purple); font-weight: 900; background: none; padding: 0; display: block; text-align: left; }
+
+.content-grid .metric-card:nth-child(4) {
+  background: #ffffff !important;
+}
+.content-grid .metric-card:nth-child(4) span { color: var(--ani-dark-light); font-weight: 800; }
+.content-grid .metric-card:nth-child(4) strong { color: var(--ani-mint); font-weight: 900; background: none; padding: 0; display: block; text-align: left; }
 
 /* Semi-transparent tape sticker on top of Polaroids */
 .metric-card::after {

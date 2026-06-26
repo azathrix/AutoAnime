@@ -270,22 +270,23 @@
 }
 
 .week-day-column {
-  background: rgba(255, 255, 255, 0.85);
-  border: 2px dashed var(--ani-line); /* Notebook stitching dashed border */
-  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid var(--ani-line);
+  border-radius: 20px;
   display: grid;
   gap: 10px;
   min-height: 620px;
   min-width: 150px;
   align-content: start;
-  padding: 12px;
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+  padding: 14px;
+  box-shadow: 0 10px 30px -5px rgba(255, 141, 161, 0.06);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .week-day-column.today {
-  border: 2.5px solid var(--ani-pink); /* Solid pink marker border */
-  background: linear-gradient(180deg, rgba(255, 245, 249, 0.9) 0%, rgba(255, 255, 255, 0.85) 100%);
-  box-shadow: 4px 4px 0px rgba(255, 142, 187, 0.15);
+  border: 1.5px solid var(--ani-pink);
+  background: #ffffff;
+  box-shadow: 0 10px 30px -5px rgba(255, 141, 161, 0.12);
   position: relative;
 }
 
@@ -301,13 +302,13 @@
   font-weight: 900;
   padding: 2px 8px;
   border-radius: 20px;
-  box-shadow: 0 4px 10px rgba(255, 142, 187, 0.3);
+  box-shadow: 0 4px 10px rgba(255, 142, 187, 0.2);
   letter-spacing: 0.5px;
   z-index: 15;
 }
 
 .week-day-column header {
-  border-bottom: 2px dashed var(--ani-line);
+  border-bottom: 1px dashed var(--ani-line);
   display: grid;
   gap: 3px;
   padding-bottom: 10px;
@@ -315,34 +316,34 @@
 }
 
 .week-day-column header strong {
-  color: var(--ani-ink);
+  color: var(--ani-dark);
   font-weight: 800;
 }
 
 .week-day-column header span {
-  color: #a49cb5;
-  font-size: 12px;
+  color: var(--ani-dark-light);
+  font-size: 11px;
   font-weight: 700;
 }
 
 .calendar-entry-card {
   background: #fff;
-  border: 2px solid var(--ani-line) !important;
-  border-radius: 12px !important;
+  border: 1px solid var(--ani-line);
+  border-radius: 16px;
   cursor: pointer;
   display: grid;
   gap: 10px;
   grid-template-columns: 64px minmax(0, 1fr);
   min-height: 112px;
   padding: 10px;
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.25);
-  box-shadow: 3px 3px 0px var(--ani-line) !important; /* Flat comic shadow */
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 10px -2px rgba(255, 141, 161, 0.05);
 }
 
 .calendar-entry-cover {
   align-items: center;
   aspect-ratio: 2 / 3;
-  background: linear-gradient(135deg, rgba(255, 142, 187, 0.1), rgba(130, 158, 255, 0.1));
+  background: var(--ani-pink-light);
   border-radius: 10px;
   display: flex;
   justify-content: center;
@@ -357,19 +358,19 @@
 }
 
 .calendar-entry-cover span {
-  color: var(--ani-pink);
+  color: var(--ani-pink-deep);
   font-weight: 900;
 }
 
 .calendar-entry-card:hover {
   border-color: var(--ani-pink);
-  background: var(--ani-soft);
-  transform: translateY(-4px) scale(1.02);
-  box-shadow: 0 8px 20px rgba(255, 142, 187, 0.14);
+  background: var(--ani-pink-light);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px rgba(255, 142, 187, 0.12);
 }
 
 .calendar-entry-meta strong {
-  color: var(--ani-ink);
+  color: var(--ani-dark);
   font-weight: 800;
   font-size: 13px;
   line-height: 1.3;
@@ -382,7 +383,7 @@
 
 .calendar-entry-meta span,
 .calendar-entry-card small {
-  color: #8c82a5;
+  color: var(--ani-dark-light);
   font-weight: 700;
   font-size: 11px;
 }
@@ -395,7 +396,7 @@
 }
 
 .calendar-empty {
-  color: #a49cb5;
+  color: var(--ani-dark-light);
   font-size: 13px;
   font-weight: 700;
   padding: 8px 2px;
@@ -403,15 +404,15 @@
 }
 
 .queue-card {
-  background: rgba(255, 255, 255, 0.85);
-  border: 2px solid var(--ani-line);
+  background: #ffffff;
+  border: 1px solid var(--ani-line);
   border-radius: 16px;
   display: grid;
   gap: 10px;
   min-height: 132px;
   padding: 14px;
-  box-shadow: 0 6px 16px rgba(86, 76, 126, 0.03);
-  transition: all 0.25s ease;
+  box-shadow: 0 4px 10px -2px rgba(255, 141, 161, 0.05);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .queue-card:hover {
@@ -427,19 +428,19 @@
 }
 
 .queue-title strong {
-  color: var(--ani-ink);
+  color: var(--ani-dark);
   font-weight: 800;
 }
 
 .queue-card p {
-  color: #645a85;
+  color: var(--ani-dark-light);
   font-size: 13px;
   margin: 0;
   font-weight: 600;
 }
 
 .muted {
-  color: #8c82a5;
+  color: var(--ani-dark-light);
   display: block;
   font-size: 12px;
   margin-top: 6px;
@@ -447,7 +448,7 @@
 }
 
 .queue-note {
-  color: #d97706 !important;
+  color: var(--ani-pink-deep) !important;
   font-weight: 800 !important;
 }
 

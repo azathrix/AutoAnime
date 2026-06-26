@@ -1,7 +1,7 @@
 .discovery-page {
   --border: var(--ani-line);
-  --panel: rgba(255, 255, 255, 0.88);
-  --muted: #8c82a5;
+  --panel: #ffffff;
+  --muted: var(--ani-dark-light);
   --primary: var(--ani-pink);
   --soft: var(--ani-soft);
   display: grid;
@@ -47,17 +47,17 @@
   grid-template-columns: 96px minmax(0, 1fr);
   gap: 12px;
   padding: 14px;
-  border: 2px solid var(--border);
-  border-radius: 18px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
   background: var(--panel);
-  box-shadow: 0 8px 24px rgba(255, 142, 187, 0.03);
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+  box-shadow: 0 10px 30px -5px rgba(255, 141, 161, 0.06), 0 4px 12px -2px rgba(255, 141, 161, 0.03);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .discovery-card:hover {
   border-color: var(--primary);
-  box-shadow: 0 14px 32px rgba(255, 142, 187, 0.14);
-  transform: translateY(-5px) scale(1.01);
+  box-shadow: 0 12px 36px rgba(255, 141, 161, 0.16);
+  transform: translateY(-4px) scale(1.01);
 }
 
 .discovery-cover {
@@ -65,12 +65,12 @@
   aspect-ratio: 2 / 3;
   border-radius: 12px;
   overflow: hidden;
-  background: linear-gradient(135deg, rgba(255, 240, 245, 0.9), rgba(240, 243, 255, 0.9));
+  background: var(--soft);
   display: grid;
   place-items: center;
   color: var(--primary);
   font-weight: 900;
-  border: 1.5px solid rgba(255, 142, 187, 0.15);
+  border: 1px solid rgba(255, 142, 187, 0.15);
 }
 
 .discovery-cover img {
@@ -95,8 +95,8 @@
   margin: 0;
   font-size: 16px;
   line-height: 1.35;
-  color: var(--ani-ink);
-  font-weight: 800;
+  color: var(--ani-dark);
+  font-weight: 850;
 }
 
 .discovery-card-head p,
@@ -128,10 +128,10 @@
 
 .discovery-resource-tags span {
   padding: 3px 10px;
-  border: 1.5px dashed var(--border);
-  border-radius: 20px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
   background: var(--soft);
-  color: #ff73a1;
+  color: var(--ani-pink-deep);
   font-size: 12px;
   font-weight: 800;
 }
@@ -165,16 +165,16 @@
   gap: 8px;
   align-items: center;
   padding: 12px;
-  border: 2px solid var(--border);
-  border-radius: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
   background: var(--panel);
-  box-shadow: 0 4px 12px rgba(86, 76, 126, 0.02);
+  box-shadow: 0 4px 10px -2px rgba(255, 141, 161, 0.04);
   transition: all 0.25s ease;
 }
 
 .search-source-row:hover {
   border-color: var(--primary);
-  box-shadow: 0 6px 16px rgba(255, 142, 187, 0.08);
+  box-shadow: 0 6px 16px rgba(255, 141, 161, 0.08);
 }
 
 .search-source-row.disabled {
