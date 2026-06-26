@@ -197,6 +197,9 @@ class SearchSourcePayload(BaseModel):
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
 
+class SearchSourceOrderPayload(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
 class DiscoverySearchPayload(BaseModel):
     keyword: str = ""
     media_type: str = "anime"
