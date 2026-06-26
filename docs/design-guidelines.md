@@ -29,3 +29,10 @@ AniTrack 的界面方向统一为 `Mochi AniTrack`：浅色、现代、二次元
 - 动效只用于 hover、选中、加载状态，保持轻量；允许卡片轻浮起、按钮轻果冻感、进度条柔和渐变。
 - 复杂数据行优先做紧凑列表，详细信息放展开区、弹窗或抽屉。
 - 不依赖外部 CDN 字体、Tailwind CDN 或 FontAwesome；所有视觉必须在项目内可构建。
+
+## Static Capture Workflow
+
+- 如果要让其他 AI 修改 UI，优先使用当前后台的 SingleFile 静态快照，而不是重新手写一份不一致的 mockup。
+- 快照统一放在 `docs/ui-mockups/live-captures-YYYYMMDD/`，并写 `manifest.md` 说明页面和状态。
+- 当前可参考的真实快照目录是 `docs/ui-mockups/live-captures-20260626/`。
+- Vue 回灌时必须对照快照的真实结构、间距、按钮状态和弹窗状态，不要只参考配色。
