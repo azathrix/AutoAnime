@@ -17,10 +17,10 @@ from .library import parse_entry_labels
 from .media_service import normalize_api_media_type
 from .parser import ParsedRelease, clean_name, fingerprint, parse_entry, parse_group, parse_language, parse_resolution, parse_subtitle_format
 from .processing_cache import get_cached_json, set_cached_json
-from .schemas import BackfillApplyPayload, DiscoverySearchPayload, SearchSourceOrderPayload, SearchSourcePayload
+from .schemas import BackfillApplyPayload, DiscoverySearchPayload, SearchSourcePayload
 
 
-SUPPORTED_SEARCH_SOURCE_TYPES = {"mikan", "rss", "torznab", "prowlarr", "jackett"}
+SUPPORTED_SEARCH_SOURCE_TYPES = {"mikan", "rss", "torznab", "prowlarr", "jackett", "generic_html"}
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".webm", ".ts")
 SUBTITLE_EXTENSIONS = (".ass", ".ssa", ".srt", ".vtt")
 DISCOVERY_SOURCE_CACHE_TTL_SECONDS = 3600
@@ -40,13 +40,11 @@ def _row_dict(row: Any) -> dict[str, Any]:
 
 def _source_kind(value: str) -> str:
     kind = _text(value).lower() or "mikan"
+    if kind in {"prowlarr", "jackett"}:
+        return "torznab"
     if kind in SUPPORTED_SEARCH_SOURCE_TYPES:
         return kind
     return "mikan"
-
-
-def _source_protocol(kind: str) -> str:
-    return "torznab" if kind in {"prowlarr", "jackett"} else kind
 
 
 def _split_categories(value: str) -> list[str]:
@@ -229,18 +227,6 @@ def delete_search_source(source_id: int) -> dict[str, str]:
     return {"status": "deleted"}
 
 
-def save_search_source_order(payload: SearchSourceOrderPayload) -> dict[str, Any]:
-    ids = [int(item) for item in payload.ids if int(item or 0) > 0]
-    with connect() as conn:
-        for index, source_id in enumerate(ids):
-            conn.execute(
-                "UPDATE search_sources SET priority=?, updated_at=? WHERE id=?",
-                (index, now(), source_id),
-            )
-        rows = conn.execute("SELECT * FROM search_sources ORDER BY priority ASC, id ASC").fetchall()
-    return {"status": "saved", "items": [_row_dict(row) for row in rows]}
-
-
 async def test_search_source(source_id: int) -> dict[str, Any]:
     with connect() as conn:
         row = conn.execute("SELECT * FROM search_sources WHERE id=?", (source_id,)).fetchone()
@@ -321,15 +307,16 @@ async def run_discovery_search(payload: DiscoverySearchPayload) -> dict[str, Any
 
 async def _search_source(source: dict[str, Any], keyword: str, media_type: str, year: int, season: str) -> list[dict[str, Any]]:
     kind = _source_kind(source.get("kind") or "")
-    protocol = _source_protocol(kind)
     cache_ref = f"{source.get('id') or 0}:{kind}:{media_type}:{year}:{season}:{keyword}"
     cached = get_cached_json("discovery_source_search", cache_ref)
     if isinstance(cached, list):
         return cached
-    if protocol in {"mikan", "rss"}:
+    if kind in {"mikan", "rss"}:
         result = await _search_feed_source(source, keyword, media_type, year)
-    elif protocol == "torznab":
+    elif kind == "torznab":
         result = await _search_torznab_source(source, keyword, media_type, year)
+    elif kind == "generic_html":
+        result = []
     else:
         result = []
     set_cached_json("discovery_source_search", cache_ref, result, ttl_seconds=DISCOVERY_SOURCE_CACHE_TTL_SECONDS)
@@ -340,7 +327,7 @@ async def _search_feed_source(source: dict[str, Any], keyword: str, media_type: 
     base_url = source.get("base_url") or "https://mikanani.me/RSS/Search?searchstr={keyword}"
     url = base_url.replace("{keyword}", quote_plus(keyword)).replace("{q}", quote_plus(keyword))
     timeout = max(3, int(source.get("timeout_seconds") or 20))
-    proxy = get_settings().get("rss_proxy") or None
+    proxy = source.get("proxy") or get_settings().get("rss_proxy") or None
     async with httpx.AsyncClient(proxy=proxy, timeout=timeout, follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()
@@ -370,7 +357,7 @@ async def _search_torznab_source(source: dict[str, Any], keyword: str, media_typ
     if categories:
         params["cat"] = ",".join(categories)
     timeout = max(3, int(source.get("timeout_seconds") or 20))
-    proxy = get_settings().get("rss_proxy") or None
+    proxy = source.get("proxy") or get_settings().get("rss_proxy") or None
     async with httpx.AsyncClient(proxy=proxy, timeout=timeout, follow_redirects=True) as client:
         resp = await client.get(url, params=params)
         resp.raise_for_status()

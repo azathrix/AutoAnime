@@ -9,12 +9,11 @@ from ..discovery_service import (
     discovery_results,
     list_search_sources,
     run_discovery_search,
-    save_search_source_order,
     save_search_source,
     search_backfill,
     test_search_source,
 )
-from ..schemas import BackfillApplyPayload, DiscoverySearchPayload, SearchSourceOrderPayload, SearchSourcePayload
+from ..schemas import BackfillApplyPayload, DiscoverySearchPayload, SearchSourcePayload
 
 
 router = APIRouter()
@@ -48,11 +47,6 @@ def api_update_search_source(source_id: int, payload: SearchSourcePayload) -> di
 @router.delete("/api/search-sources/{source_id}")
 def api_delete_search_source(source_id: int) -> dict:
     return delete_search_source(source_id)
-
-
-@router.put("/api/search-sources/order")
-def api_order_search_sources(payload: SearchSourceOrderPayload) -> dict:
-    return save_search_source_order(payload)
 
 
 @router.post("/api/search-sources/{source_id}/test")

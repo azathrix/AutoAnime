@@ -20,36 +20,11 @@ export default appContextComponent({ draggable, PriorityList })
                   title="RSS 订阅入口在新番页；这里保留代理、补全和命名规则等全局行为。"
                   class="settings-alert"
                 />
-                <el-form-item label="代理"><el-input v-model="settings.rss_proxy" placeholder="http://NAS_IP:20171；留空则直连" /></el-form-item>
+                <el-form-item label="RSS 代理"><el-input v-model="settings.rss_proxy" placeholder="http://NAS_IP:20171" /></el-form-item>
                 <el-form-item label="TMDB Token"><el-input v-model="settings.tmdb_token" placeholder="用于电影/电视剧搜索，可留空" show-password /></el-form-item>
-                <div class="settings-toggle-stack">
-                  <label class="switch-setting">
-                    <el-switch v-model="settings.backfill_current_season" />
-                    <span>
-                      <strong>补全本季</strong>
-                      <small>扫描到新番时自动尝试补齐缺失集数。</small>
-                    </span>
-                  </label>
-                  <label class="switch-setting">
-                    <el-switch v-model="settings.auto_generate_nfo" />
-                    <span>
-                      <strong>生成 NFO 元数据</strong>
-                      <small>整理或刷新元数据后为 Jellyfin 生成识别配置。</small>
-                    </span>
-                  </label>
+                <div class="form-row">
+                  <el-form-item label="补全本季"><el-switch v-model="settings.backfill_current_season" /></el-form-item>
                 </div>
-                <el-collapse-transition>
-                  <div v-if="settings.auto_generate_nfo" class="nfo-config-panel">
-                    <div>
-                      <strong>NFO 写入方式</strong>
-                      <span>本轮先保留核心写入模式，字段级选项后续扩展。</span>
-                    </div>
-                    <el-select v-model="settings.nfo_write_mode" class="nfo-mode-select">
-                      <el-option label="空缺补齐" value="fill_missing" />
-                      <el-option label="覆盖更新" value="overwrite" />
-                    </el-select>
-                  </div>
-                </el-collapse-transition>
               </el-tab-pane>
               <el-tab-pane label="自动选择">
                 <el-tabs tab-position="left" class="nested-settings-tabs">
@@ -166,43 +141,64 @@ export default appContextComponent({ draggable, PriorityList })
                   title="发现页和本季补全会按优先级使用启用的搜索源。第一版优先支持 Mikan/RSS 和 Torznab/Prowlarr/Jackett。"
                   class="settings-alert"
                 />
-                <div class="settings-section-toolbar source-toolbar">
-                  <div>
-                    <strong>搜索源</strong>
-                    <span>拖拽调整优先级，编辑配置在弹窗里完成。</span>
-                  </div>
-                  <el-button type="primary" @click="openSearchSourceDialog()">新增搜索源</el-button>
-                </div>
-                <draggable
-                  v-model="searchSources"
-                  item-key="id"
-                  handle=".drag-handle"
-                  class="search-source-list"
-                  v-loading="searchSourcesLoading"
-                  @end="saveSearchSourceOrder"
-                >
-                  <template #item="{ element, index }">
-                    <div class="search-source-row" :class="{ disabled: !Number(element.enabled || 0) }">
-                      <span class="drag-handle">⋮⋮</span>
-                      <span class="rank">{{ index + 1 }}</span>
+                <div class="search-source-layout">
+                  <div class="search-source-list" v-loading="searchSourcesLoading">
+                    <div v-for="item in searchSources" :key="item.id" class="search-source-row" :class="{ disabled: !Number(item.enabled || 0) }">
                       <div>
-                        <strong>{{ element.name }}</strong>
-                        <span>{{ element.kind }} · {{ element.base_url || '未配置地址' }}</span>
-                        <small v-if="element.last_error">{{ element.last_error }}</small>
+                        <strong>{{ item.name }}</strong>
+                        <span>{{ item.kind }} · 优先级 {{ item.priority || 0 }}</span>
+                        <small v-if="item.last_error">{{ item.last_error }}</small>
                       </div>
-                      <el-tag :type="Number(element.enabled || 0) ? 'success' : 'info'">{{ Number(element.enabled || 0) ? '启用' : '关闭' }}</el-tag>
-                      <el-tag v-if="element.last_status" :type="element.last_status === 'failed' ? 'danger' : 'success'">{{ element.last_status }}</el-tag>
-                      <el-button plain @click="openSearchSourceDialog(element)">编辑</el-button>
-                      <el-button plain @click="testSearchSource(element)">测试</el-button>
-                      <el-popconfirm title="删除这个搜索源？" @confirm="deleteSearchSource(element.id)">
+                      <el-tag :type="Number(item.enabled || 0) ? 'success' : 'info'">{{ Number(item.enabled || 0) ? '启用' : '关闭' }}</el-tag>
+                      <el-tag v-if="item.last_status" :type="item.last_status === 'failed' ? 'danger' : 'success'">{{ item.last_status }}</el-tag>
+                      <el-button plain @click="editSearchSource(item)">编辑</el-button>
+                      <el-button plain @click="testSearchSource(item)">测试</el-button>
+                      <el-popconfirm title="删除这个搜索源？" @confirm="deleteSearchSource(item.id)">
                         <template #reference>
                           <el-button type="danger" plain>删除</el-button>
                         </template>
                       </el-popconfirm>
                     </div>
-                  </template>
-                </draggable>
-                <el-empty v-if="!searchSources.length && !searchSourcesLoading" description="暂无搜索源" />
+                    <el-empty v-if="!searchSources.length" description="暂无搜索源" />
+                  </div>
+                  <div class="search-source-form">
+                    <div class="settings-section-toolbar">
+                      <div>
+                        <strong>{{ searchSourceEditingId ? '编辑搜索源' : '新增搜索源' }}</strong>
+                        <span>配置资源站、RSS 或 Torznab API</span>
+                      </div>
+                      <el-button plain @click="resetSearchSourceForm">清空</el-button>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="名称"><el-input v-model="searchSourceForm.name" placeholder="Mikan / Prowlarr" /></el-form-item>
+                      <el-form-item label="类型">
+                        <el-select v-model="searchSourceForm.kind">
+                          <el-option label="Mikan RSS" value="mikan" />
+                          <el-option label="RSS" value="rss" />
+                          <el-option label="Torznab / Prowlarr / Jackett" value="torznab" />
+                          <el-option label="HTML 爬虫占位" value="generic_html" />
+                        </el-select>
+                      </el-form-item>
+                    </div>
+                    <el-form-item label="Base URL">
+                      <el-input v-model="searchSourceForm.base_url" placeholder="Mikan: https://mikanani.me/RSS/Search?searchstr={keyword}；Torznab: http://host:9696/1/api" />
+                    </el-form-item>
+                    <div class="form-row">
+                      <el-form-item label="Token / API Key"><el-input v-model="searchSourceForm.api_key" show-password /></el-form-item>
+                      <el-form-item label="分类"><el-input v-model="searchSourceForm.categories" placeholder="Torznab cat，用逗号分隔" /></el-form-item>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="代理"><el-input v-model="searchSourceForm.proxy" placeholder="可留空，默认使用 RSS 代理" /></el-form-item>
+                      <el-form-item label="优先级"><el-input-number v-model="searchSourceForm.priority" :min="0" :max="999" /></el-form-item>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="超时秒数"><el-input-number v-model="searchSourceForm.timeout_seconds" :min="3" :max="120" /></el-form-item>
+                      <el-form-item label="限速秒数"><el-input-number v-model="searchSourceForm.rate_limit_seconds" :min="0" :max="3600" /></el-form-item>
+                      <el-form-item label="启用"><el-switch v-model="searchSourceForm.enabled" /></el-form-item>
+                    </div>
+                    <el-button type="primary" @click="saveSearchSource">{{ searchSourceEditingId ? '保存搜索源' : '添加搜索源' }}</el-button>
+                  </div>
+                </div>
               </el-tab-pane>
               <el-tab-pane label="媒体库">
                 <el-alert
@@ -217,6 +213,19 @@ export default appContextComponent({ draggable, PriorityList })
                   <div><span>电影</span><code>media/movies</code></div>
                   <div><span>电视剧</span><code>media/tv</code></div>
                 </div>
+                <h3 class="settings-subtitle">生成配置</h3>
+                <div class="config-toggle-list">
+                  <label>
+                    <span>生成 NFO 元数据</span>
+                    <el-switch v-model="settings.auto_generate_nfo" />
+                  </label>
+                </div>
+                <el-form-item label="NFO 写入模式">
+                  <el-radio-group v-model="settings.nfo_write_mode">
+                    <el-radio-button label="fill_missing">空缺补齐</el-radio-button>
+                    <el-radio-button label="overwrite">覆盖更新</el-radio-button>
+                  </el-radio-group>
+                </el-form-item>
                 <el-form-item label="动画命名模板"><el-input v-model="settings.episode_name_template" /></el-form-item>
                 <el-form-item label="电影命名模板"><el-input v-model="settings.movie_name_template" /></el-form-item>
                 <el-form-item label="电视剧命名模板"><el-input v-model="settings.tv_name_template" /></el-form-item>
@@ -245,69 +254,51 @@ export default appContextComponent({ draggable, PriorityList })
                 </div>
               </el-tab-pane>
               <el-tab-pane label="维护">
-                <div class="maintenance-group-list">
-                  <section class="maintenance-group">
-                    <h3>缓存</h3>
-                    <p>清理 RSS、发现搜索和元数据处理缓存。</p>
-                    <div class="maintenance-actions">
-                      <el-button plain @click="runAction('/cache/rss/clear')">清除 RSS 缓存</el-button>
-                      <el-button plain @click="runAction('/cache/expired/clear')">清除过期缓存</el-button>
-                      <el-popconfirm title="会清空全部处理缓存，包括元数据和匹配缓存。确定？" @confirm="runAction('/cache/clear')">
-                        <template #reference>
-                          <el-button type="warning" plain>清除全部处理缓存</el-button>
-                        </template>
-                      </el-popconfirm>
-                    </div>
-                  </section>
-                  <section class="maintenance-group">
-                    <h3>元数据与本地状态</h3>
-                    <p>用于修正可观看状态、补齐作品信息和重新整理已有文件。</p>
-                    <div class="maintenance-actions">
-                      <el-button plain @click="refreshAllLocalStatus">刷新全部本地状态</el-button>
-                      <el-popconfirm title="会按现有 Bangumi/TMDB ID 刷新所有条目元数据，并按设置校验 NFO。确定执行？" @confirm="refreshAllMetadata">
-                        <template #reference>
-                          <el-button plain>刷新全部元数据</el-button>
-                        </template>
-                      </el-popconfirm>
-                      <el-popconfirm title="会把已绑定且存在的本地文件整理到当前命名规则路径，目标同名文件会被覆盖。确定执行？" @confirm="organizeAllLocalFiles">
-                        <template #reference>
-                          <el-button plain>整理全部本地资源</el-button>
-                        </template>
-                      </el-popconfirm>
-                    </div>
-                  </section>
-                  <section class="maintenance-group">
-                    <h3>数据修复</h3>
-                    <p>只在迁移旧数据或排查异常集数时使用。</p>
-                    <div class="maintenance-actions">
-                      <el-popconfirm title="迁移前会自动备份数据库。确定把旧资源模型迁移为每集一条资源，并按纯作品名目录计算路径？" @confirm="migrateEpisodeModel">
-                        <template #reference>
-                          <el-button type="warning" plain>迁移集数模型</el-button>
-                        </template>
-                      </el-popconfirm>
-                      <el-popconfirm title="会把已识别到的旧本地文件移动到纯作品名目录，并同步修复数据库状态。确定执行？" @confirm="repairLocalPaths">
-                        <template #reference>
-                          <el-button type="warning" plain>修复为纯作品名路径</el-button>
-                        </template>
-                      </el-popconfirm>
-                      <el-popconfirm title="会清理无法识别集数的发布、资源、字幕和下载记录。确定执行？" @confirm="runAction('/maintenance/cleanup-invalid-episodes')">
-                        <template #reference>
-                          <el-button type="warning" plain>清理无效集数</el-button>
-                        </template>
-                      </el-popconfirm>
-                    </div>
-                  </section>
-                  <section class="maintenance-group danger-zone">
-                    <h3>危险操作</h3>
-                    <p>会删除运行和媒体数据，执行前请确认已经备份。</p>
-                    <div class="maintenance-actions">
-                      <el-popconfirm title="会清空番剧、候选、任务、下载记录、本地资源记录和日志。确定？" @confirm="runAction('/system/clear-data')">
-                        <template #reference>
-                          <el-button type="danger" plain>清除所有数据</el-button>
-                        </template>
-                      </el-popconfirm>
-                    </div>
-                  </section>
+                <div class="detail-summary-grid maintenance-summary-grid">
+                  <div><span>待处理任务</span><strong>{{ dashboard.console_overview?.pending_task_count || 0 }}</strong></div>
+                  <div><span>失败任务</span><strong>{{ dashboard.console_overview?.failed_task_count || 0 }}</strong></div>
+                  <div><span>等待重试</span><strong>{{ dashboard.console_overview?.waiting_retry_count || 0 }}</strong></div>
+                  <div><span>运行队列</span><strong>{{ dashboard.console_overview?.running_queue_count || 0 }}</strong></div>
+                </div>
+                <div class="maintenance-actions maintenance-pane">
+                  <el-button type="primary" plain @click="runAction('/cache/rss/clear')">清除 RSS 缓存</el-button>
+                  <el-button type="primary" plain @click="runAction('/cache/expired/clear')">清除过期缓存</el-button>
+                  <el-popconfirm title="会清空全部处理缓存，包括元数据和匹配缓存。确定？" @confirm="runAction('/cache/clear')">
+                    <template #reference>
+                      <el-button type="warning">清除全部处理缓存</el-button>
+                    </template>
+                  </el-popconfirm>
+                  <el-button type="primary" @click="refreshAllLocalStatus">刷新全部本地状态</el-button>
+                  <el-popconfirm title="会按现有 Bangumi/TMDB ID 刷新所有条目元数据，并按设置校验 NFO。确定执行？" @confirm="refreshAllMetadata">
+                    <template #reference>
+                      <el-button type="primary">刷新全部元数据</el-button>
+                    </template>
+                  </el-popconfirm>
+                  <el-popconfirm title="会把已绑定且存在的本地文件整理到当前命名规则路径，目标同名文件会被覆盖。确定执行？" @confirm="organizeAllLocalFiles">
+                    <template #reference>
+                      <el-button type="primary">整理全部本地资源</el-button>
+                    </template>
+                  </el-popconfirm>
+                  <el-popconfirm title="迁移前会自动备份数据库。确定把旧资源模型迁移为每集一条资源，并按纯作品名目录计算路径？" @confirm="migrateEpisodeModel">
+                    <template #reference>
+                      <el-button type="primary">迁移集数模型</el-button>
+                    </template>
+                  </el-popconfirm>
+                  <el-popconfirm title="会把已识别到的旧本地文件移动到纯作品名目录，并同步修复数据库状态。确定执行？" @confirm="repairLocalPaths">
+                    <template #reference>
+                      <el-button type="primary">修复为纯作品名路径</el-button>
+                    </template>
+                  </el-popconfirm>
+                  <el-popconfirm title="会清理无法识别集数的发布、资源、字幕和下载记录。确定执行？" @confirm="runAction('/maintenance/cleanup-invalid-episodes')">
+                    <template #reference>
+                      <el-button type="warning">清理无效集数</el-button>
+                    </template>
+                  </el-popconfirm>
+                  <el-popconfirm title="会清空番剧、候选、任务、下载记录、本地资源记录和日志。确定？" @confirm="runAction('/system/clear-data')">
+                    <template #reference>
+                      <el-button type="danger" plain>清除所有数据</el-button>
+                    </template>
+                  </el-popconfirm>
                 </div>
               </el-tab-pane>
             </el-tabs>
@@ -315,43 +306,4 @@ export default appContextComponent({ draggable, PriorityList })
           </el-form>
         </el-card>
       </section>
-
-      <el-dialog v-model="searchSourceDialogOpen" :title="searchSourceEditingId ? '编辑搜索源' : '新增搜索源'" width="720px" top="6vh">
-        <el-form :model="searchSourceForm" label-position="top" class="settings-form dialog-form">
-          <div class="form-row">
-            <el-form-item label="名称"><el-input v-model="searchSourceForm.name" placeholder="Mikan / Prowlarr / Jackett" /></el-form-item>
-            <el-form-item label="类型">
-              <el-select v-model="searchSourceForm.kind">
-                <el-option label="Mikan" value="mikan" />
-                <el-option label="RSS" value="rss" />
-                <el-option label="Torznab" value="torznab" />
-                <el-option label="Prowlarr" value="prowlarr" />
-                <el-option label="Jackett" value="jackett" />
-              </el-select>
-            </el-form-item>
-          </div>
-          <el-form-item label="Base URL">
-            <el-input v-model="searchSourceForm.base_url" placeholder="Mikan: https://mikanani.me/RSS/Search?searchstr={keyword}；Torznab: http://host:9696/1/api" />
-          </el-form-item>
-          <div class="form-row">
-            <el-form-item label="Token / API Key"><el-input v-model="searchSourceForm.api_key" show-password /></el-form-item>
-            <el-form-item label="分类"><el-input v-model="searchSourceForm.categories" placeholder="Torznab cat，用逗号分隔" /></el-form-item>
-          </div>
-          <div class="form-row">
-            <el-form-item label="超时秒数"><el-input v-model="searchSourceForm.timeout_seconds" placeholder="20" /></el-form-item>
-            <el-form-item label="限速秒数"><el-input v-model="searchSourceForm.rate_limit_seconds" placeholder="0" /></el-form-item>
-            <el-form-item label="启用">
-              <label class="switch-setting compact">
-                <el-switch v-model="searchSourceForm.enabled" />
-                <span><strong>启用搜索源</strong><small>关闭后发现页不会请求它。</small></span>
-              </label>
-            </el-form-item>
-          </div>
-          <el-alert type="info" show-icon :closable="false" title="外部请求统一使用基础设置里的代理；单个搜索源不再单独配置代理。" />
-        </el-form>
-        <template #footer>
-          <el-button @click="searchSourceDialogOpen = false">取消</el-button>
-          <el-button type="primary" @click="saveSearchSource">{{ searchSourceEditingId ? '保存' : '添加' }}</el-button>
-        </template>
-      </el-dialog>
 </template>

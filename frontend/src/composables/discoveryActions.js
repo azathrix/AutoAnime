@@ -14,8 +14,10 @@ function blankSearchSourceForm() {
     base_url: '',
     api_key: '',
     categories: '',
+    proxy: '',
     timeout_seconds: 20,
     rate_limit_seconds: 0,
+    priority: 0,
     enabled: true,
   }
 }
@@ -44,12 +46,6 @@ export function createDiscoveryActions(app, deps) {
     Object.assign(app.searchSourceForm, blankSearchSourceForm())
   }
 
-  function openSearchSourceDialog(item = null) {
-    if (item?.id) editSearchSource(item)
-    else resetSearchSourceForm()
-    app.searchSourceDialogOpen = true
-  }
-
   async function loadSearchSources() {
     app.searchSourcesLoading = true
     try {
@@ -70,19 +66,16 @@ export function createDiscoveryActions(app, deps) {
       base_url: item.base_url || '',
       api_key: item.api_key || '',
       categories: item.categories || '',
+      proxy: item.proxy || '',
       timeout_seconds: Number(item.timeout_seconds || 20),
       rate_limit_seconds: Number(item.rate_limit_seconds || 0),
+      priority: Number(item.priority || 0),
       enabled: Boolean(Number(item.enabled ?? 1)),
     })
-    app.searchSourceDialogOpen = true
   }
 
   async function saveSearchSource() {
-    const payload = {
-      ...app.searchSourceForm,
-      timeout_seconds: Number(app.searchSourceForm.timeout_seconds || 20),
-      rate_limit_seconds: Number(app.searchSourceForm.rate_limit_seconds || 0),
-    }
+    const payload = { ...app.searchSourceForm }
     if (!payload.name.trim()) {
       ElMessage.warning('请填写搜索源名称')
       return
@@ -96,22 +89,9 @@ export function createDiscoveryActions(app, deps) {
         ElMessage.success('搜索源已添加')
       }
       resetSearchSourceForm()
-      app.searchSourceDialogOpen = false
       await loadSearchSources()
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
-    }
-  }
-
-  async function saveSearchSourceOrder() {
-    try {
-      const ids = (app.searchSources || []).map(item => Number(item.id || 0)).filter(Boolean)
-      const data = await putAction('/search-sources/order', { ids })
-      app.searchSources = data.items || app.searchSources
-      ElMessage.success('搜索源优先级已保存')
-    } catch (error) {
-      ElMessage.error(apiErrorMessage(error))
-      await loadSearchSources()
     }
   }
 
@@ -241,11 +221,9 @@ export function createDiscoveryActions(app, deps) {
     editSearchSource,
     loadSearchSources,
     openDiscoveryCollectDraft,
-    openSearchSourceDialog,
     resetSearchSourceForm,
     runDiscoverySearch,
     saveSearchSource,
-    saveSearchSourceOrder,
     searchBackfillForCurrentEntry,
     testSearchSource,
   }

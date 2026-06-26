@@ -18,7 +18,6 @@
         <div class="nav-caption">系统</div>
         <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon> 控制台</button>
         <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon> 日志</button>
-        <button :class="{ active: view === 'design' }" @click="view = 'design'"><el-icon><Collection /></el-icon> 设计</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
     </aside>
@@ -38,7 +37,6 @@
       <DiscoveryPage />
       <CalendarPage />
       <MediaCatalogPage />
-      <DesignLabPage />
       <SettingsPage />
     </main>
 
@@ -51,7 +49,6 @@
       <button :class="{ active: view === 'movies' }" @click="view = 'movies'"><el-icon><Collection /></el-icon><b>电影</b></button>
       <button :class="{ active: view === 'tv' }" @click="view = 'tv'"><el-icon><Collection /></el-icon><b>剧集</b></button>
       <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon><b>日志</b></button>
-      <button :class="{ active: view === 'design' }" @click="view = 'design'"><el-icon><Collection /></el-icon><b>设计</b></button>
       <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon><b>设置</b></button>
     </nav>
 
@@ -107,12 +104,11 @@ import SeasonalPage from './components/SeasonalPage.vue'
 import DiscoveryPage from './components/DiscoveryPage.vue'
 import CalendarPage from './components/CalendarPage.vue'
 import MediaCatalogPage from './components/MediaCatalogPage.vue'
-import DesignLabPage from './components/DesignLabPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import EntryDrawer from './components/EntryDrawer.vue'
 import EntryDialogs from './components/EntryDialogs.vue'
 
-const validViews = new Set(['dashboard', 'seasonal', 'discovery', 'calendar', 'library', 'movies', 'tv', 'logs', 'design', 'settings'])
+const validViews = new Set(['dashboard', 'seasonal', 'discovery', 'calendar', 'library', 'movies', 'tv', 'logs', 'settings'])
 function initialView() {
   const saved = window.localStorage.getItem('anitrack:view') || ''
   return validViews.has(saved) ? saved : 'seasonal'
@@ -218,15 +214,16 @@ const discoveryState = reactive({
 const searchSources = ref([])
 const searchSourcesLoading = ref(false)
 const searchSourceEditingId = ref(0)
-const searchSourceDialogOpen = ref(false)
 const searchSourceForm = reactive({
   name: '',
   kind: 'mikan',
   base_url: '',
   api_key: '',
   categories: '',
+  proxy: '',
   timeout_seconds: 20,
   rate_limit_seconds: 0,
+  priority: 0,
   enabled: true,
 })
 const calendarItems = ref([])
@@ -383,7 +380,6 @@ const pageTitle = computed(() => ({
   movies: '电影',
   tv: '电视剧',
   logs: '日志与维护',
-  design: '设计实验室',
   settings: '设置中心'
 }[view.value]))
 
@@ -1037,7 +1033,6 @@ exposeAppContext({
   rssSubscriptions,
   savingSettings,
   searchSourceEditingId,
-  searchSourceDialogOpen,
   searchSourceForm,
   searchSources,
   searchSourcesLoading,
@@ -1114,11 +1109,9 @@ const {
   editSearchSource,
   loadSearchSources,
   openDiscoveryCollectDraft,
-  openSearchSourceDialog,
   resetSearchSourceForm,
   runDiscoverySearch,
   saveSearchSource,
-  saveSearchSourceOrder,
   searchBackfillForCurrentEntry,
   testSearchSource,
 } = createDiscoveryActions(appContext, {
@@ -1140,9 +1133,9 @@ exposeAppContext({
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, deleteSearchSource, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, editSearchSource, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, loadSearchSources, normalizeSettingsShape, openDiscoveryCollectDraft, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
-  openScheduledSettings, openSearchSourceDialog, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+  openScheduledSettings, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   removeMediaWizardSubtitleItem, resetRssForm, resetSearchSourceForm, resetSelectionRules, runAction, runDiscoverySearch, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
-  saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, saveSearchSourceOrder, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
+  saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
   saveSearchSource, searchBackfillForCurrentEntry, confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, testSearchSource, toggleEntryResourceRow,
   startMetadataProgress, stopMetadataProgress, syncScheduledJobForm, triggerSchedule, uploadMediaWizardFiles,
 })
