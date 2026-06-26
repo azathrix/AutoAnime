@@ -6,7 +6,6 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from .bangumi_config import generate_bangumi_ini
 from .catalog_service import catalog_response
 from .database import connect
 from .db import get_settings, log, now
@@ -858,7 +857,6 @@ def save_entry_payload(entry_id: int, payload: EntryPayload, *, expected_domain:
                 ),
             )
     settings = get_settings()
-    generate_bangumi_ini(entry_id, settings)
     generate_jellyfin_nfo_for_entry(entry_id, settings)
     if domain_kind == "seasonal":
         log("info", f"新番条目设置已保存: {payload.title_cn}")

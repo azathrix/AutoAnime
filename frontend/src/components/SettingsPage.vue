@@ -152,10 +152,6 @@ export default appContextComponent({ draggable, PriorityList })
                     <span>生成 NFO 元数据</span>
                     <el-switch v-model="settings.auto_generate_nfo" />
                   </label>
-                  <label>
-                    <span>旧兼容：生成 bangumi.ini</span>
-                    <el-switch v-model="settings.generate_bangumi_ini" />
-                  </label>
                 </div>
                 <el-form-item label="NFO 写入模式">
                   <el-radio-group v-model="settings.nfo_write_mode">
@@ -206,7 +202,7 @@ export default appContextComponent({ draggable, PriorityList })
                     </template>
                   </el-popconfirm>
                   <el-button type="primary" @click="refreshAllLocalStatus">刷新全部本地状态</el-button>
-                  <el-popconfirm title="会按现有 Bangumi/TMDB ID 刷新所有条目元数据；如果开启 Bangumi 配置，会同步生成 bangumi.ini。确定执行？" @confirm="refreshAllMetadata">
+                  <el-popconfirm title="会按现有 Bangumi/TMDB ID 刷新所有条目元数据，并按设置校验 NFO。确定执行？" @confirm="refreshAllMetadata">
                     <template #reference>
                       <el-button type="primary">刷新全部元数据</el-button>
                     </template>

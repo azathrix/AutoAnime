@@ -7,11 +7,10 @@ from typing import Any
 
 import httpx
 
-from .bangumi_config import generate_bangumi_ini, setting_enabled
 from .database import connect
 from .db import get_settings, log, merge_duplicate_series, now
 from .library import parse_entry_labels
-from .nfo_service import generate_jellyfin_nfo_for_entry
+from .nfo_service import generate_jellyfin_nfo_for_entry, setting_enabled
 from .parser import clean_name
 from .processing_cache import get_cached_json, set_cached_json
 
@@ -624,8 +623,6 @@ async def apply_bangumi_metadata(entry_id: int, bangumi_id: str, proxy: str = ""
         prefer=force or str(entry["media_type"] or "").lower() == "anime",
     )
     settings = get_settings()
-    if setting_enabled(settings.get("generate_bangumi_ini", "false")):
-        generate_bangumi_ini(entry_id, settings)
     if setting_enabled(settings.get("auto_generate_nfo", "false")):
         generate_jellyfin_nfo_for_entry(entry_id, settings)
     log("info", f"已刷新 Bangumi 元数据: {title_cn} episode_updates={episode_updates}")

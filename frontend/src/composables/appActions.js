@@ -1128,7 +1128,6 @@ export function createAppActions(app, deps) {
     app.settings.tv_source_priority = Array.isArray(app.settings.tv_source_priority) ? app.settings.tv_source_priority : []
     app.settings.tv_subtitle_priority = Array.isArray(app.settings.tv_subtitle_priority) ? app.settings.tv_subtitle_priority : []
     app.settings.downloaders = Array.isArray(app.settings.downloaders) ? app.settings.downloaders : []
-    app.settings.generate_bangumi_ini = Boolean(app.settings.generate_bangumi_ini)
     app.settings.auto_generate_nfo = Boolean(app.settings.auto_generate_nfo)
     app.settings.nfo_write_mode = ['fill_missing', 'overwrite'].includes(app.settings.nfo_write_mode) ? app.settings.nfo_write_mode : 'fill_missing'
     app.settings.movie_name_template = app.settings.movie_name_template || '{title_base}/{title_base}'
