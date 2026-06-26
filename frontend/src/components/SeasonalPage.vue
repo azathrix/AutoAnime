@@ -6,12 +6,16 @@ export default appContextComponent()
 
 <template>
       <section v-if="view === 'seasonal'" class="library seasonal-page media-page">
-        <div class="toolbar media-toolbar">
-          <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
-          <div class="toolbar-spacer"></div>
-          <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
-          <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描全部</el-button>
-          <el-button type="primary" @click="openRssDialog">添加 RSS 订阅</el-button>
+        <div class="media-command-bar">
+          <div class="media-search-box">
+            <strong>新番影视墙</strong>
+            <el-input v-model="keyword" clearable placeholder="搜索新番条目、Bangumi ID、标题" />
+          </div>
+          <div class="media-command-actions">
+            <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
+            <el-button type="primary" :icon="Search" :disabled="scanRunning" @click="runAction('/scan')">扫描 RSS</el-button>
+            <el-button type="primary" @click="openRssDialog">添加订阅</el-button>
+          </div>
         </div>
         <div v-if="advancedFilterOpen" class="filter-board">
           <div class="filter-row">
@@ -79,20 +83,24 @@ export default appContextComponent()
           v-infinite-scroll="loadMoreCatalog"
           :infinite-scroll-disabled="catalogState.loading || catalogState.loading_more || !catalogState.has_more"
           :infinite-scroll-distance="240"
-          class="anime-grid catalog-card-grid"
+          class="anime-grid catalog-card-grid mochi-media-grid"
         >
-          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'seasonal', 'anime')">
-            <div class="cover poster-cover">
+          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card mochi-media-card" @click="openEntry(item.id, 'seasonal', 'anime')">
+            <div class="cover poster-cover media-card-cover">
               <img v-if="item.poster_url" :src="item.poster_url" />
               <span v-else>{{ cardInitials(item) }}</span>
             </div>
             <div class="anime-body">
+              <div class="media-card-kicker">{{ cardSubtitle(item) }}</div>
               <h3>{{ entryTitle(item) }}</h3>
-              <p>{{ cardSubtitle(item) }}</p>
               <div class="tagline">
                 <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
                 <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
                 <el-tag v-for="score in metadataScores(item)" :key="score.key" size="small" type="warning">{{ score.label }}</el-tag>
+              </div>
+              <div class="media-card-foot">
+                <span>{{ item.year || '未知年份' }}</span>
+                <span>{{ regionLabel(item.region) }}</span>
               </div>
             </div>
           </article>

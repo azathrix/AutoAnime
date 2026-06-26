@@ -6,11 +6,15 @@ export default appContextComponent()
 
 <template>
       <section v-if="isMediaCatalogView" class="library media-page">
-        <div class="toolbar media-toolbar">
-          <el-input v-model="keyword" clearable :placeholder="`搜索${currentMediaPageTitle}、Bangumi ID、TMDB ID、标题`" />
-          <div class="toolbar-spacer"></div>
-          <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
-          <el-button type="primary" @click="openMediaWizard">收录{{ currentMediaPageTitle }}</el-button>
+        <div class="media-command-bar">
+          <div class="media-search-box">
+            <strong>{{ currentMediaPageTitle }}影视墙</strong>
+            <el-input v-model="keyword" clearable :placeholder="`搜索${currentMediaPageTitle}、Bangumi ID、TMDB ID、标题`" />
+          </div>
+          <div class="media-command-actions">
+            <el-button plain @click="advancedFilterOpen = !advancedFilterOpen">{{ advancedFilterOpen ? '收起筛选' : '高级筛选' }}</el-button>
+            <el-button type="primary" @click="openMediaWizard">收录{{ currentMediaPageTitle }}</el-button>
+          </div>
         </div>
         <div v-if="advancedFilterOpen" class="filter-board">
           <div class="filter-row">
@@ -78,20 +82,24 @@ export default appContextComponent()
           v-infinite-scroll="loadMoreCatalog"
           :infinite-scroll-disabled="catalogState.loading || catalogState.loading_more || !catalogState.has_more"
           :infinite-scroll-distance="240"
-          class="anime-grid catalog-card-grid"
+          class="anime-grid catalog-card-grid mochi-media-grid"
         >
-          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card" @click="openEntry(item.id, 'library', entryMediaType(item))">
-            <div class="cover poster-cover">
+          <article v-for="item in filteredSeries" :key="item.id" class="anime-card catalog-card mochi-media-card" @click="openEntry(item.id, 'library', entryMediaType(item))">
+            <div class="cover poster-cover media-card-cover">
               <img v-if="item.poster_url" :src="item.poster_url" />
               <span v-else>{{ cardInitials(item) }}</span>
             </div>
             <div class="anime-body">
+              <div class="media-card-kicker">{{ cardSubtitle(item) }}</div>
               <h3>{{ entryTitle(item) }}</h3>
-              <p>{{ cardSubtitle(item) }}</p>
               <div class="tagline">
                 <el-tag size="small" type="success">可观看 {{ watchableCount(item) }} 集</el-tag>
                 <el-tag v-if="hasRecentUpdate(item)" size="small" type="primary">已更新</el-tag>
                 <el-tag v-for="score in metadataScores(item)" :key="score.key" size="small" type="warning">{{ score.label }}</el-tag>
+              </div>
+              <div class="media-card-foot">
+                <span>{{ item.year || '未知年份' }}</span>
+                <span>{{ mediaTypeLabel(entryMediaType(item)) }}</span>
               </div>
             </div>
           </article>

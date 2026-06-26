@@ -9,14 +9,14 @@ export default appContextComponent()
       <template v-if="selectedEntryDetail?.entry">
         <el-tabs class="entry-detail-tabs">
           <el-tab-pane label="信息">
-            <div class="entry-info-head">
-              <div class="cover poster-cover">
+            <div class="entry-hero-card">
+              <div class="cover poster-cover entry-hero-cover">
                 <img v-if="selectedEntry.poster_url" :src="selectedEntry.poster_url" />
                 <span v-else>{{ entryTitle(selectedEntry).slice(0, 2) || 'AN' }}</span>
               </div>
-              <div>
+              <div class="entry-hero-main">
+                <span>{{ normalizedSeasonLabel(selectedEntry) }}</span>
                 <h2>{{ entryTitle(selectedEntry) }}</h2>
-                <p>{{ normalizedSeasonLabel(selectedEntry) }}</p>
                 <div class="tagline">
                   <el-tag size="small">{{ mediaTypeLabel(selectedEntry.media_type) }}</el-tag>
                   <el-tag size="small" type="info">{{ regionLabel(selectedEntry.region) }}</el-tag>
@@ -24,33 +24,53 @@ export default appContextComponent()
                   <el-tag v-if="selectedEntryDomain === 'seasonal'" size="small" type="primary">追番中</el-tag>
                   <el-tag v-for="score in metadataScores(selectedEntry)" :key="score.key" size="small" type="warning">{{ score.label }}</el-tag>
                 </div>
+                <p>{{ selectedEntry.summary || '暂无简介。' }}</p>
               </div>
             </div>
-            <el-descriptions :column="2" border class="entry-meta-descriptions">
-              <el-descriptions-item label="媒体类型">{{ mediaTypeLabel(selectedEntry.media_type) }}</el-descriptions-item>
-              <el-descriptions-item label="原名">{{ selectedEntry.title_raw || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="Bangumi ID">
-                <a v-if="selectedEntry.bangumi_id" :href="`https://bgm.tv/subject/${selectedEntry.bangumi_id}`" target="_blank" rel="noreferrer">{{ selectedEntry.bangumi_id }}</a>
-                <span v-else>-</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="TMDB ID">
-                <a v-if="selectedEntry.tmdb_id" :href="`https://www.themoviedb.org/${selectedEntry.media_type === 'movie' ? 'movie' : 'tv'}/${selectedEntry.tmdb_id}`" target="_blank" rel="noreferrer">{{ selectedEntry.tmdb_id }}</a>
-                <span v-else>-</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="首播月份">{{ selectedEntry.year || '-' }} / {{ selectedEntry.month || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="Bangumi 偏移">{{ Number(selectedEntry.episode_offset || 0) }}</el-descriptions-item>
-              <el-descriptions-item label="Bangumi 评分">{{ selectedEntry.bangumi_score ? Number(selectedEntry.bangumi_score).toFixed(1) : '-' }}</el-descriptions-item>
-              <el-descriptions-item label="TMDB 评分">{{ selectedEntry.tmdb_score ? Number(selectedEntry.tmdb_score).toFixed(1) : '-' }}</el-descriptions-item>
-              <el-descriptions-item label="国家 / 地区">{{ regionLabel(selectedEntry.region) }}</el-descriptions-item>
-              <el-descriptions-item label="标签" :span="2">
+            <div class="entry-info-grid">
+              <section class="entry-info-card">
+                <span>Bangumi ID</span>
+                <strong>
+                  <a v-if="selectedEntry.bangumi_id" :href="`https://bgm.tv/subject/${selectedEntry.bangumi_id}`" target="_blank" rel="noreferrer">{{ selectedEntry.bangumi_id }}</a>
+                  <em v-else>-</em>
+                </strong>
+              </section>
+              <section class="entry-info-card">
+                <span>TMDB ID</span>
+                <strong>
+                  <a v-if="selectedEntry.tmdb_id" :href="`https://www.themoviedb.org/${selectedEntry.media_type === 'movie' ? 'movie' : 'tv'}/${selectedEntry.tmdb_id}`" target="_blank" rel="noreferrer">{{ selectedEntry.tmdb_id }}</a>
+                  <em v-else>-</em>
+                </strong>
+              </section>
+              <section class="entry-info-card">
+                <span>首播</span>
+                <strong>{{ selectedEntry.year || '-' }} / {{ selectedEntry.month || '-' }}</strong>
+              </section>
+              <section class="entry-info-card">
+                <span>偏移</span>
+                <strong>{{ Number(selectedEntry.episode_offset || 0) }}</strong>
+              </section>
+              <section class="entry-info-card">
+                <span>Bangumi 评分</span>
+                <strong>{{ selectedEntry.bangumi_score ? Number(selectedEntry.bangumi_score).toFixed(1) : '-' }}</strong>
+              </section>
+              <section class="entry-info-card">
+                <span>TMDB 评分</span>
+                <strong>{{ selectedEntry.tmdb_score ? Number(selectedEntry.tmdb_score).toFixed(1) : '-' }}</strong>
+              </section>
+              <section class="entry-info-card wide">
+                <span>原名</span>
+                <strong>{{ selectedEntry.title_raw || '-' }}</strong>
+              </section>
+              <section class="entry-info-card wide">
+                <span>标签</span>
                 <div class="mini-tag-row">
                   <span v-for="tag in catalogTags(selectedEntry)" :key="tag">{{ tag }}</span>
                   <em v-if="!catalogTags(selectedEntry).length">-</em>
                 </div>
-              </el-descriptions-item>
-              <el-descriptions-item label="简介" :span="2">{{ selectedEntry.summary || '-' }}</el-descriptions-item>
-            </el-descriptions>
-            <div class="drawer-actions">
+              </section>
+            </div>
+            <div class="drawer-actions entry-action-strip">
               <el-button type="primary" @click="openEntryEditDialog">编辑信息</el-button>
               <el-button plain @click="refreshEntryMetadata(selectedEntry, selectedEntryDomain, selectedEntryMediaType)">刷新元数据</el-button>
               <el-popconfirm

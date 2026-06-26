@@ -25,8 +25,13 @@ function mediaTypeLabel(type) {
 
 <template>
   <section v-if="app.view === 'discovery'" class="discovery-page">
-    <el-card class="discovery-search-card">
-      <div class="discovery-search-bar">
+    <section class="discovery-hero-card">
+      <div>
+        <span>资源发现</span>
+        <strong>聚合搜索源，找到可收录的作品和集数</strong>
+        <p>发现结果只是候选数据，点击收录或应用补全后才写入媒体库。</p>
+      </div>
+      <div class="discovery-search-card">
         <el-input
           v-model="app.discoveryState.keyword"
           clearable
@@ -34,22 +39,21 @@ function mediaTypeLabel(type) {
           placeholder="搜索作品、资源标题或关键词"
           @keyup.enter="app.runDiscoverySearch"
         />
-        <el-select v-model="app.discoveryState.media_type" size="large" class="compact-select">
-          <el-option label="动画" value="anime" />
-          <el-option label="电影" value="movie" />
-          <el-option label="电视剧" value="tv" />
-        </el-select>
-        <el-input-number v-model="app.discoveryState.year" size="large" :min="0" :max="2100" placeholder="年份" />
-        <el-select v-model="app.discoveryState.source_ids" multiple clearable collapse-tags size="large" class="source-select" placeholder="全部搜索源">
-          <el-option v-for="item in sourceOptions" :key="item.id" :label="item.name" :value="item.id" />
-        </el-select>
-        <el-button type="primary" size="large" :loading="app.discoveryState.loading" @click="app.runDiscoverySearch">搜索</el-button>
-      </div>
-      <div class="discovery-hint">
-        <span>发现结果只是候选数据，点击收录或应用补全后才写入媒体库。</span>
+        <div class="discovery-search-options">
+          <el-select v-model="app.discoveryState.media_type" size="large">
+            <el-option label="动画" value="anime" />
+            <el-option label="电影" value="movie" />
+            <el-option label="电视剧" value="tv" />
+          </el-select>
+          <el-input v-model="app.discoveryState.year" size="large" placeholder="年份" />
+          <el-select v-model="app.discoveryState.source_ids" multiple clearable collapse-tags size="large" placeholder="全部搜索源">
+            <el-option v-for="item in sourceOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+          <el-button type="primary" size="large" :loading="app.discoveryState.loading" @click="app.runDiscoverySearch">搜索资源</el-button>
+        </div>
         <el-button link type="primary" @click="app.view = 'settings'">管理搜索源</el-button>
       </div>
-    </el-card>
+    </section>
 
     <el-alert
       v-if="app.discoveryState.backfill_entry_id"
@@ -59,7 +63,7 @@ function mediaTypeLabel(type) {
       title="当前是本季补全候选，只会补缺失集数或没有资源链接的集数。"
     />
 
-    <div class="discovery-grid" v-loading="app.discoveryState.loading">
+    <div class="discovery-grid mochi-discovery-grid" v-loading="app.discoveryState.loading">
       <article v-for="item in app.discoveryState.items" :key="item.id" class="discovery-card">
         <div class="discovery-cover">
           <img v-if="item.poster_url" :src="item.poster_url" />

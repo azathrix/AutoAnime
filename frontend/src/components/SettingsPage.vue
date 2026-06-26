@@ -7,11 +7,19 @@ export default appContextComponent({ draggable, PriorityList })
 </script>
 
 <template>
-      <section v-if="view === 'settings'">
-        <el-card>
-          <template #header>全局设置</template>
+      <section v-if="view === 'settings'" class="settings-page mochi-settings-page">
+        <el-card class="settings-shell-card">
+          <template #header>
+            <div class="settings-shell-head">
+              <div>
+                <strong>设置工坊</strong>
+                <span>全局行为、下载器、搜索源和维护动作集中管理</span>
+              </div>
+              <el-button type="primary" :loading="savingSettings" @click="saveAllSettings">保存设置</el-button>
+            </div>
+          </template>
           <el-form :model="settings" label-position="top" class="settings-form">
-            <el-tabs>
+            <el-tabs tab-position="left" class="settings-workbench-tabs">
               <el-tab-pane label="基础">
                 <el-alert
                   type="info"
@@ -311,7 +319,6 @@ export default appContextComponent({ draggable, PriorityList })
                 </div>
               </el-tab-pane>
             </el-tabs>
-            <div class="form-actions"><el-button type="primary" size="large" :loading="savingSettings" @click="saveAllSettings">保存设置</el-button></div>
           </el-form>
         </el-card>
       </section>

@@ -5,8 +5,17 @@
         <img class="brand-logo" src="/anitrack-logo.png" alt="AniTrack logo" />
         <div>
           <strong class="brand-wordmark">AniTrack</strong>
+          <span class="brand-subtitle">Mochi media workshop</span>
         </div>
       </div>
+      <section class="sidebar-status-card">
+        <div class="sidebar-avatar">AN</div>
+        <div>
+          <strong>媒体工坊</strong>
+          <span>{{ liveConnected ? '实时连接中' : '等待连接' }}</span>
+        </div>
+        <el-tag size="small" :type="liveConnected ? 'success' : 'info'">{{ liveConnected ? 'Live' : 'Idle' }}</el-tag>
+      </section>
       <nav>
         <div class="nav-caption">媒体</div>
         <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon> 新番</button>
@@ -20,14 +29,30 @@
         <button :class="{ active: view === 'logs' }" @click="view = 'logs'"><el-icon><Document /></el-icon> 日志</button>
         <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><el-icon><Setting /></el-icon> 设置</button>
       </nav>
+      <section class="sidebar-quick-card">
+        <strong>快捷操作</strong>
+        <button @click="view = 'seasonal'; runAction('/scan')">扫描 RSS</button>
+        <button @click="view = 'discovery'">发现资源</button>
+      </section>
+      <section class="sidebar-mini-stats">
+        <div><b>{{ seasonalCatalogTotal }}</b><span>新番</span></div>
+        <div><b>{{ watchableTotal }}</b><span>可看</span></div>
+      </section>
     </aside>
 
     <main class="main">
       <header class="hero">
         <div>
-          <p class="eyebrow">RSS · Downloader · Media Library</p>
+          <p class="eyebrow">{{ pageEyebrow }}</p>
           <h1>{{ pageTitle }}</h1>
-          <p class="hero-sub">扫描订阅、自动选集并整理到本地媒体库。<span class="build-version">v{{ appVersion }} · {{ appBuild }}</span></p>
+          <p class="hero-sub">{{ pageSubtitle }}<span class="build-version">v{{ appVersion }} · {{ appBuild }}</span></p>
+        </div>
+        <div class="hero-action-panel">
+          <el-tag :type="liveConnected ? 'success' : 'info'">{{ liveConnected ? '实时' : '离线' }}</el-tag>
+          <el-button v-if="view === 'dashboard' || view === 'seasonal'" type="primary" :disabled="scanRunning" @click="runAction('/scan')">扫描 RSS</el-button>
+          <el-button v-if="view === 'seasonal'" plain @click="openRssDialog">添加订阅</el-button>
+          <el-button v-if="isMediaCatalogView" type="primary" @click="openMediaWizard">收录{{ currentMediaPageTitle }}</el-button>
+          <el-button v-if="view === 'discovery'" type="primary" :loading="discoveryState.loading" @click="runDiscoverySearch">搜索资源</el-button>
         </div>
       </header>
 
@@ -54,6 +79,7 @@
 
     <EntryDrawer />
     <EntryDialogs />
+    <MochiToastStack />
   </div>
 </template>
 
@@ -107,6 +133,7 @@ import MediaCatalogPage from './components/MediaCatalogPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import EntryDrawer from './components/EntryDrawer.vue'
 import EntryDialogs from './components/EntryDialogs.vue'
+import MochiToastStack from './components/MochiToastStack.vue'
 
 const validViews = new Set(['dashboard', 'seasonal', 'discovery', 'calendar', 'library', 'movies', 'tv', 'logs', 'settings'])
 function initialView() {
@@ -381,6 +408,28 @@ const pageTitle = computed(() => ({
   logs: '日志与维护',
   settings: '设置中心'
 }[view.value]))
+const pageEyebrow = computed(() => ({
+  dashboard: 'Scanner · Tasks',
+  seasonal: 'Seasonal Anime',
+  discovery: 'Discovery',
+  calendar: 'Weekly Calendar',
+  library: 'Anime Library',
+  movies: 'Movie Library',
+  tv: 'TV Library',
+  logs: 'Logs · Maintenance',
+  settings: 'Settings'
+}[view.value] || 'AniTrack'))
+const pageSubtitle = computed(() => ({
+  dashboard: '查看扫描、下载、元数据和本地整理的实时状态。',
+  seasonal: '追踪 RSS 新番，自动选集并整理到本地媒体库。',
+  discovery: '从搜索源聚合资源，收录或补全集数。',
+  calendar: '按周查看最近更新和可观看状态。',
+  library: '管理动画条目、集数资源和本地状态。',
+  movies: '管理电影资源、命名和本地文件。',
+  tv: '管理电视剧资源、季度和本地文件。',
+  logs: '查看运行日志并执行维护动作。',
+  settings: '配置代理、下载器、搜索源、媒体库和定时器。'
+}[view.value] || '扫描订阅、自动选集并整理到本地媒体库。'))
 
 const isMediaCatalogView = computed(() => ['library', 'movies', 'tv'].includes(view.value))
 const currentMediaType = computed(() => ({
@@ -1018,6 +1067,8 @@ exposeAppContext({
   openBatchSubtitleDialog,
   openEpisodeImportDialog,
   pageTitle,
+  pageEyebrow,
+  pageSubtitle,
   parseDateValue,
   processorSettingsDialogOpen,
   processorSettingsForm,
