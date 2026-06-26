@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AniTrack Mochi Static Prototype</title>
+  <style>
+    :root {
+      --pink: #ff8da1;
+      --pink-deep: #ff5e7e;
+      --pink-soft: #fff5f6;
+      --blue: #82d9ed;
+      --blue-soft: #f3fcfd;
+      --purple: #c79fe5;
+      --purple-soft: #faf5fe;
+      --mint: #8ee4d5;
+      --mint-soft: #f2fcfa;
+      --yellow: #f8cf78;
+      --yellow-soft: #fffaf0;
+      --ink: #5c525d;
+      --muted: #8c808d;
+      --border: #f3e5e8;
+      --card: rgba(255,255,255,.92);
+      --shadow: 0 12px 30px -8px rgba(255,141,161,.24), 0 5px 14px rgba(92,82,93,.05);
+      --shadow-strong: 0 20px 48px -10px rgba(255,141,161,.32), 0 10px 24px rgba(130,217,237,.1);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 9% 10%, rgba(255,141,161,.2), transparent 26%),
+        radial-gradient(circle at 88% 4%, rgba(130,217,237,.2), transparent 30%),
+        linear-gradient(135deg, #fff9fa 0%, #fff 48%, #f7fdff 100%);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      letter-spacing: 0;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--pink-soft); }
+    ::-webkit-scrollbar-thumb { background: var(--pink); border-radius: 99px; border: 2px solid var(--pink-soft); }
+
+    .app { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); }
+    .sidebar {
+      position: sticky; top: 0; height: 100vh; padding: 22px 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,248,251,.92));
+      border-right: 1px solid rgba(255,230,235,.9); box-shadow: 12px 0 32px rgba(255,141,161,.08);
+      overflow: auto;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .brand-logo {
+      width: 58px; height: 58px; display: grid; place-items: center; border-radius: 22px;
+      color: white; font-weight: 900; font-size: 22px;
+      background: linear-gradient(135deg, var(--pink), var(--purple));
+      box-shadow: var(--shadow);
+    }
+    .brand strong { display: block; color: #332b35; font-size: 23px; font-weight: 900; }
+    .brand span { color: var(--muted); font-size: 11px; font-weight: 800; }
+    .profile-card, .nav-card, .quick-card {
+      border: 1px solid var(--border); border-radius: 24px; background: var(--card); box-shadow: var(--shadow);
+    }
+    .profile-card { display: grid; grid-template-columns: 48px 1fr; gap: 10px; align-items: center; padding: 12px; margin-bottom: 14px; }
+    .avatar { width: 48px; height: 48px; border-radius: 18px; display: grid; place-items: center; background: var(--blue-soft); font-size: 24px; }
+    .profile-card b, .profile-card span { display: block; }
+    .profile-card b { color: #332b35; }
+    .profile-card span { color: var(--muted); font-size: 11px; font-weight: 800; }
+    .nav-card { padding: 10px; display: grid; gap: 6px; margin-bottom: 14px; }
+    .nav-title { margin: 8px 8px 3px; color: #b49ba8; font-size: 11px; font-weight: 900; }
+    .nav-card button {
+      width: 100%; min-height: 40px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 15px;
+      color: #716574; background: transparent; padding: 0 12px; font-weight: 900; text-align: left;
+      transition: transform .18s ease, background .18s ease, color .18s ease;
+    }
+    .nav-card button:hover, .nav-card button.active {
+      transform: translateX(2px); color: var(--pink-deep);
+      background: linear-gradient(90deg, var(--pink-soft), var(--blue-soft));
+    }
+    .quick-card { padding: 12px; display: grid; gap: 9px; }
+    .quick-card small { color: var(--muted); font-weight: 800; }
+    .main { min-width: 0; padding: 26px; }
+    .hero {
+      min-height: 128px; display: flex; justify-content: space-between; gap: 16px; align-items: center;
+      margin-bottom: 20px; padding: 22px 24px; border: 1px solid var(--border); border-radius: 30px;
+      background:
+        radial-gradient(circle at 92% 10%, rgba(255,141,161,.16), transparent 22%),
+        linear-gradient(135deg, rgba(255,255,255,.96), rgba(255,247,249,.9), rgba(243,252,253,.82));
+      box-shadow: var(--shadow);
+    }
+    .eyebrow { margin: 0 0 6px; color: var(--pink-deep); font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    h1 { margin: 0; color: #332b35; font-size: 31px; line-height: 1.12; }
+    .hero p:last-child { margin: 8px 0 0; color: var(--muted); font-weight: 800; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+
+    .btn {
+      min-height: 36px; border: 1px solid var(--border); border-radius: 14px; padding: 0 14px;
+      color: #706372; background: rgba(255,255,255,.86); font-weight: 900;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease;
+    }
+    .btn:hover { transform: translateY(-1px); border-color: rgba(255,141,161,.5); box-shadow: 0 10px 22px rgba(255,141,161,.12); }
+    .btn.primary, .btn.danger, .btn.warning, .btn.success { color: white; border-color: transparent; }
+    .btn.primary { background: linear-gradient(135deg, var(--pink), var(--purple)); }
+    .btn.danger { background: linear-gradient(135deg, #ff7f96, var(--pink-deep)); }
+    .btn.warning { background: linear-gradient(135deg, var(--yellow), #ee9f4f); }
+    .btn.success { background: linear-gradient(135deg, var(--mint), #4fc4ad); }
+    .btn.small { min-height: 30px; padding: 0 10px; border-radius: 11px; font-size: 12px; }
+    .tag { display: inline-flex; align-items: center; min-height: 24px; border-radius: 99px; padding: 0 9px; font-size: 12px; font-weight: 900; }
+    .tag.green { color: #2c9b73; background: #eefbf2; border: 1px solid #d6f4df; }
+    .tag.blue { color: #496de3; background: #f2f6ff; border: 1px solid #dce7ff; }
+    .tag.yellow { color: #d58b1c; background: #fff7e7; border: 1px solid #fde8bd; }
+    .tag.red { color: var(--pink-deep); background: var(--pink-soft); border: 1px solid #ffd8df; }
+
+    .page { display: none; animation: fadeIn .22s ease; }
+    .page.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes jelly { 0%,100%{transform:scale(1)} 35%{transform:scale(.98,1.03)} 62%{transform:scale(1.025,.985)} }
+
+    .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+    .panel, .stat-card, .media-card, .result-card, .day-card, .settings-shell, .terminal-card {
+      border: 1px solid var(--border); border-radius: 26px; background: var(--card); box-shadow: var(--shadow);
+    }
+    .stat-card { position: relative; overflow: hidden; min-height: 158px; display: grid; gap: 8px; padding: 18px; }
+    .stat-card::after { content: ""; position: absolute; right: -28px; bottom: -30px; width: 106px; height: 106px; border-radius: 99px; background: rgba(255,141,161,.1); }
+    .stat-card small { color: var(--muted); font-weight: 900; }
+    .stat-card strong { color: #332b35; font-size: 30px; }
+    .stat-card p { margin: 0; color: var(--muted); font-size: 13px; font-weight: 800; }
+    .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) 340px; gap: 16px; margin-top: 16px; }
+    .panel { padding: 16px; }
+    .panel-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .panel-head strong { color: #332b35; font-size: 18px; }
+    .panel-head span { color: var(--muted); font-size: 12px; font-weight: 800; }
+    .task-list { display: grid; gap: 12px; }
+    .task-card { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--border); border-radius: 20px; background: linear-gradient(135deg, rgba(255,245,246,.82), rgba(243,252,253,.66)); }
+    .task-line { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; }
+    .task-line strong, .task-line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .progress { height: 9px; overflow: hidden; border-radius: 99px; background: #f6edf1; }
+    .progress b { display: block; height: 100%; width: var(--p, 40%); border-radius: inherit; background: linear-gradient(90deg, var(--pink), var(--purple), var(--blue)); }
+    .timeline { display: grid; gap: 10px; }
+    .timeline-row { display: grid; grid-template-columns: 16px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 10px; border-radius: 16px; background: rgba(255,255,255,.75); border: 1px solid var(--border); }
+    .dot { width: 10px; height: 10px; border-radius: 99px; background: var(--blue); box-shadow: 0 0 0 5px rgba(130,217,237,.16); }
+
+    .toolbar {
+      display: grid; grid-template-columns: minmax(280px,1fr) auto; gap: 16px; align-items: center;
+      margin-bottom: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 26px; background: var(--card); box-shadow: var(--shadow);
+    }
+    .toolbar strong { display: block; color: #332b35; font-size: 18px; margin-bottom: 8px; }
+    .toolbar input, .toolbar select {
+      width: 100%; min-height: 38px; border: 1px solid var(--border); border-radius: 14px; padding: 0 12px; background: white; outline: 0;
+    }
+    .toolbar input:focus, .toolbar select:focus { border-color: rgba(255,141,161,.65); box-shadow: 0 0 0 4px rgba(255,141,161,.12); }
+    .toolbar-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+    .filters { display: grid; gap: 11px; margin-bottom: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 24px; background: rgba(255,255,255,.82); box-shadow: var(--shadow); }
+    .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .filter-row span { min-width: 54px; color: var(--muted); font-size: 12px; font-weight: 900; }
+    .filter-row button { border: 1px solid var(--border); border-radius: 99px; min-height: 30px; padding: 0 12px; color: #6a5e6b; background: white; font-weight: 800; }
+    .filter-row button.active { color: white; background: linear-gradient(135deg, var(--pink), var(--purple)); border-color: transparent; }
+
+    .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; }
+    .media-card {
+      overflow: hidden; padding: 14px; transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
+    }
+    .media-card:hover { transform: translateY(-4px) scale(1.01); box-shadow: var(--shadow-strong); border-color: rgba(255,141,161,.5); }
+    .poster {
+      position: relative; aspect-ratio: 3 / 4; border-radius: 20px; overflow: hidden; margin-bottom: 12px;
+      background: linear-gradient(135deg, var(--pink-soft), var(--blue-soft));
+    }
+    .poster::before { content: attr(data-initial); position: absolute; inset: 0; display: grid; place-items: center; color: white; font-size: 40px; font-weight: 900; background: linear-gradient(135deg, var(--pink), var(--purple)); }
+    .poster img { position: relative; z-index: 1; width: 100%; height: 100%; object-fit: cover; display: block; }
+    .poster-badge { position: absolute; z-index: 2; left: 10px; top: 10px; backdrop-filter: blur(10px); }
+    .card-title { min-height: 46px; margin: 0 0 8px; color: #241d27; font-size: 16px; line-height: 1.35; font-weight: 900; }
+    .card-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 56px; align-content: start; }
+    .card-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 13px; color: var(--muted); font-size: 12px; font-weight: 900; }
+    .empty { min-height: 280px; display: grid; place-items: center; text-align: center; border: 1px dashed #f0d9e0; border-radius: 26px; background: rgba(255,255,255,.72); color: var(--muted); }
+    .empty b { display: block; color: #332b35; font-size: 18px; margin: 10px 0 4px; }
+
+    .discovery-hero { display: grid; grid-template-columns: .7fr 1.3fr; gap: 18px; align-items: center; padding: 20px; margin-bottom: 16px; }
+    .search-box { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 22px; background: linear-gradient(135deg, var(--pink-soft), var(--blue-soft)); }
+    .search-options { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+    .result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .result-card { display: grid; grid-template-columns: 92px minmax(0,1fr); gap: 14px; padding: 14px; transition: transform .2s ease, box-shadow .2s ease; }
+    .result-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-strong); }
+    .result-cover { width: 92px; height: 126px; border-radius: 18px; display: grid; place-items: center; color: white; font-weight: 900; background: linear-gradient(135deg, var(--pink), var(--purple)); }
+
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(170px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 6px; }
+    .day-card { min-height: 430px; padding: 12px; display: grid; align-content: start; gap: 10px; }
+    .day-card.today { border-color: rgba(255,141,161,.6); background: linear-gradient(180deg, var(--pink-soft), rgba(255,255,255,.88)); }
+    .day-head { display: flex; justify-content: space-between; color: #332b35; font-weight: 900; }
+    .calendar-item { display: grid; grid-template-columns: 52px 1fr; gap: 9px; padding: 9px; border: 1px solid var(--border); border-radius: 18px; background: white; }
+    .mini-cover { width: 52px; height: 70px; border-radius: 14px; display: grid; place-items: center; color: white; background: linear-gradient(135deg, var(--pink), var(--purple)); font-weight: 900; }
+
+    .settings-shell { display: grid; grid-template-columns: 190px minmax(0,1fr); overflow: hidden; }
+    .settings-tabs { padding: 14px; background: rgba(255,250,252,.8); border-right: 1px solid var(--border); }
+    .settings-tabs button { width: 100%; min-height: 40px; border: 0; border-radius: 14px; padding: 0 12px; background: transparent; color: #716574; text-align: left; font-weight: 900; }
+    .settings-tabs button.active { color: var(--pink-deep); background: linear-gradient(90deg, var(--pink-soft), var(--blue-soft)); }
+    .settings-panel { padding: 18px; display: grid; gap: 16px; }
+    .setting-group { border: 1px solid var(--border); border-radius: 22px; background: rgba(255,255,255,.86); padding: 16px; }
+    .setting-group h3 { margin: 0 0 12px; color: #332b35; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 900; }
+    label input, label select, label textarea { min-height: 38px; border: 1px solid var(--border); border-radius: 14px; padding: 0 12px; background: white; color: var(--ink); outline: 0; }
+    label textarea { min-height: 82px; padding-top: 10px; resize: vertical; }
+    .switch-line { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 900; }
+    .switch { width: 42px; height: 24px; border-radius: 99px; background: #f2e7eb; padding: 3px; transition: .2s ease; }
+    .switch::before { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: white; box-shadow: 0 2px 6px rgba(0,0,0,.12); transition: .2s ease; }
+    .switch.on { background: linear-gradient(135deg, var(--pink), var(--purple)); }
+    .switch.on::before { transform: translateX(18px); }
+    .maintenance-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+    .terminal-card { padding: 16px; background: #332b35; color: #fff6f8; font-family: Consolas, monospace; min-height: 320px; }
+
+    .drawer, .modal-backdrop { position: fixed; inset: 0; z-index: 60; display: none; }
+    .drawer.show, .modal-backdrop.show { display: block; }
+    .drawer::before, .modal-backdrop { background: rgba(56,45,58,.34); backdrop-filter: blur(4px); }
+    .drawer::before { content: ""; position: absolute; inset: 0; }
+    .drawer-panel {
+      position: absolute; right: 0; top: 0; height: 100%; width: min(920px, 94vw); overflow: auto;
+      padding: 20px; background: linear-gradient(180deg, #fff, #fff9fb); box-shadow: -24px 0 60px rgba(92,82,93,.18);
+      animation: slideIn .22s ease;
+    }
+    @keyframes slideIn { from { transform: translateX(30px); opacity: .6; } to { transform: translateX(0); opacity: 1; } }
+    .entry-hero { display: grid; grid-template-columns: 170px 1fr; gap: 18px; padding: 16px; margin-bottom: 16px; }
+    .entry-cover { width: 170px; aspect-ratio: 3 / 4; border-radius: 22px; display: grid; place-items: center; color: white; background: linear-gradient(135deg, var(--pink), var(--purple)); font-size: 38px; font-weight: 900; }
+    .episode-table { display: grid; gap: 8px; }
+    .episode-row { display: grid; grid-template-columns: 56px minmax(0,1fr) auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 16px; background: white; }
+    .episode-row span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .modal {
+      position: fixed; z-index: 70; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(860px, 94vw); max-height: 90vh; overflow: auto;
+      border: 1px solid var(--border); border-radius: 28px; background: white; box-shadow: 0 28px 80px rgba(92,82,93,.22); padding: 18px; display: none;
+    }
+    .modal.show { display: block; animation: fadeIn .18s ease; }
+    .steps { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 16px; }
+    .step { padding: 10px; border-radius: 14px; background: var(--pink-soft); color: var(--muted); font-weight: 900; text-align: center; }
+    .step.active { color: white; background: linear-gradient(135deg, var(--pink), var(--purple)); }
+    .source-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+    .source-card { min-height: 128px; display: grid; place-items: center; text-align: center; border: 1px solid var(--border); border-radius: 22px; background: white; font-weight: 900; transition: .18s ease; }
+    .source-card:hover { animation: jelly .5s ease; border-color: rgba(255,141,161,.5); box-shadow: var(--shadow); }
+    .toast-stack { position: fixed; right: 20px; top: 18px; z-index: 90; display: grid; gap: 10px; width: min(340px, calc(100vw - 28px)); }
+    .toast { padding: 12px 14px; border: 1px solid var(--border); border-left: 5px solid var(--pink); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: var(--shadow); animation: fadeIn .18s ease; }
+
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { position: relative; height: auto; }
+      .dashboard-grid, .discovery-hero, .settings-shell { grid-template-columns: 1fr; }
+      .grid-4, .source-cards { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+    @media (max-width: 720px) {
+      .main { padding: 14px; }
+      .hero, .toolbar { grid-template-columns: 1fr; display: grid; }
+      .grid-4, .form-grid, .maintenance-grid, .search-options, .source-cards { grid-template-columns: 1fr; }
+      .media-grid { grid-template-columns: 1fr; }
+      .entry-hero, .episode-row, .result-card { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-logo">AT</div><div><strong>AniTrack</strong><span>Mochi media workshop</span></div></div>
+      <section class="profile-card"><div class="avatar">🌸</div><div><b>媒体工坊</b><span>实时连接中 · 4 个下载任务</span></div></section>
+      <nav class="nav-card">
+        <div class="nav-title">媒体</div>
+        <button class="active" data-page="dashboard">📊 控制台</button>
+        <button data-page="seasonal">📺 新番</button>
+        <button data-page="discovery">🔎 发现</button>
+        <button data-page="calendar">📅 日历</button>
+        <button data-page="anime">📚 番剧</button>
+        <button data-page="movie">🎬 电影</button>
+        <button data-page="tv">🧩 电视剧</button>
+        <div class="nav-title">系统</div>
+        <button data-page="logs">📄 日志</button>
+        <button data-page="settings">⚙️ 设置</button>
+      </nav>
+      <section class="quick-card">
+        <small>快捷操作</small>
+        <button class="btn primary" onclick="toast('RSS 扫描已加入任务')">扫描 RSS</button>
+        <button class="btn" onclick="showPage('discovery')">发现资源</button>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="hero">
+        <div><p class="eyebrow" id="eyebrow">Scanner · Tasks</p><h1 id="title">控制台</h1><p id="subtitle">扫描、下载、整理和元数据任务的主控台。</p></div>
+        <div class="hero-actions"><span class="tag green">Live</span><button class="btn primary" onclick="toast('开始扫描 RSS')">扫描 RSS</button><button class="btn" onclick="openWizard()">收录作品</button></div>
+      </header>
+
+      <section id="dashboard" class="page active">
+        <div class="grid-4">
+          <article class="stat-card"><small>扫描器</small><strong>运行中</strong><p>正在同步 Bangumi ID 和集数资源。</p><button class="btn small primary">查看任务</button></article>
+          <article class="stat-card"><small>下载任务</small><strong>4</strong><p>2 个云存储，2 个下载中。</p><button class="btn small">取消全部</button></article>
+          <article class="stat-card"><small>本地资源</small><strong>68</strong><p>本地可观看集数。</p><button class="btn small">刷新状态</button></article>
+          <article class="stat-card"><small>告警</small><strong>1</strong><p>有一个任务等待重试。</p><button class="btn small danger">处理</button></article>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel"><div class="panel-head"><div><strong>下载工坊</strong><span>统一展示云存储、下载中和整理完成状态</span></div><span class="tag yellow">活动 4</span></div><div class="task-list" id="taskList"></div></section>
+          <aside class="panel"><div class="panel-head"><div><strong>任务流水</strong><span>最近运行状态</span></div></div><div class="timeline" id="timeline"></div></aside>
+        </div>
+      </section>
+
+      <section id="seasonal" class="page"></section>
+      <section id="anime" class="page"></section>
+      <section id="movie" class="page"></section>
+      <section id="tv" class="page"></section>
+
+      <section id="discovery" class="page">
+        <div class="panel discovery-hero"><div><p class="eyebrow">Discovery</p><h2>资源搜索</h2><p>从 Mikan、Torznab、Prowlarr 等来源聚合作品和集数资源。</p></div><div class="search-box"><input placeholder="搜索作品、磁链标题或字幕组" /><div class="search-options"><select><option>动画</option><option>电影</option></select><select><option>2026</option><option>全部年份</option></select><select><option>全部来源</option></select><button class="btn primary" onclick="toast('搜索完成，找到 6 个候选')">搜索</button></div></div></div>
+        <div class="result-grid" id="results"></div>
+      </section>
+
+      <section id="calendar" class="page"><div class="toolbar"><div><strong>本周更新</strong><input value="第 26 周 2026" /></div><div class="toolbar-actions"><button class="btn">上一周</button><button class="btn primary">本周</button><button class="btn">下一周</button></div></div><div class="calendar-grid" id="calendarGrid"></div></section>
+
+      <section id="logs" class="page"><div class="terminal-card">2026-06-26T20:20:15 [INFO] RSS 扫描完成: 12 条<br>2026-06-26T20:20:19 [INFO] 下载任务创建: 尖帽子的魔法工房 第12集<br>2026-06-26T20:21:02 [WARN] 远端文件等待云存储完成</div></section>
+
+      <section id="settings" class="page">
+        <div class="settings-shell">
+          <aside class="settings-tabs"><button class="active">基础</button><button>下载器</button><button>搜索源</button><button>媒体库</button><button>定时器</button><button>维护</button></aside>
+          <div class="settings-panel">
+            <section class="setting-group"><h3>基础设置</h3><div class="form-grid"><label>全局代理<input value="http://192.168.31.146:10808" /></label><label>TMDB Token<input value="••••••••••••" /></label></div><p class="switch-line"><span class="switch on"></span>生成 NFO 元数据</p></section>
+            <section class="setting-group"><h3>搜索源</h3><div class="task-card"><div class="task-line"><strong>Mikan RSS</strong><span class="tag green">启用</span><button class="btn small">编辑</button></div></div><div class="task-card"><div class="task-line"><strong>Prowlarr</strong><span class="tag blue">Torznab</span><button class="btn small">编辑</button></div></div></section>
+            <section class="setting-group"><h3>维护</h3><div class="maintenance-grid"><button class="btn">清除 RSS 缓存</button><button class="btn">刷新全部元数据</button><button class="btn">整理全部本地资源</button><button class="btn danger">清除所有数据</button></div></section>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer" id="drawer"><div class="drawer-panel"><button class="btn" onclick="closeDrawer()">关闭</button><section class="panel entry-hero"><div class="entry-cover">尖</div><div><p class="eyebrow">Season 01</p><h2>尖帽子的魔法工房</h2><p>少女与魔法师相遇，进入隐藏于日常背后的魔法世界。</p><div class="card-tags"><span class="tag green">可观看 12 集</span><span class="tag yellow">Bangumi 6.5</span><span class="tag blue">TMDB 9.0</span></div></div></section><section class="panel"><div class="panel-head"><div><strong>集数资源</strong><span>主行简洁，展开后看资源与字幕</span></div><button class="btn primary">批量下载</button></div><div class="episode-table" id="episodes"></div></section></div></div>
+
+  <div class="modal-backdrop" id="modalBackdrop" onclick="closeWizard()"></div>
+  <div class="modal" id="wizard"><div class="panel-head"><div><strong>收录作品</strong><span>假数据向导，用来调整布局和动效</span></div><button class="btn" onclick="closeWizard()">关闭</button></div><div class="steps"><div class="step active">资源来源</div><div class="step">作品匹配</div><div class="step">集数编辑</div><div class="step">确认</div></div><div class="source-cards"><button class="source-card">🔗<br>磁力链接<br><small>一行一个，自动识别集数</small></button><button class="source-card">📁<br>服务器文件<br><small>选择 /media 下的文件</small></button><button class="source-card">📝<br>仅登记作品<br><small>稍后再补资源</small></button></div><div class="setting-group" style="margin-top:14px"><h3>集数预览</h3><div class="episode-table"><div class="episode-row"><b>11</b><span>尖帽子的魔法工房 - S01E11</span><span class="tag yellow">未下载</span><button class="btn small">编辑</button></div><div class="episode-row"><b>12</b><span>尖帽子的魔法工房 - S01E12</span><span class="tag green">可观看</span><button class="btn small">编辑</button></div></div></div><div class="hero-actions" style="margin-top:14px"><button class="btn">上一步</button><button class="btn primary" onclick="toast('收录任务已创建')">确认收录</button></div></div>
+  <div class="toast-stack" id="toasts"></div>
+
+  <script>
+    const pages = {
+      dashboard: ['Scanner · Tasks', '控制台', '扫描、下载、整理和元数据任务的主控台。'],
+      seasonal: ['Seasonal Anime', '新番', '追踪 RSS 新番，自动选集并整理到本地媒体库。'],
+      discovery: ['Discovery', '发现', '搜索资源候选并进入收录流程。'],
+      calendar: ['Weekly Calendar', '日历', '按周查看最近更新。'],
+      anime: ['Anime Library', '番剧', '管理动画条目和集数资源。'],
+      movie: ['Movie Library', '电影', '管理电影资源和本地整理。'],
+      tv: ['TV Library', '电视剧', '管理电视剧季度和本地整理。'],
+      logs: ['Logs', '日志', '查看运行日志。'],
+      settings: ['Settings', '设置', '配置代理、下载器、搜索源和维护动作。']
+    };
+    const shows = [
+      ['尖帽子的魔法工房','第1季','可观看 12 集','Bangumi 6.5','TMDB 9.0','2026','日本','尖'],
+      ['在超市后门吸烟的二人','第1季','可观看 11 集','Bangumi 7.2','', '2026','日本','烟'],
+      ['黑猫与魔女的教室','第1季','可观看 11 集','Bangumi 5.9','TMDB 7.0','2026','日本','黑'],
+      ['杖与剑的魔剑谭','第2季','可观看 2 集','Bangumi 6.8','TMDB 8.1','2026','日本','杖'],
+      ['日本三国','第1季','可观看 12 集','Bangumi 6.1','','2026','日本','三'],
+      ['主播女孩重度依赖','第1季','可观看 12 集','Bangumi 7.8','','2026','日本','直'],
+      ['Re：从零开始的异世界生活','第4季','可观看 16 集','Bangumi 8.1','TMDB 8.4','2026','日本','Re'],
+      ['女神“异世界转生想成为什么”','第1季','可观看 11 集','Bangumi 5.4','','2026','日本','女']
+    ];
+    const tasks = [
+      ['等待云存储','尖帽子的魔法工房 第12集','等待 PikPak 完成离线下载',20,'yellow'],
+      ['下载中','欢迎来到实力至上主义的教室 第16集','正在复制到本地媒体库',63,'blue'],
+      ['可观看','躲在超市后门抽烟的两人 第11集','整理完成',100,'green'],
+      ['失败','杖与剑的魔剑谭 第22集','远端文件未找到',0,'red']
+    ];
+    function tag(text,type){ return `<span class="tag ${type}">${text}</span>`; }
+    function renderCards(id, title) {
+      const el = document.getElementById(id);
+      el.innerHTML = `<div class="toolbar"><div><strong>${title}影视墙</strong><input placeholder="搜索标题、ID、标签" /></div><div class="toolbar-actions"><button class="btn">高级筛选</button><button class="btn primary" onclick="openWizard()">收录作品</button></div></div><div class="filters"><div class="filter-row"><span>年份</span><button class="active">全部</button><button>2026</button><button>2025</button><button>2024</button></div><div class="filter-row"><span>标签</span><button class="active">全部</button><button>轻改</button><button>校园</button><button>奇幻</button><button>战斗</button></div></div><div class="media-grid">${shows.map(s=>`<article class="media-card" onclick="openDrawer()"><div class="poster" data-initial="${s[7]}"><span class="poster-badge tag blue">${s[1]}</span></div><h3 class="card-title">${s[0]}</h3><div class="card-tags">${tag(s[2],'green')}${tag('已更新','blue')}${s[3]?tag(s[3],'yellow'):''}${s[4]?tag(s[4],'yellow'):''}</div><div class="card-foot"><span>${s[5]}</span><span>${s[6]}</span></div></article>`).join('')}</div>`;
+    }
+    function renderTasks() {
+      taskList.innerHTML = tasks.map(t => `<article class="task-card"><div class="task-line">${tag(t[0],t[4])}<strong>${t[1]}</strong><button class="btn small">操作</button></div><span>${t[2]}</span><div class="progress" style="--p:${t[3]}%"><b></b></div></article>`).join('');
+      timeline.innerHTML = tasks.map(t => `<div class="timeline-row"><i class="dot"></i><div><b>${t[1]}</b><br><small>${t[0]} · 刚刚更新</small></div>${tag(t[0],t[4])}</div>`).join('');
+    }
+    function renderDiscovery() {
+      results.innerHTML = shows.slice(0,6).map(s => `<article class="result-card"><div class="result-cover">${s[7]}</div><div><h3>${s[0]}</h3><p>${s[1]} · LoliHouse · 1080p · 简繁内封</p><div class="card-tags">${tag('12 集资源','green')}${tag('3 来源','blue')}${tag('HEVC','yellow')}</div><p><button class="btn small primary" onclick="openWizard()">收录</button> <button class="btn small">应用补全</button></p></div></article>`).join('');
+    }
+    function renderCalendar() {
+      const days = ['周一','周二','周三','周四','周五','周六','周日'];
+      calendarGrid.innerHTML = days.map((d,i)=>`<section class="day-card ${i===4?'today':''}"><div class="day-head"><b>${d}</b><span>06/${22+i}</span></div>${i%2===0?`<article class="calendar-item"><div class="mini-cover">${shows[i][7]}</div><div><b>${shows[i][0]}</b><br><small>${shows[i][1]}</small><p>${tag('第 '+(11+i)+' 集','blue')}</p></div></article>`:'<div class="empty">无更新</div>'}</section>`).join('');
+    }
+    function renderEpisodes() {
+      episodes.innerHTML = Array.from({length: 6}, (_,i)=>`<div class="episode-row"><b>${i+7}</b><span>尖帽子的魔法工房 - S01E${String(i+7).padStart(2,'0')}</span>${tag(i<4?'可观看':'未下载',i<4?'green':'yellow')}<button class="btn small">操作</button></div>`).join('');
+    }
+    function showPage(id) {
+      document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      document.querySelectorAll('.nav-card button').forEach(b=>b.classList.toggle('active', b.dataset.page===id));
+      eyebrow.textContent = pages[id][0]; title.textContent = pages[id][1]; subtitle.textContent = pages[id][2];
+    }
+    document.querySelectorAll('.nav-card button[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
+    function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.innerHTML='<b>AniTrack</b><br><span>'+msg+'</span>'; toasts.prepend(t); setTimeout(()=>t.remove(),3600); }
+    function openDrawer(){ drawer.classList.add('show'); renderEpisodes(); }
+    function closeDrawer(){ drawer.classList.remove('show'); }
+    function openWizard(){ modalBackdrop.classList.add('show'); wizard.classList.add('show'); }
+    function closeWizard(){ modalBackdrop.classList.remove('show'); wizard.classList.remove('show'); }
+    renderTasks(); renderCards('seasonal','新番'); renderCards('anime','番剧'); renderCards('movie','电影'); renderCards('tv','电视剧'); renderDiscovery(); renderCalendar();
+  </script>
+</body>
+</html>
