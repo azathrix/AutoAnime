@@ -433,6 +433,81 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS search_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'mikan',
+                base_url TEXT NOT NULL DEFAULT '',
+                api_key TEXT NOT NULL DEFAULT '',
+                categories TEXT NOT NULL DEFAULT '',
+                proxy TEXT NOT NULL DEFAULT '',
+                timeout_seconds INTEGER NOT NULL DEFAULT 20,
+                rate_limit_seconds INTEGER NOT NULL DEFAULT 0,
+                priority INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                last_status TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS discovery_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyword TEXT NOT NULL DEFAULT '',
+                media_type TEXT NOT NULL DEFAULT 'anime',
+                year INTEGER NOT NULL DEFAULT 0,
+                season TEXT NOT NULL DEFAULT '',
+                source_ids TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'completed',
+                result_count INTEGER NOT NULL DEFAULT 0,
+                resource_count INTEGER NOT NULL DEFAULT 0,
+                error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS discovery_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                search_id INTEGER NOT NULL DEFAULT 0,
+                result_key TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                original_title TEXT NOT NULL DEFAULT '',
+                media_type TEXT NOT NULL DEFAULT 'anime',
+                year INTEGER NOT NULL DEFAULT 0,
+                bangumi_id TEXT NOT NULL DEFAULT '',
+                tmdb_id TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                poster_url TEXT NOT NULL DEFAULT '',
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                confidence REAL NOT NULL DEFAULT 0,
+                source_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(search_id, result_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS discovery_resources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                result_id INTEGER NOT NULL,
+                search_id INTEGER NOT NULL DEFAULT 0,
+                source_id INTEGER NOT NULL DEFAULT 0,
+                source_name TEXT NOT NULL DEFAULT '',
+                source_kind TEXT NOT NULL DEFAULT '',
+                episode_number INTEGER NOT NULL DEFAULT 0,
+                resource_ref TEXT NOT NULL DEFAULT '',
+                subtitle_ref TEXT NOT NULL DEFAULT '',
+                subtitle_group TEXT NOT NULL DEFAULT '',
+                resolution TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                subtitle_format TEXT NOT NULL DEFAULT '',
+                source_title TEXT NOT NULL DEFAULT '',
+                published_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(result_id, episode_number, resource_ref, subtitle_ref)
+            );
+
             CREATE TABLE IF NOT EXISTS schedules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 key TEXT NOT NULL UNIQUE,
@@ -962,6 +1037,81 @@ def migrate(conn: sqlite3.Connection) -> None:
             enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS search_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'mikan',
+            base_url TEXT NOT NULL DEFAULT '',
+            api_key TEXT NOT NULL DEFAULT '',
+            categories TEXT NOT NULL DEFAULT '',
+            proxy TEXT NOT NULL DEFAULT '',
+            timeout_seconds INTEGER NOT NULL DEFAULT 20,
+            rate_limit_seconds INTEGER NOT NULL DEFAULT 0,
+            priority INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            last_status TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS discovery_searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyword TEXT NOT NULL DEFAULT '',
+            media_type TEXT NOT NULL DEFAULT 'anime',
+            year INTEGER NOT NULL DEFAULT 0,
+            season TEXT NOT NULL DEFAULT '',
+            source_ids TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'completed',
+            result_count INTEGER NOT NULL DEFAULT 0,
+            resource_count INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS discovery_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            search_id INTEGER NOT NULL DEFAULT 0,
+            result_key TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            original_title TEXT NOT NULL DEFAULT '',
+            media_type TEXT NOT NULL DEFAULT 'anime',
+            year INTEGER NOT NULL DEFAULT 0,
+            bangumi_id TEXT NOT NULL DEFAULT '',
+            tmdb_id TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '',
+            poster_url TEXT NOT NULL DEFAULT '',
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL NOT NULL DEFAULT 0,
+            source_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(search_id, result_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS discovery_resources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            result_id INTEGER NOT NULL,
+            search_id INTEGER NOT NULL DEFAULT 0,
+            source_id INTEGER NOT NULL DEFAULT 0,
+            source_name TEXT NOT NULL DEFAULT '',
+            source_kind TEXT NOT NULL DEFAULT '',
+            episode_number INTEGER NOT NULL DEFAULT 0,
+            resource_ref TEXT NOT NULL DEFAULT '',
+            subtitle_ref TEXT NOT NULL DEFAULT '',
+            subtitle_group TEXT NOT NULL DEFAULT '',
+            resolution TEXT NOT NULL DEFAULT '',
+            language TEXT NOT NULL DEFAULT '',
+            subtitle_format TEXT NOT NULL DEFAULT '',
+            source_title TEXT NOT NULL DEFAULT '',
+            published_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(result_id, episode_number, resource_ref, subtitle_ref)
         );
         """
     )

@@ -184,6 +184,32 @@ class SchedulePayload(BaseModel):
     interval_minutes: int = 60
     config: dict[str, Any] = Field(default_factory=dict)
 
+class SearchSourcePayload(BaseModel):
+    name: str = ""
+    kind: str = "mikan"
+    base_url: str = ""
+    api_key: str = ""
+    categories: str = ""
+    proxy: str = ""
+    timeout_seconds: int = 20
+    rate_limit_seconds: int = 0
+    priority: int = 0
+    enabled: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+
+class DiscoverySearchPayload(BaseModel):
+    keyword: str = ""
+    media_type: str = "anime"
+    year: int = 0
+    season: str = ""
+    source_ids: list[int] = Field(default_factory=list)
+
+class BackfillApplyPayload(BaseModel):
+    search_id: int = 0
+    result_id: int = 0
+    resource_ids: list[int] = Field(default_factory=list)
+    auto_download: bool = True
+
 class ProcessorSettingsPayload(BaseModel):
     download_concurrency: int = 2
 

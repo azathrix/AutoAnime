@@ -10,6 +10,7 @@
       <nav>
         <div class="nav-caption">媒体</div>
         <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon> 新番</button>
+        <button :class="{ active: view === 'discovery' }" @click="view = 'discovery'"><el-icon><Search /></el-icon> 发现</button>
         <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon> 日历</button>
         <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon> 番剧</button>
         <button :class="{ active: view === 'movies' }" @click="view = 'movies'"><el-icon><Collection /></el-icon> 电影</button>
@@ -33,6 +34,7 @@
       <DashboardPage />
       <LogsPage />
       <SeasonalPage />
+      <DiscoveryPage />
       <CalendarPage />
       <MediaCatalogPage />
       <SettingsPage />
@@ -41,6 +43,7 @@
     <nav class="mobile-nav" aria-label="移动端导航">
       <button :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'"><el-icon><DataBoard /></el-icon><b>控制台</b></button>
       <button :class="{ active: view === 'seasonal' }" @click="view = 'seasonal'"><el-icon><Collection /></el-icon><b>新番</b></button>
+      <button :class="{ active: view === 'discovery' }" @click="view = 'discovery'"><el-icon><Search /></el-icon><b>发现</b></button>
       <button :class="{ active: view === 'calendar' }" @click="view = 'calendar'"><el-icon><Calendar /></el-icon><b>日历</b></button>
       <button :class="{ active: view === 'library' }" @click="view = 'library'"><el-icon><Collection /></el-icon><b>番剧</b></button>
       <button :class="{ active: view === 'movies' }" @click="view = 'movies'"><el-icon><Collection /></el-icon><b>电影</b></button>
@@ -61,6 +64,7 @@ import { Calendar, Collection, DataBoard, Document, Refresh, Search, Setting } f
 import { deleteAction, getAction, getCalendar, getCatalog, getDashboard, getDiagnostics, getLogs, getMediaItem, getSettings, postAction, putAction, saveMediaItem, saveSettings, uploadFile } from './api'
 import { APP_BUILD, APP_VERSION } from './version'
 import { createAppActions } from './composables/appActions'
+import { createDiscoveryActions } from './composables/discoveryActions'
 import {
   addDays,
   cardInitials,
@@ -97,13 +101,14 @@ import {
 import DashboardPage from './components/DashboardPage.vue'
 import LogsPage from './components/LogsPage.vue'
 import SeasonalPage from './components/SeasonalPage.vue'
+import DiscoveryPage from './components/DiscoveryPage.vue'
 import CalendarPage from './components/CalendarPage.vue'
 import MediaCatalogPage from './components/MediaCatalogPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import EntryDrawer from './components/EntryDrawer.vue'
 import EntryDialogs from './components/EntryDialogs.vue'
 
-const validViews = new Set(['dashboard', 'seasonal', 'calendar', 'library', 'movies', 'tv', 'logs', 'settings'])
+const validViews = new Set(['dashboard', 'seasonal', 'discovery', 'calendar', 'library', 'movies', 'tv', 'logs', 'settings'])
 function initialView() {
   const saved = window.localStorage.getItem('anitrack:view') || ''
   return validViews.has(saved) ? saved : 'seasonal'
@@ -193,6 +198,33 @@ const catalogState = reactive({
   facets: {},
   loading: false,
   loading_more: false,
+})
+const discoveryState = reactive({
+  keyword: '',
+  media_type: 'anime',
+  year: '',
+  season: '',
+  source_ids: [],
+  loading: false,
+  search: {},
+  items: [],
+  backfill_entry_id: 0,
+  best_result_id: 0,
+})
+const searchSources = ref([])
+const searchSourcesLoading = ref(false)
+const searchSourceEditingId = ref(0)
+const searchSourceForm = reactive({
+  name: '',
+  kind: 'mikan',
+  base_url: '',
+  api_key: '',
+  categories: '',
+  proxy: '',
+  timeout_seconds: 20,
+  rate_limit_seconds: 0,
+  priority: 0,
+  enabled: true,
 })
 const calendarItems = ref([])
 const logsData = reactive({
@@ -342,6 +374,7 @@ const appContext = new Proxy(appContextBindings, {
 const pageTitle = computed(() => ({
   dashboard: '控制台',
   seasonal: '新番',
+  discovery: '发现',
   calendar: '日历',
   library: '番剧',
   movies: '电影',
@@ -803,9 +836,13 @@ async function loadLogsPage() {
 
 async function reloadCurrentPageData() {
   if (isCatalogView()) await loadCatalog({ reset: true })
+  if (view.value === 'discovery') await appContext.loadSearchSources?.()
   if (view.value === 'calendar') await loadCalendarPage()
   if (view.value === 'logs') await loadLogsPage()
-  if (view.value === 'settings') await reloadDiagnostics()
+  if (view.value === 'settings') {
+    await reloadDiagnostics()
+    await appContext.loadSearchSources?.()
+  }
 }
 
 async function reload() {
@@ -895,6 +932,7 @@ exposeAppContext({
   currentTagOptions,
   currentYearOptions,
   dashboard,
+  discoveryState,
   diagnostics,
   entryDrawerOpen,
   entryEditDialogOpen,
@@ -994,6 +1032,10 @@ exposeAppContext({
   rssLoading,
   rssSubscriptions,
   savingSettings,
+  searchSourceEditingId,
+  searchSourceForm,
+  searchSources,
+  searchSourcesLoading,
   scanRunning,
   scannerStatusText,
   scheduledBadgeText,
@@ -1061,19 +1103,40 @@ const {
   uploadFile,
 })
 
+const {
+  applyBackfillResult,
+  deleteSearchSource,
+  editSearchSource,
+  loadSearchSources,
+  openDiscoveryCollectDraft,
+  resetSearchSourceForm,
+  runDiscoverySearch,
+  saveSearchSource,
+  searchBackfillForCurrentEntry,
+  testSearchSource,
+} = createDiscoveryActions(appContext, {
+  deleteAction,
+  getAction,
+  postAction,
+  putAction,
+  openMediaWizard,
+  apiErrorMessage,
+})
+
 exposeAppContext({
+  applyBackfillResult,
   addDownloader, addMediaWizardResourceLines, addMediaWizardServerFile, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
   browseServerFiles,
   archiveCurrentEntry, backfillCurrentEntrySeason, cancelAllDownloads, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
   cancelGenericTask, clearGenericTask, pauseGenericTask, resumeGenericTask,
   commitEpisodeImport, commitMediaWizard,
-  deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
-  editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
+  deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, deleteSearchSource, downloadCurrentEntryResources, downloadEpisodeResource,
+  editRssSubscription, editSearchSource, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, loadSearchSources, normalizeSettingsShape, openDiscoveryCollectDraft, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
   openScheduledSettings, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
-  removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
+  removeMediaWizardSubtitleItem, resetRssForm, resetSearchSourceForm, resetSelectionRules, runAction, runDiscoverySearch, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
   saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
-  confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
+  saveSearchSource, searchBackfillForCurrentEntry, confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, testSearchSource, toggleEntryResourceRow,
   startMetadataProgress, stopMetadataProgress, syncScheduledJobForm, triggerSchedule, uploadMediaWizardFiles,
 })
 

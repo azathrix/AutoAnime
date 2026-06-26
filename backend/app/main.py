@@ -12,7 +12,7 @@ from .db import get_settings, init_db, log
 from .download_worker_service import trigger_download_worker
 from .media_service import reset_orphaned_download_jobs
 from .processors import register_builtin_processors
-from .routes import cache, dashboard, downloads, files, media, resources, rss, runtime, schedules, settings, tasks
+from .routes import cache, dashboard, discovery, downloads, files, media, resources, rss, runtime, schedules, settings, tasks
 from .runtime_service import reschedule, scheduler
 from .settings_service import sync_download_processor_concurrency
 from .utils import int_setting
@@ -40,6 +40,7 @@ app.include_router(settings.router)
 app.include_router(tasks.router)
 app.include_router(cache.router)
 app.include_router(schedules.router)
+app.include_router(discovery.router)
 app.include_router(rss.router)
 app.include_router(media.router)
 app.include_router(resources.router)

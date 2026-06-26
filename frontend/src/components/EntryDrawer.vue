@@ -81,7 +81,7 @@ export default appContextComponent()
               <el-dropdown trigger="click" @command="command => {
                 if (command === 'download') downloadCurrentEntryResources()
                 if (command === 'refresh') refreshCurrentEntryLocalStatus()
-                if (command === 'backfill') backfillCurrentEntrySeason()
+                if (command === 'backfill') searchBackfillForCurrentEntry()
                 if (command === 'match') openServerFileBrowser('match')
                 if (command === 'organize') organizeCurrentEntryLocalFiles()
                 if (command === 'import') openEpisodeImportDialog()

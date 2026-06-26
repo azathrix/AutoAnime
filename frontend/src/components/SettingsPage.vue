@@ -133,6 +133,73 @@ export default appContextComponent({ draggable, PriorityList })
                   <el-button plain @click="addDownloader">添加下载器</el-button>
                 </div>
               </el-tab-pane>
+              <el-tab-pane label="搜索源">
+                <el-alert
+                  type="info"
+                  show-icon
+                  :closable="false"
+                  title="发现页和本季补全会按优先级使用启用的搜索源。第一版优先支持 Mikan/RSS 和 Torznab/Prowlarr/Jackett。"
+                  class="settings-alert"
+                />
+                <div class="search-source-layout">
+                  <div class="search-source-list" v-loading="searchSourcesLoading">
+                    <div v-for="item in searchSources" :key="item.id" class="search-source-row" :class="{ disabled: !Number(item.enabled || 0) }">
+                      <div>
+                        <strong>{{ item.name }}</strong>
+                        <span>{{ item.kind }} · 优先级 {{ item.priority || 0 }}</span>
+                        <small v-if="item.last_error">{{ item.last_error }}</small>
+                      </div>
+                      <el-tag :type="Number(item.enabled || 0) ? 'success' : 'info'">{{ Number(item.enabled || 0) ? '启用' : '关闭' }}</el-tag>
+                      <el-tag v-if="item.last_status" :type="item.last_status === 'failed' ? 'danger' : 'success'">{{ item.last_status }}</el-tag>
+                      <el-button plain @click="editSearchSource(item)">编辑</el-button>
+                      <el-button plain @click="testSearchSource(item)">测试</el-button>
+                      <el-popconfirm title="删除这个搜索源？" @confirm="deleteSearchSource(item.id)">
+                        <template #reference>
+                          <el-button type="danger" plain>删除</el-button>
+                        </template>
+                      </el-popconfirm>
+                    </div>
+                    <el-empty v-if="!searchSources.length" description="暂无搜索源" />
+                  </div>
+                  <div class="search-source-form">
+                    <div class="settings-section-toolbar">
+                      <div>
+                        <strong>{{ searchSourceEditingId ? '编辑搜索源' : '新增搜索源' }}</strong>
+                        <span>配置资源站、RSS 或 Torznab API</span>
+                      </div>
+                      <el-button plain @click="resetSearchSourceForm">清空</el-button>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="名称"><el-input v-model="searchSourceForm.name" placeholder="Mikan / Prowlarr" /></el-form-item>
+                      <el-form-item label="类型">
+                        <el-select v-model="searchSourceForm.kind">
+                          <el-option label="Mikan RSS" value="mikan" />
+                          <el-option label="RSS" value="rss" />
+                          <el-option label="Torznab / Prowlarr / Jackett" value="torznab" />
+                          <el-option label="HTML 爬虫占位" value="generic_html" />
+                        </el-select>
+                      </el-form-item>
+                    </div>
+                    <el-form-item label="Base URL">
+                      <el-input v-model="searchSourceForm.base_url" placeholder="Mikan: https://mikanani.me/RSS/Search?searchstr={keyword}；Torznab: http://host:9696/1/api" />
+                    </el-form-item>
+                    <div class="form-row">
+                      <el-form-item label="Token / API Key"><el-input v-model="searchSourceForm.api_key" show-password /></el-form-item>
+                      <el-form-item label="分类"><el-input v-model="searchSourceForm.categories" placeholder="Torznab cat，用逗号分隔" /></el-form-item>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="代理"><el-input v-model="searchSourceForm.proxy" placeholder="可留空，默认使用 RSS 代理" /></el-form-item>
+                      <el-form-item label="优先级"><el-input-number v-model="searchSourceForm.priority" :min="0" :max="999" /></el-form-item>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="超时秒数"><el-input-number v-model="searchSourceForm.timeout_seconds" :min="3" :max="120" /></el-form-item>
+                      <el-form-item label="限速秒数"><el-input-number v-model="searchSourceForm.rate_limit_seconds" :min="0" :max="3600" /></el-form-item>
+                      <el-form-item label="启用"><el-switch v-model="searchSourceForm.enabled" /></el-form-item>
+                    </div>
+                    <el-button type="primary" @click="saveSearchSource">{{ searchSourceEditingId ? '保存搜索源' : '添加搜索源' }}</el-button>
+                  </div>
+                </div>
+              </el-tab-pane>
               <el-tab-pane label="媒体库">
                 <el-alert
                   type="info"
