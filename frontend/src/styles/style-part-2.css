@@ -338,15 +338,6 @@
   transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.25);
   box-shadow: 3px 3px 0px var(--ani-line) !important; /* Flat comic shadow */
 }
-  cursor: pointer;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 64px minmax(0, 1fr);
-  min-height: 112px;
-  padding: 10px;
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.25);
-  box-shadow: 0 4px 12px rgba(86, 76, 126, 0.03);
-}
 
 .calendar-entry-cover {
   align-items: center;
