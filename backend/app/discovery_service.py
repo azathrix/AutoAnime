@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from urllib.parse import quote_plus
+from html import unescape
+from urllib.parse import quote, quote_plus, urljoin
 from xml.etree import ElementTree as ET
 
 import feedparser
@@ -20,10 +21,13 @@ from .processing_cache import get_cached_json, set_cached_json
 from .schemas import BackfillApplyPayload, DiscoverySearchPayload, SearchSourcePayload
 
 
-SUPPORTED_SEARCH_SOURCE_TYPES = {"mikan", "rss", "torznab", "prowlarr", "jackett", "generic_html"}
+SUPPORTED_SEARCH_SOURCE_TYPES = {"mikan", "rss", "torznab", "prowlarr", "jackett", "generic_html", "qmp4"}
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".wmv", ".webm", ".ts")
 SUBTITLE_EXTENSIONS = (".ass", ".ssa", ".srt", ".vtt")
 DISCOVERY_SOURCE_CACHE_TTL_SECONDS = 3600
+QMP4_DEFAULT_BASE_URL = "https://www.qmp4.com"
+QMP4_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+QMP4_DEFAULT_DETAIL_LIMIT = 10
 
 
 def _text(value: Any) -> str:
@@ -49,6 +53,29 @@ def _source_kind(value: str) -> str:
 
 def _split_categories(value: str) -> list[str]:
     return [item.strip() for item in re.split(r"[,，\s]+", value or "") if item.strip()]
+
+
+def _config_dict(source: dict[str, Any]) -> dict[str, Any]:
+    raw = source.get("config_json") or "{}"
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _config_int(source: dict[str, Any], key: str, default: int, minimum: int = 0, maximum: int | None = None) -> int:
+    value = _config_dict(source).get(key, default)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
 
 
 def _result_key(title: str, media_type: str = "anime", year: int = 0, bangumi_id: str = "", tmdb_id: str = "") -> str:
@@ -315,11 +342,317 @@ async def _search_source(source: dict[str, Any], keyword: str, media_type: str, 
         result = await _search_feed_source(source, keyword, media_type, year)
     elif kind == "torznab":
         result = await _search_torznab_source(source, keyword, media_type, year)
+    elif kind == "qmp4":
+        result = await _search_qmp4_source(source, keyword, media_type, year)
     elif kind == "generic_html":
         result = []
     else:
         result = []
     set_cached_json("discovery_source_search", cache_ref, result, ttl_seconds=DISCOVERY_SOURCE_CACHE_TTL_SECONDS)
+    return result
+
+
+def _html_text(value: str) -> str:
+    text = re.sub(r"<script\b.*?</script>", " ", value or "", flags=re.I | re.S)
+    text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _html_attr(value: str) -> str:
+    return unescape(value or "").strip()
+
+
+def _qmp4_base_url(source: dict[str, Any]) -> str:
+    base_url = _text(source.get("base_url")) or QMP4_DEFAULT_BASE_URL
+    return base_url.rstrip("/") or QMP4_DEFAULT_BASE_URL
+
+
+def _qmp4_headers(base_url: str) -> dict[str, str]:
+    return {
+        "User-Agent": QMP4_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7",
+        "Referer": f"{base_url}/",
+    }
+
+
+def _qmp4_is_verify_page(text: str) -> bool:
+    return "系统安全验证" in (text or "") and "/index.php/ajax/verify_check?type=search" in (text or "")
+
+
+def _qmp4_suggest_candidates(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or int(payload.get("code") or 0) != 1:
+        return []
+    items = payload.get("list")
+    if not isinstance(items, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        qmp4_id = int(item.get("id") or 0)
+        if qmp4_id <= 0:
+            continue
+        result.append({
+            "id": qmp4_id,
+            "name": _text(item.get("name")),
+            "pic": _text(item.get("pic")),
+        })
+    return result
+
+
+def _qmp4_extract_title(html_text: str, fallback: str = "") -> str:
+    match = re.search(r"<h1[^>]*>(.*?)</h1>", html_text or "", re.I | re.S)
+    if match:
+        title = re.sub(r"<span\b.*?</span>", " ", match.group(1), flags=re.I | re.S)
+        title = _html_text(title)
+        if title:
+            return title
+    match = re.search(r"<title[^>]*>(.*?)</title>", html_text or "", re.I | re.S)
+    if match:
+        return re.split(r"在线观看|剧情介绍|迅雷下载|-", _html_text(match.group(1)))[0].strip() or fallback
+    return fallback
+
+
+def _qmp4_extract_year(html_text: str) -> int:
+    match = re.search(r"<span[^>]*class=[\"']year[\"'][^>]*>\((\d{4})\)</span>", html_text or "", re.I)
+    if match:
+        return int(match.group(1))
+    return _year_from_title(_html_text(html_text[:3000] if html_text else ""))
+
+
+def _qmp4_extract_meta_content(html_text: str, name: str) -> str:
+    match = re.search(
+        rf"<meta[^>]+name=[\"']{re.escape(name)}[\"'][^>]+content=[\"']([^\"']*)[\"']",
+        html_text or "",
+        re.I,
+    )
+    if not match:
+        match = re.search(
+            rf"<meta[^>]+content=[\"']([^\"']*)[\"'][^>]+name=[\"']{re.escape(name)}[\"']",
+            html_text or "",
+            re.I,
+        )
+    return _html_attr(match.group(1)) if match else ""
+
+
+def _qmp4_extract_poster(html_text: str, title: str, page_url: str) -> str:
+    escaped_title = re.escape(title)
+    match = re.search(
+        rf"<img[^>]+src=[\"']([^\"']+)[\"'][^>]+alt=[\"']{escaped_title}[\"']",
+        html_text or "",
+        re.I,
+    )
+    if not match:
+        match = re.search(r"<div[^>]+class=[\"']img[\"'][^>]*>.*?<img[^>]+src=[\"']([^\"']+)[\"']", html_text or "", re.I | re.S)
+    return urljoin(page_url, _html_attr(match.group(1))) if match else ""
+
+
+def _qmp4_extract_updated_at(html_text: str) -> str:
+    match = re.search(r"最后更新于\s*<em>\s*(?:<[^>]+>)*([^<]+)", html_text or "", re.I)
+    return _html_text(match.group(1)) if match else ""
+
+
+def _qmp4_extract_tags(html_text: str) -> list[str]:
+    tags: list[str] = []
+    for label in ("类型", "地区", "语言"):
+        pattern = rf"<div>\s*<span>{label}：</span>(.*?)</div>"
+        match = re.search(pattern, html_text or "", re.I | re.S)
+        if not match:
+            continue
+        for item in re.findall(r"<a\b[^>]*>(.*?)</a>", match.group(1), re.I | re.S):
+            text = _html_text(item)
+            if text and text not in tags:
+                tags.append(text)
+    return tags
+
+
+def _qmp4_download_section(html_text: str) -> str:
+    start = re.search(r"<h2>\s*迅雷下载\s*</h2>", html_text or "", re.I)
+    if not start:
+        return ""
+    end = re.search(r"<h2>\s*网盘下载\s*</h2>", html_text[start.end():], re.I)
+    return html_text[start.end(): start.end() + end.start()] if end else html_text[start.end():]
+
+
+def _qmp4_normalize_magnet(value: str) -> str:
+    text = _html_attr(value)
+    if not text.lower().startswith("magnet:?"):
+        return text
+    query = text.split("?", 1)[1]
+    parts: list[str] = []
+    for raw_part in query.split("&"):
+        if not raw_part:
+            continue
+        if "=" not in raw_part:
+            parts.append(quote(raw_part, safe=""))
+            continue
+        key, raw_value = raw_part.split("=", 1)
+        key = quote(unescape(key), safe="")
+        safe = ":" if key.lower() == "xt" else ""
+        parts.append(f"{key}={quote(unescape(raw_value), safe=safe)}")
+    return f"magnet:?{'&'.join(parts)}"
+
+
+def _qmp4_resource_ref(raw_value: str, page_url: str) -> str:
+    value = _html_attr(raw_value)
+    lowered = value.lower()
+    if lowered.startswith("magnet:?"):
+        return _qmp4_normalize_magnet(value)
+    if lowered.startswith(("ed2k://", "thunder://")):
+        return value
+    if lowered.startswith(("http://", "https://")) and (".torrent" in lowered or "torrent" in lowered):
+        return value
+    if value.startswith("/") and (".torrent" in lowered or "torrent" in lowered):
+        return urljoin(page_url, value)
+    return ""
+
+
+def _qmp4_clean_resource_title(value: str) -> str:
+    title = _html_text(value)
+    title = re.sub(r"\s+", " ", title).strip()
+    return title[:300]
+
+
+def _qmp4_resource_title(block: str) -> str:
+    match = re.search(r"<a\b[^>]*class=[\"'][^\"']*\bfolder\b[^\"']*[\"'][^>]*title=[\"']([^\"']+)[\"']", block or "", re.I | re.S)
+    if not match:
+        match = re.search(r"<a\b[^>]*title=[\"']([^\"']+)[\"'][^>]*class=[\"'][^\"']*\bfolder\b", block or "", re.I | re.S)
+    if match:
+        return _qmp4_clean_resource_title(match.group(1))
+    match = re.search(r"<p[^>]*class=[\"']down-list3[\"'][^>]*>.*?<a\b[^>]*>(.*?)</a>", block or "", re.I | re.S)
+    return _qmp4_clean_resource_title(match.group(1)) if match else ""
+
+
+def _qmp4_parse_download_resources(html_text: str, page_url: str, updated_at: str) -> list[dict[str, Any]]:
+    section = _qmp4_download_section(html_text)
+    if not section:
+        return []
+    resources: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    blocks = re.findall(r"<li\b[^>]*class=[\"'][^\"']*\bdown-list2\b[^\"']*[\"'][^>]*>(.*?)</li>", section, re.I | re.S)
+    for block in blocks:
+        title = _qmp4_resource_title(block)
+        hrefs = re.findall(r"\bhref=[\"']([^\"']+)[\"']", block, re.I)
+        for href in hrefs:
+            ref = _qmp4_resource_ref(href, page_url)
+            if not ref or ref in seen:
+                continue
+            seen.add(ref)
+            title_seed = title or ref
+            resources.append({
+                "episode_number": 0,
+                "resource_ref": ref,
+                "subtitle_group": "",
+                "resolution": "",
+                "language": "",
+                "subtitle_format": "",
+                "source_title": title_seed,
+                "published_at": updated_at,
+            })
+            break
+    return resources
+
+
+def _qmp4_detail_to_items(
+    source: dict[str, Any],
+    candidate: dict[str, Any],
+    html_text: str,
+    page_url: str,
+    media_type: str,
+    requested_year: int,
+) -> list[dict[str, Any]]:
+    title = _qmp4_extract_title(html_text, candidate.get("name") or "")
+    year = _qmp4_extract_year(html_text)
+    if requested_year and year and requested_year != year:
+        return []
+    updated_at = _qmp4_extract_updated_at(html_text)
+    summary = _qmp4_extract_meta_content(html_text, "description")
+    if summary.startswith(f"{title}剧情:"):
+        summary = summary[len(f"{title}剧情:"):].strip()
+    result = {
+        "result_key": _result_key(title, media_type, requested_year or year, "", ""),
+        "title": title,
+        "original_title": title,
+        "media_type": media_type,
+        "year": requested_year or year,
+        "bangumi_id": "",
+        "tmdb_id": "",
+        "summary": summary,
+        "poster_url": _qmp4_extract_poster(html_text, title, page_url) or candidate.get("pic") or "",
+        "tags_json": _json(_qmp4_extract_tags(html_text)),
+        "confidence": 0.5,
+    }
+    parsed_resources = _qmp4_parse_download_resources(html_text, page_url, updated_at)
+    if not parsed_resources:
+        return [{"result": result, "resource": {
+            "source_id": int(source.get("id") or 0),
+            "source_name": source.get("name") or "",
+            "source_kind": source.get("kind") or "",
+            "episode_number": 0,
+            "resource_ref": "",
+            "subtitle_ref": "",
+            "subtitle_group": "",
+            "resolution": "",
+            "language": "",
+            "subtitle_format": "",
+            "source_title": title,
+            "published_at": updated_at,
+        }}]
+    items: list[dict[str, Any]] = []
+    for resource in parsed_resources:
+        items.append({"result": result, "resource": {
+            "source_id": int(source.get("id") or 0),
+            "source_name": source.get("name") or "",
+            "source_kind": source.get("kind") or "",
+            "episode_number": int(resource.get("episode_number") or 0),
+            "resource_ref": resource.get("resource_ref") or "",
+            "subtitle_ref": "",
+            "subtitle_group": resource.get("subtitle_group") or "",
+            "resolution": resource.get("resolution") or "",
+            "language": resource.get("language") or "",
+            "subtitle_format": resource.get("subtitle_format") or "",
+            "source_title": resource.get("source_title") or title,
+            "published_at": resource.get("published_at") or "",
+        }})
+    return items
+
+
+async def _search_qmp4_source(source: dict[str, Any], keyword: str, media_type: str, year: int) -> list[dict[str, Any]]:
+    base_url = _qmp4_base_url(source)
+    timeout = max(3, int(source.get("timeout_seconds") or 20))
+    proxy = source.get("proxy") or get_settings().get("rss_proxy") or None
+    detail_limit = _config_int(source, "detail_limit", QMP4_DEFAULT_DETAIL_LIMIT, 1, 20)
+    async with httpx.AsyncClient(
+        proxy=proxy,
+        timeout=timeout,
+        follow_redirects=True,
+        headers=_qmp4_headers(base_url),
+    ) as client:
+        direct_match = re.search(r"(?:https?://[^/]+)?/mv/(\d+)\.html", keyword or "", re.I)
+        if direct_match:
+            qmp4_id = int(direct_match.group(1))
+            page_url = urljoin(f"{base_url}/", f"/mv/{qmp4_id}.html")
+            detail_resp = await client.get(page_url)
+            detail_resp.raise_for_status()
+            if _qmp4_is_verify_page(detail_resp.text):
+                raise RuntimeError("QMP4 详情页触发安全验证，已停止自动解析")
+            return _qmp4_detail_to_items(source, {"id": qmp4_id, "name": "", "pic": ""}, detail_resp.text, page_url, media_type, year)
+
+        suggest_resp = await client.get(urljoin(f"{base_url}/", "/index.php/ajax/suggest"), params={"mid": "1", "wd": keyword})
+        suggest_resp.raise_for_status()
+        if _qmp4_is_verify_page(suggest_resp.text):
+            raise RuntimeError("QMP4 搜索触发安全验证，已停止自动解析")
+        candidates = _qmp4_suggest_candidates(suggest_resp.json())
+        result: list[dict[str, Any]] = []
+        for candidate in candidates[:detail_limit]:
+            page_url = urljoin(f"{base_url}/", f"/mv/{candidate['id']}.html")
+            detail_resp = await client.get(page_url)
+            detail_resp.raise_for_status()
+            if _qmp4_is_verify_page(detail_resp.text):
+                raise RuntimeError("QMP4 详情页触发安全验证，已停止自动解析")
+            result.extend(_qmp4_detail_to_items(source, candidate, detail_resp.text, page_url, media_type, year))
     return result
 
 

@@ -23,7 +23,8 @@ function blankSearchSourceForm() {
 }
 
 function draftEpisodeItem(kind, item, index) {
-  const episode = Number(item.episode_number || 0) || index + 1
+  const parsedEpisode = Number(item.episode_number ?? 0)
+  const episode = Number.isFinite(parsedEpisode) ? parsedEpisode : 0
   const ref = String(item.ref || '').trim()
   return {
     id: `discovery-${kind}-${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
@@ -88,6 +89,10 @@ export function createDiscoveryActions(app, deps) {
       if (kind === 'jackett') app.searchSourceForm.name = 'Jackett'
       if (kind === 'torznab') app.searchSourceForm.name = 'Torznab'
       if (kind === 'rss') app.searchSourceForm.name = 'RSS'
+      if (kind === 'qmp4') {
+        app.searchSourceForm.name = 'QMP4 七味'
+        app.searchSourceForm.base_url = 'https://www.qmp4.com'
+      }
     }
     app.searchSourceDialogOpen = true
   }
