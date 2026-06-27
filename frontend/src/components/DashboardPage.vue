@@ -233,7 +233,10 @@ export default appContextComponent({
         <div class="live-timeline-box">
           <div class="timeline-title-row">
             <h4>最近操作</h4>
-            <span class="live-badge">持久记录</span>
+            <div class="recent-title-actions">
+              <span class="live-badge">最多 100 条</span>
+              <el-button size="small" plain @click="clearRecentOperationEvents">清理</el-button>
+            </div>
           </div>
 
           <div class="timeline-stream">

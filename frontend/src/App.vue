@@ -37,6 +37,10 @@
             <p>{{ scannerStatusText }}</p>
           </div>
         </div>
+        <div class="sidebar-user-line">
+          <span>👤 {{ authState.username || 'admin' }}</span>
+          <span>{{ liveConnected ? '在线' : '重连中' }}</span>
+        </div>
         <div class="profile-stats">
           <div><b>{{ seasonalCatalogTotal }}</b><span>新番</span></div>
           <div><b>{{ watchableTotal }}</b><span>可看</span></div>
@@ -63,6 +67,17 @@
     </aside>
 
     <main class="main">
+      <header class="page-title-card">
+        <div>
+          <span class="page-title-kicker">AniTrack</span>
+          <h1>{{ pageTitle }}</h1>
+          <p>{{ pageSubtitle }}</p>
+        </div>
+        <div class="page-title-status">
+          <span :class="['page-live-dot', { active: liveConnected }]"></span>
+          <strong>{{ liveConnected ? '实时连接' : '等待连接' }}</strong>
+        </div>
+      </header>
       <DashboardPage />
       <LogsPage />
       <SeasonalPage />
@@ -462,6 +477,18 @@ const pageTitle = computed(() => ({
   logs: '日志与维护',
   settings: '设置中心'
 }[view.value]))
+
+const pageSubtitle = computed(() => ({
+  dashboard: '查看扫描、任务和最近操作的实时状态。',
+  seasonal: '扫描订阅，自动收集新番并整理到本地媒体库。',
+  discovery: '从已配置的搜索源发现资源候选，再收录到媒体库。',
+  calendar: '按周查看近期更新，新番同日多集只展示最新一集。',
+  library: '管理动画媒体库，归档新番也会保留在这里。',
+  movies: '管理电影条目、资源和本地可观看状态。',
+  tv: '管理电视剧条目、季和集数资源。',
+  logs: '查看运行日志和维护系统状态。',
+  settings: '配置账号、下载器、RSS 源、搜索源和维护动作。'
+}[view.value] || ''))
 
 const isMediaCatalogView = computed(() => ['library', 'movies', 'tv'].includes(view.value))
 const currentMediaType = computed(() => ({
@@ -1024,6 +1051,7 @@ async function reloadCurrentPageData() {
   if (view.value === 'settings') {
     await reloadDiagnostics()
     await appContext.loadSearchSources?.()
+    await appContext.loadRssSubscriptions?.()
   }
 }
 
@@ -1044,13 +1072,24 @@ async function reload() {
 async function loadRecentOperationEvents() {
   if (!authState.authenticated) return
   try {
-    const data = await getRecentOperations(80)
+    const data = await getRecentOperations(100)
     recentOperations.value = data.items || []
     if (recentOperationPage.value > recentOperationPageCount.value) {
       recentOperationPage.value = recentOperationPageCount.value
     }
   } catch {
     recentOperations.value = []
+  }
+}
+
+async function clearRecentOperationEvents() {
+  try {
+    const result = await postAction('/operations/recent/clear')
+    recentOperations.value = []
+    recentOperationPage.value = 1
+    ElMessage.success(result?.message || `已清理 ${result?.count || 0} 条最近操作`)
+  } catch (error) {
+    ElMessage.error(errorMessage(error))
   }
 }
 
@@ -1288,6 +1327,7 @@ exposeAppContext({
   openBatchSubtitleDialog,
   openEpisodeImportDialog,
   pageTitle,
+  pageSubtitle,
   parseDateValue,
   processorSettingsDialogOpen,
   processorSettingsForm,
@@ -1296,6 +1336,7 @@ exposeAppContext({
   recentOperationPage,
   recentOperationPageCount,
   recentOperationRows,
+  clearRecentOperationEvents,
   reload,
   reloadDiagnostics,
   resourceReferenceKind,
@@ -1377,8 +1418,8 @@ const {
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
   openScheduledSettings, migrateEpisodeModel, openDownloaderDialog, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, retryGenericTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
-  removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
-  saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
+  removeMediaWizardSubtitleItem, reorderRssSubscriptions, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
+  saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing, toggleRssSubscription,
   confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
   startMetadataProgress, stopMetadataProgress, syncScheduledJobForm, triggerSchedule, uploadMediaWizardFiles,
 } = createAppActions(appContext, {
@@ -1406,6 +1447,7 @@ const {
   runDiscoverySearch,
   saveSearchSource,
   searchBackfillForCurrentEntry,
+  reorderSearchSources,
   testSearchSource,
   toggleSearchSource,
 } = createDiscoveryActions(appContext, {
@@ -1428,9 +1470,9 @@ exposeAppContext({
   editRssSubscription, editSearchSource, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, loadSearchSources, normalizeSettingsShape, openDiscoveryCollectDraft, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
   openScheduledSettings, openSearchSourceDialog, openTorznabDialog, migrateEpisodeModel, openDownloaderDialog, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, retryGenericTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
-  removeMediaWizardSubtitleItem, resetRssForm, resetSearchSourceForm, resetSelectionRules, runAction, runDiscoverySearch, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
-  saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
-  saveSearchSource, searchBackfillForCurrentEntry, confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, testSearchSource, toggleEntryResourceRow,
+  removeMediaWizardSubtitleItem, reorderRssSubscriptions, resetRssForm, resetSearchSourceForm, resetSelectionRules, runAction, runDiscoverySearch, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
+  saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing, toggleRssSubscription,
+  saveSearchSource, searchBackfillForCurrentEntry, reorderSearchSources, confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, testSearchSource, toggleEntryResourceRow,
   taskCanCancel, taskCanClear, taskCanPause, taskCanResume, taskCanRetry,
   startMetadataProgress, stopMetadataProgress, syncScheduledJobForm, toggleSearchSource, triggerSchedule, uploadMediaWizardFiles,
 })

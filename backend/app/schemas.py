@@ -102,6 +102,9 @@ class RssSubscriptionPayload(BaseModel):
     kind: str = "mikan"
     enabled: bool = True
 
+class ReorderPayload(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
 class EpisodeResourcePayload(BaseModel):
     resource_id: int = 0
     title: str = ""

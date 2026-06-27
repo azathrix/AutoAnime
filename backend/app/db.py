@@ -429,6 +429,7 @@ def init_db() -> None:
                 url TEXT NOT NULL UNIQUE,
                 kind TEXT NOT NULL DEFAULT 'mikan',
                 enabled INTEGER NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -708,7 +709,24 @@ def ensure_media_libraries(conn: sqlite3.Connection) -> None:
         )
 
 
+def ensure_ordering_columns(conn: sqlite3.Connection) -> None:
+    rss_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(rss_subscriptions)").fetchall()
+    }
+    if rss_columns and "priority" not in rss_columns:
+        conn.execute("ALTER TABLE rss_subscriptions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            """
+            UPDATE rss_subscriptions
+            SET priority = id
+            WHERE priority = 0
+            """
+        )
+
+
 def migrate(conn: sqlite3.Connection) -> None:
+    ensure_ordering_columns(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS works (
@@ -1049,6 +1067,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             url TEXT NOT NULL UNIQUE,
             kind TEXT NOT NULL DEFAULT 'mikan',
             enabled INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );

@@ -155,6 +155,18 @@ export function createDiscoveryActions(app, deps) {
     }
   }
 
+  async function reorderSearchSources() {
+    try {
+      const ids = (app.searchSources || []).map(item => Number(item.id || 0)).filter(Boolean)
+      const data = await postAction('/search-sources/reorder', { ids })
+      app.searchSources = data.items || app.searchSources || []
+      ElMessage.success('搜索源顺序已保存')
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+      await loadSearchSources()
+    }
+  }
+
   async function testSearchSource(item) {
     try {
       const result = await postAction(`/search-sources/${item.id}/test`)
@@ -178,9 +190,9 @@ export function createDiscoveryActions(app, deps) {
       const data = await postAction('/discovery/search', {
         keyword,
         media_type: app.discoveryState.media_type || 'anime',
-        year: Number(app.discoveryState.year || 0),
-        season: app.discoveryState.season || '',
-        source_ids: app.discoveryState.source_ids || [],
+        year: 0,
+        season: '',
+        source_ids: [],
       })
       app.discoveryState.search = data.search || {}
       app.discoveryState.items = data.items || []
@@ -276,6 +288,7 @@ export function createDiscoveryActions(app, deps) {
     runDiscoverySearch,
     saveSearchSource,
     searchBackfillForCurrentEntry,
+    reorderSearchSources,
     testSearchSource,
     toggleSearchSource,
   }

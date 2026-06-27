@@ -347,35 +347,19 @@ export default appContextComponent()
       </template>
     </el-dialog>
 
-    <el-dialog v-model="rssDialogOpen" title="RSS 订阅" width="760px" top="4vh">
-      <div class="rss-dialog-layout">
-        <el-form :model="rssForm" label-position="top" class="rss-form">
-          <el-form-item label="订阅名称"><el-input v-model="rssForm.name" placeholder="例如：Mikan 追番" /></el-form-item>
-          <el-form-item label="RSS 地址"><el-input v-model="rssForm.url" placeholder="https://mikanani.me/RSS/..." /></el-form-item>
-          <div class="form-row">
-            <el-form-item label="订阅类型">
-              <el-select v-model="rssForm.kind">
-                <el-option label="Mikan" value="mikan" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="启用"><el-switch v-model="rssForm.enabled" /></el-form-item>
-          </div>
-        </el-form>
-        <div class="rss-subscription-list" v-loading="rssLoading">
-          <div v-for="item in rssSubscriptions" :key="item.id" class="rss-subscription-row">
-            <div>
-              <strong>{{ item.name || 'Mikan RSS' }}</strong>
-              <span>{{ item.kind }} · {{ Number(item.enabled || 0) ? '启用' : '停用' }}</span>
-              <code>{{ item.url }}</code>
-            </div>
-            <div class="rss-row-actions">
-              <el-button size="small" plain @click="editRssSubscription(item)">编辑</el-button>
-              <el-button size="small" type="danger" plain @click="deleteRssSubscription(item.id)">删除</el-button>
-            </div>
-          </div>
-          <el-empty v-if="!rssSubscriptions.length && !rssLoading" description="暂无 RSS 订阅" />
+    <el-dialog v-model="rssDialogOpen" :title="rssEditingId ? '编辑 RSS 源' : '添加 RSS 源'" width="520px" top="8vh" class="config-dialog">
+      <el-form :model="rssForm" label-position="top" class="rss-form">
+        <el-form-item label="订阅名称"><el-input v-model="rssForm.name" placeholder="例如：Mikan 追番" /></el-form-item>
+        <el-form-item label="RSS 地址"><el-input v-model="rssForm.url" placeholder="https://mikanani.me/RSS/..." /></el-form-item>
+        <div class="form-row">
+          <el-form-item label="订阅类型">
+            <el-select v-model="rssForm.kind">
+              <el-option label="Mikan" value="mikan" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="启用"><el-switch v-model="rssForm.enabled" /></el-form-item>
         </div>
-      </div>
+      </el-form>
       <template #footer>
         <el-button v-if="rssEditingId" plain @click="resetRssForm">新增模式</el-button>
         <el-button @click="rssDialogOpen = false">取消</el-button>

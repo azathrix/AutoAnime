@@ -6,6 +6,9 @@ from .database import connect
 from .db import now
 
 
+RECENT_OPERATION_LIMIT = 100
+
+
 def record_operation_event(
     action: str,
     title: str,
@@ -37,9 +40,10 @@ def record_operation_event(
             """
             DELETE FROM operation_events
             WHERE id NOT IN (
-              SELECT id FROM operation_events ORDER BY id DESC LIMIT 500
+              SELECT id FROM operation_events ORDER BY id DESC LIMIT ?
             )
-            """
+            """,
+            (RECENT_OPERATION_LIMIT,),
         )
 
 
@@ -56,3 +60,11 @@ def list_recent_operations(limit: int = 20) -> list[dict[str, Any]]:
             (safe_limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def clear_recent_operations() -> int:
+    with connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS total FROM operation_events").fetchone()
+        total = int(row["total"] or 0) if row else 0
+        conn.execute("DELETE FROM operation_events")
+    return total

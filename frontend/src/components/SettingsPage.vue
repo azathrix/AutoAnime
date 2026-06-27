@@ -44,17 +44,6 @@ export default appContextComponent({ draggable, PriorityList })
               </div>
 
               <div class="settings-summary-card">
-                <div class="settings-summary-head">
-                  <h3>管理员账号</h3>
-                  <p>当前账号：{{ authState.username || 'admin' }}。用于保护 NAS 上的 AniTrack 控制台。</p>
-                </div>
-                <div class="settings-toolbar-actions">
-                  <el-button plain @click="accountDialogOpen = true">修改账号</el-button>
-                  <el-button plain @click="submitLogout">退出登录</el-button>
-                </div>
-              </div>
-
-              <div class="settings-summary-card">
                 <label class="settings-switch-line">
                   <el-switch v-model="settings.backfill_current_season" />
                   <span><strong>补全本季</strong><em>RSS 扫描新番后尝试补齐当前季缺失集数。</em></span>
@@ -76,6 +65,29 @@ export default appContextComponent({ draggable, PriorityList })
                     </el-form-item>
                   </div>
                 </transition>
+              </div>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="账号">
+            <div class="settings-panel-grid">
+              <div class="settings-summary-card account-settings-card">
+                <div class="settings-summary-head">
+                  <h3>管理员账号</h3>
+                  <p>用于保护 NAS 上的 AniTrack 控制台。修改密码后需要重新使用新凭据登录。</p>
+                </div>
+                <el-form :model="accountForm" label-position="top" class="account-settings-form">
+                  <el-form-item label="账号">
+                    <el-input v-model="accountForm.username" autocomplete="username" />
+                  </el-form-item>
+                  <el-form-item label="新密码">
+                    <el-input v-model="accountForm.password" type="password" show-password autocomplete="new-password" placeholder="留空则不修改密码" />
+                  </el-form-item>
+                </el-form>
+                <div class="settings-toolbar-actions">
+                  <el-button type="primary" @click="saveAccountSettings">保存账号</el-button>
+                  <el-button plain @click="submitLogout">退出登录</el-button>
+                </div>
               </div>
             </div>
           </el-tab-pane>
@@ -123,20 +135,20 @@ export default appContextComponent({ draggable, PriorityList })
             <div class="settings-section-toolbar">
               <div><strong>下载器优先级</strong><span>按顺序尝试可用下载器；详细字段在编辑窗口里配置。</span></div>
               <div class="settings-toolbar-actions">
-                <el-button plain @click="openProcessorSettings">下载并发</el-button>
+                <el-button plain @click="openProcessorSettings">下载并发 {{ settings.download_concurrency || 2 }}</el-button>
                 <el-button plain @click="openDownloaderDialog(-1)">添加下载器</el-button>
-                <el-button type="primary" :loading="savingSettings" @click="saveAllSettings">保存设置</el-button>
               </div>
             </div>
             <draggable v-model="settings.downloaders" item-key="id" handle=".drag-handle" class="summary-list">
               <template #item="{ element, index }">
-                <div class="summary-row" :class="{ disabled: !element.enabled }">
+                <div class="summary-row downloader-summary-row" :class="{ disabled: !element.enabled }">
                   <span class="drag-handle">⋮⋮</span>
                   <span class="summary-rank">{{ index + 1 }}</span>
                   <div class="summary-main">
                     <strong>{{ element.name || downloaderTypeText(element.type) }}</strong>
                     <span>{{ downloaderTypeText(element.type) }} · {{ downloaderSummary(element) }}</span>
                   </div>
+                  <el-switch v-model="element.enabled" />
                   <el-tag :type="element.enabled ? 'success' : 'info'" size="small">{{ element.enabled ? '启用' : '停用' }}</el-tag>
                   <div class="summary-actions">
                     <el-button size="small" plain @click="openDownloaderDialog(index)">编辑</el-button>
@@ -153,8 +165,11 @@ export default appContextComponent({ draggable, PriorityList })
               <div><strong>搜索源</strong><span>发现页和本季补全会使用启用的来源。</span></div>
               <el-button type="primary" plain @click="openSearchSourceDialog(null)">添加源</el-button>
             </div>
-            <div class="summary-list" v-loading="searchSourcesLoading">
-              <div v-for="item in searchSources" :key="item.id" class="summary-row simple-summary-row" :class="{ disabled: !Number(item.enabled || 0) }">
+            <draggable v-model="searchSources" item-key="id" handle=".drag-handle" class="summary-list" v-loading="searchSourcesLoading" @end="reorderSearchSources">
+              <template #item="{ element: item, index }">
+              <div class="summary-row source-summary-row" :class="{ disabled: !Number(item.enabled || 0) }">
+                <span class="drag-handle">⋮⋮</span>
+                <span class="summary-rank">{{ index + 1 }}</span>
                 <div class="summary-main">
                   <strong>{{ item.name }}</strong>
                   <span>{{ searchSourceKindText(item.kind) }} · {{ item.base_url || '未配置地址' }}</span>
@@ -170,8 +185,37 @@ export default appContextComponent({ draggable, PriorityList })
                   </el-popconfirm>
                 </div>
               </div>
-              <el-empty v-if="!searchSources.length" description="暂无搜索源，添加后可在发现页搜索资源。" />
+              </template>
+            </draggable>
+            <el-empty v-if="!searchSources.length && !searchSourcesLoading" description="暂无搜索源，添加后可在发现页搜索资源。" />
+          </el-tab-pane>
+
+          <el-tab-pane label="新番 RSS 源">
+            <div class="settings-section-toolbar">
+              <div><strong>新番 RSS 源</strong><span>RSS 扫描会按这里的启用源读取新番发布。</span></div>
+              <el-button type="primary" plain @click="openRssDialog()">添加 RSS 源</el-button>
             </div>
+            <draggable v-model="rssSubscriptions" item-key="id" handle=".drag-handle" class="summary-list" v-loading="rssLoading" @end="reorderRssSubscriptions">
+              <template #item="{ element: item, index }">
+                <div class="summary-row rss-summary-row" :class="{ disabled: !Number(item.enabled || 0) }">
+                  <span class="drag-handle">⋮⋮</span>
+                  <span class="summary-rank">{{ index + 1 }}</span>
+                  <div class="summary-main">
+                    <strong>{{ item.name || 'Mikan RSS' }}</strong>
+                    <span>{{ item.kind || 'mikan' }} · {{ item.url }}</span>
+                  </div>
+                  <el-switch :model-value="Number(item.enabled || 0)" :active-value="1" :inactive-value="0" @change="toggleRssSubscription(item)" />
+                  <el-tag :type="Number(item.enabled || 0) ? 'success' : 'info'" size="small">{{ Number(item.enabled || 0) ? '启用' : '停用' }}</el-tag>
+                  <div class="summary-actions">
+                    <el-button size="small" plain @click="editRssSubscription(item)">编辑</el-button>
+                    <el-popconfirm title="确定删除该 RSS 源？" @confirm="deleteRssSubscription(item.id)">
+                      <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
+                    </el-popconfirm>
+                  </div>
+                </div>
+              </template>
+            </draggable>
+            <el-empty v-if="!rssSubscriptions.length && !rssLoading" description="暂无 RSS 源，添加一个 Mikan RSS 后即可扫描新番。" />
           </el-tab-pane>
 
           <el-tab-pane label="定时器">
@@ -212,10 +256,10 @@ export default appContextComponent({ draggable, PriorityList })
               </div>
 
               <div class="maintenance-group-card">
-                <div class="group-header"><h3>数据修复</h3><p>处理旧数据或无效集数。</p></div>
+                <div class="group-header"><h3>任务与记录</h3><p>清理已完成任务和最近操作。</p></div>
                 <div class="group-body">
-                  <div class="action-item-row"><div class="action-desc"><strong>迁移集数模型</strong><span>迁移为每集一条资源。</span></div><el-popconfirm title="迁移前会自动备份数据库。确定把旧资源模型迁移为每集一条资源，并按纯作品名目录计算路径？" @confirm="migrateEpisodeModel"><template #reference><el-button plain>迁移</el-button></template></el-popconfirm></div>
-                  <div class="action-item-row"><div class="action-desc"><strong>修复为纯作品名路径</strong><span>移动识别到的旧文件并同步数据库。</span></div><el-popconfirm title="会把已识别到的旧本地文件移动到纯作品名目录，并同步修复数据库状态。确定执行？" @confirm="repairLocalPaths"><template #reference><el-button plain>修复</el-button></template></el-popconfirm></div>
+                  <div class="action-item-row"><div class="action-desc"><strong>清理已完成任务</strong><span>移除已完成、已取消和可清理任务。</span></div><el-button plain @click="clearCompletedDownloadTasks">清理</el-button></div>
+                  <div class="action-item-row"><div class="action-desc"><strong>清理最近操作</strong><span>清空控制台底部最近操作记录。</span></div><el-button plain @click="clearRecentOperationEvents">清理</el-button></div>
                   <div class="action-item-row warning-border"><div class="action-desc"><strong>清理无效集数</strong><span>清理无法识别集数的记录。</span></div><el-popconfirm title="会清理无法识别集数的发布、资源、字幕和下载记录。确定执行？" @confirm="runAction('/maintenance/cleanup-invalid-episodes')"><template #reference><el-button type="warning" plain>清理</el-button></template></el-popconfirm></div>
                 </div>
               </div>

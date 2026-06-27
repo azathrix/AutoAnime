@@ -51,6 +51,13 @@ def _source_kind(value: str) -> str:
     return "mikan"
 
 
+def _stored_source_kind(value: str) -> str:
+    kind = _text(value).lower() or "mikan"
+    if kind in SUPPORTED_SEARCH_SOURCE_TYPES:
+        return kind
+    return "mikan"
+
+
 def _split_categories(value: str) -> list[str]:
     return [item.strip() for item in re.split(r"[,，\s]+", value or "") if item.strip()]
 
@@ -188,7 +195,7 @@ def list_search_sources() -> dict[str, Any]:
 
 def save_search_source(payload: SearchSourcePayload, source_id: int = 0) -> dict[str, Any]:
     ts = now()
-    kind = _source_kind(payload.kind)
+    kind = _stored_source_kind(payload.kind)
     name = payload.name.strip() or kind.upper()
     config_json = _json(payload.config or {})
     with connect() as conn:
@@ -252,6 +259,23 @@ def delete_search_source(source_id: int) -> dict[str, str]:
     with connect() as conn:
         conn.execute("DELETE FROM search_sources WHERE id=?", (source_id,))
     return {"status": "deleted"}
+
+
+def reorder_search_sources(ids: list[int]) -> dict[str, Any]:
+    clean_ids = [int(item) for item in ids if int(item or 0) > 0]
+    ts = now()
+    with connect() as conn:
+        existing = {
+            int(row["id"])
+            for row in conn.execute("SELECT id FROM search_sources").fetchall()
+        }
+        for index, source_id in enumerate(clean_ids):
+            if source_id in existing:
+                conn.execute(
+                    "UPDATE search_sources SET priority=?, updated_at=? WHERE id=?",
+                    (index + 1, ts, source_id),
+                )
+    return list_search_sources()
 
 
 async def test_search_source(source_id: int) -> dict[str, Any]:

@@ -133,10 +133,10 @@ export function createAppActions(app, deps) {
     app.rssForm.enabled = true
   }
 
-  async function openRssDialog() {
+  async function openRssDialog(options = {}) {
     resetRssForm()
     app.rssDialogOpen = true
-    await loadRssSubscriptions()
+    if (options?.loadList) await loadRssSubscriptions()
   }
 
   function editRssSubscription(item) {
@@ -145,6 +145,7 @@ export function createAppActions(app, deps) {
     app.rssForm.url = item.url || ''
     app.rssForm.kind = item.kind || 'mikan'
     app.rssForm.enabled = Boolean(Number(item.enabled ?? 1))
+    app.rssDialogOpen = true
   }
 
   async function saveRssSubscription() {
@@ -182,6 +183,34 @@ export function createAppActions(app, deps) {
       await app.reload()
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
+  async function toggleRssSubscription(item) {
+    if (!item?.id) return
+    try {
+      await putAction(`/rss-subscriptions/${item.id}`, {
+        name: item.name || '',
+        url: item.url || '',
+        kind: item.kind || 'mikan',
+        enabled: !Number(item.enabled || 0),
+      })
+      await loadRssSubscriptions()
+      ElMessage.success('RSS 源状态已更新')
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
+  async function reorderRssSubscriptions() {
+    try {
+      const ids = (app.rssSubscriptions || []).map(item => Number(item.id || 0)).filter(Boolean)
+      const result = await postAction('/rss-subscriptions/reorder', { ids })
+      app.rssSubscriptions = result.items || app.rssSubscriptions || []
+      ElMessage.success('RSS 源顺序已保存')
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+      await loadRssSubscriptions()
     }
   }
 
@@ -1322,8 +1351,8 @@ export function createAppActions(app, deps) {
     editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
     openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
     openScheduledSettings, openDownloaderDialog, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, pauseAllGenericTasks, pauseGenericTask, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, resumeAllGenericTasks, resumeGenericTask, retryDownloadTask, retryFailedGenericTasks, retryGenericTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
-    removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
-    saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
+    removeMediaWizardSubtitleItem, reorderRssSubscriptions, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
+    saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing, toggleRssSubscription,
     confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
     startMetadataProgress, stopMetadataProgress, syncScheduledJobForm, triggerSchedule, uploadMediaWizardFiles,
   }
