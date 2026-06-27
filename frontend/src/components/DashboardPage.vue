@@ -158,7 +158,6 @@ export default appContextComponent({
           </div>
           <div class="header-taglines">
             <el-tag type="warning">下载中 {{ dashboard.download_overview?.active || 0 }}</el-tag>
-            <el-button size="small" plain @click="openProcessorSettings">设置</el-button>
             <el-button size="small" type="primary" plain @click="clearCompletedDownloadTasks">清理已完成</el-button>
           </div>
         </div>
@@ -207,23 +206,14 @@ export default appContextComponent({
             </div>
 
             <div class="task-block-foot">
-              <span class="foot-time">🕒 {{ row.updated_at || '-' }}</span>
+              <span class="foot-time">{{ row.updated_at || '-' }}</span>
               <div class="block-actions">
                 <el-button v-if="row.entry_id" size="small" plain @click="openQueueEntry(row)">打开</el-button>
-                <el-button
-                  v-if="row.source === 'download' && ['pending','submitting','remote_downloading','remote_completed','local_copying','running','submitted','downloading'].includes(row.status)"
-                  size="small"
-                  type="danger"
-                  plain
-                  @click="cancelDownloadTask({ id: row.raw_id })"
-                >
-                  取消
-                </el-button>
-                <el-button v-else-if="['pending','running','waiting'].includes(row.status)" size="small" type="danger" plain @click="cancelGenericTask(row)">取消</el-button>
-                <el-button v-if="row.source !== 'operation' && ['pending','running','waiting'].includes(row.status)" size="small" plain @click="pauseGenericTask(row)">暂停</el-button>
-                <el-button v-if="row.source !== 'operation' && row.status === 'paused'" size="small" type="primary" plain @click="resumeGenericTask(row)">继续</el-button>
-                <el-button v-if="row.source === 'download' && ['failed','cancelled'].includes(row.status)" size="small" type="primary" plain @click="retryDownloadTask({ id: row.raw_id })">重试</el-button>
-                <el-popconfirm v-if="['completed','failed','cancelled','skipped'].includes(row.status)" title="清理这条任务记录？" @confirm="clearGenericTask(row)">
+                <el-button v-if="taskCanPause(row)" size="small" plain @click="pauseGenericTask(row)">暂停</el-button>
+                <el-button v-if="taskCanResume(row)" size="small" type="primary" plain @click="resumeGenericTask(row)">继续</el-button>
+                <el-button v-if="taskCanRetry(row)" size="small" type="primary" plain @click="retryGenericTask(row)">重试</el-button>
+                <el-button v-if="taskCanCancel(row)" size="small" type="danger" plain @click="cancelGenericTask(row)">取消</el-button>
+                <el-popconfirm v-if="taskCanClear(row)" title="清理这条任务记录？" @confirm="clearGenericTask(row)">
                   <template #reference>
                     <el-button size="small" plain>清理</el-button>
                   </template>

@@ -7,21 +7,19 @@
           <strong class="brand-wordmark">AniTrack</strong>
         </div>
       </div>
-      <div class="sidebar-profile-card">
-        <div class="profile-avatar">
-          <img src="/anitrack-icon.png" alt="AniTrack icon" />
-          <span></span>
+      <div class="sidebar-status-card">
+        <div class="sidebar-status-head">
+          <span class="status-orb" :class="{ running: scanRunning }"></span>
+          <div>
+            <strong>{{ scanRunning ? 'RSS 扫描中' : '实时连接' }}</strong>
+            <p>{{ scannerStatusText }}</p>
+          </div>
         </div>
-        <strong>个人媒体中心</strong>
-        <p>追番、下载与本地整理</p>
         <div class="profile-stats">
           <div><b>{{ seasonalCatalogTotal }}</b><span>新番</span></div>
           <div><b>{{ watchableTotal }}</b><span>可看</span></div>
           <div><b>{{ localAssetTotal }}</b><span>本地</span></div>
         </div>
-        <button class="profile-scan-button" :disabled="scanRunning" @click="runAction('/scan')">
-          {{ scanRunning ? '扫描中...' : '扫描 RSS' }}
-        </button>
       </div>
       <nav>
         <div class="nav-caption">媒体</div>
@@ -749,6 +747,28 @@ function downloaderSummary(item = {}) {
   return item.remote_dir || '未配置'
 }
 
+function taskCanCancel(row = {}) {
+  return !['completed', 'failed', 'cancelled', 'skipped'].includes(String(row.status || ''))
+}
+
+function taskCanPause(row = {}) {
+  if (row.source === 'operation') return false
+  return ['pending', 'running', 'waiting', 'submitting', 'remote_downloading', 'remote_completed', 'local_copying', 'downloading'].includes(String(row.status || ''))
+}
+
+function taskCanResume(row = {}) {
+  return String(row.status || '') === 'paused'
+}
+
+function taskCanRetry(row = {}) {
+  if (row.source === 'operation') return false
+  return ['failed', 'cancelled', 'waiting', 'paused'].includes(String(row.status || ''))
+}
+
+function taskCanClear(row = {}) {
+  return ['completed', 'failed', 'cancelled', 'skipped', 'paused'].includes(String(row.status || ''))
+}
+
 function scheduledBadgeType(jobKey) {
   const job = (dashboard.scheduled_jobs || []).find(item => item.job_key === jobKey)
   if (!job) return 'info'
@@ -1127,6 +1147,11 @@ exposeAppContext({
   splitTextLines,
   startOfWeek,
   subtitleFormatText,
+  taskCanCancel,
+  taskCanClear,
+  taskCanPause,
+  taskCanResume,
+  taskCanRetry,
   taskStatusText,
   taskTag,
   taskTypeRows,
@@ -1150,7 +1175,7 @@ const {
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
-  openScheduledSettings, migrateEpisodeModel, openDownloaderDialog, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+  openScheduledSettings, migrateEpisodeModel, openDownloaderDialog, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, retryGenericTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
   saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
   confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,
@@ -1201,10 +1226,11 @@ exposeAppContext({
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, deleteSearchSource, downloadCurrentEntryResources, downloadEpisodeResource,
   editRssSubscription, editSearchSource, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, loadSearchSources, normalizeSettingsShape, openDiscoveryCollectDraft, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
-  openScheduledSettings, openSearchSourceDialog, openTorznabDialog, migrateEpisodeModel, openDownloaderDialog, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+  openScheduledSettings, openSearchSourceDialog, openTorznabDialog, migrateEpisodeModel, openDownloaderDialog, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, retryGenericTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   removeMediaWizardSubtitleItem, resetRssForm, resetSearchSourceForm, resetSelectionRules, runAction, runDiscoverySearch, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
   saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
   saveSearchSource, searchBackfillForCurrentEntry, confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, testSearchSource, toggleEntryResourceRow,
+  taskCanCancel, taskCanClear, taskCanPause, taskCanResume, taskCanRetry,
   startMetadataProgress, stopMetadataProgress, syncScheduledJobForm, toggleSearchSource, triggerSchedule, uploadMediaWizardFiles,
 })
 

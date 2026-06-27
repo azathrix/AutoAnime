@@ -265,7 +265,7 @@ export function createAppActions(app, deps) {
 
   async function clearCompletedDownloadTasks() {
     try {
-      const result = await postAction('/download-tasks/clear-completed')
+      const result = await postAction('/tasks/clear-completed')
       ElMessage.success(result?.message || '已清除完成任务')
       await app.reload()
     } catch (error) {
@@ -410,6 +410,18 @@ export function createAppActions(app, deps) {
       if (!taskId) return
       const result = await postAction(`/tasks/${encodeURIComponent(taskId)}/resume`)
       ElMessage.success(result?.message || '任务已继续')
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    }
+  }
+
+  async function retryGenericTask(row) {
+    try {
+      const taskId = String(row?.id || '')
+      if (!taskId) return
+      const result = await postAction(`/tasks/${encodeURIComponent(taskId)}/retry`)
+      ElMessage.success(result?.message || '任务已重试')
       await app.reload()
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
@@ -1275,7 +1287,7 @@ export function createAppActions(app, deps) {
     deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, downloadCurrentEntryResources, downloadEpisodeResource,
     editRssSubscription, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, normalizeSettingsShape, openEntry,
     openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
-    openScheduledSettings, openDownloaderDialog, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, pauseGenericTask, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, resumeGenericTask, retryDownloadTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
+    openScheduledSettings, openDownloaderDialog, migrateEpisodeModel, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, pauseGenericTask, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, resumeGenericTask, retryDownloadTask, retryGenericTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
     removeMediaWizardSubtitleItem, resetRssForm, resetSelectionRules, runAction, runMetadataSearch, saveAllSettings, saveBatchSubtitles,
     saveDownloaderDialog, saveEntryEditForm, saveEpisodeResource, saveProcessorSettings, saveRssSubscription, saveScheduledJob, searchWizardMetadata, selectServerFile, setCurrentEntryFollowing,
     confirmMetadataMatch, selectedMetadataCandidate, selectMetadataCandidate, skipMetadataProvider, toggleEntryResourceRow,

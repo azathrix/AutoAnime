@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ..task_service import cancel_task, delete_task, list_tasks, pause_task, resume_task, task_overview
+from ..task_service import cancel_task, clear_completed_tasks, delete_task, list_tasks, pause_task, resume_task, retry_task, task_overview
 
 
 router = APIRouter()
@@ -37,9 +37,26 @@ async def api_resume_task(task_id: str) -> dict[str, str]:
     return {"status": "pending", "message": "任务已继续"}
 
 
+@router.post("/api/tasks/{task_id}/retry")
+async def api_retry_task(task_id: str) -> dict[str, str]:
+    if not await retry_task(task_id):
+        raise HTTPException(status_code=404, detail="任务不存在或不可重试")
+    return {"status": "pending", "message": "任务已重试"}
+
+
+@router.post("/api/tasks/clear-completed")
+async def api_clear_completed_tasks() -> dict[str, Any]:
+    result = await clear_completed_tasks()
+    return {
+        "status": "deleted",
+        "count": result["total"],
+        "message": f"已清理 {result['total']} 条已完成任务",
+        "detail": result,
+    }
+
+
 @router.delete("/api/tasks/{task_id}")
 async def api_delete_task(task_id: str) -> dict[str, str]:
     if not await delete_task(task_id):
         raise HTTPException(status_code=404, detail="任务不存在或不可清理")
     return {"status": "deleted", "message": "任务已清理"}
-

@@ -414,6 +414,19 @@ class RuntimeStore:
         await self.bump()
         return True
 
+    async def retry_task(self, task_id: int) -> bool:
+        async with self._lock:
+            task = self.tasks.get(task_id)
+            if not task or task.status not in {"waiting", "failed", "cancelled", "paused"}:
+                return False
+            task.status = "pending"
+            task.message = "手动重试任务"
+            task.error = ""
+            task.retry_at = ""
+            task.updated_at = utc_now()
+        await self.bump()
+        return True
+
     async def delete_task(self, task_id: int) -> bool:
         async with self._lock:
             task = self.tasks.get(task_id)
@@ -424,6 +437,22 @@ class RuntimeStore:
                 self.dedupe_index.pop(task.dedupe_key, None)
         await self.bump()
         return True
+
+    async def clear_completed_tasks(self) -> int:
+        removable_statuses = {"completed", "skipped", "cancelled"}
+        async with self._lock:
+            removable = [
+                task_id
+                for task_id, task in self.tasks.items()
+                if task.status in removable_statuses
+            ]
+            for task_id in removable:
+                task = self.tasks.pop(task_id, None)
+                if task and task.dedupe_key:
+                    self.dedupe_index.pop(task.dedupe_key, None)
+        if removable:
+            await self.bump()
+        return len(removable)
 
     def has_active_episode_task(self, entry_id: int, episode_number: int, processor_keys: set[str] | None = None) -> bool:
         for task in self.tasks.values():
@@ -546,6 +575,18 @@ class RuntimeStore:
         for operation_id in removable:
             self.operations.pop(operation_id, None)
         self.bump_sync()
+        return len(removable)
+
+    def clear_completed_operations_sync(self) -> int:
+        removable = [
+            operation_id
+            for operation_id, operation in self.operations.items()
+            if str(operation.get("status") or "") in {"completed", "cancelled", "skipped"}
+        ]
+        for operation_id in removable:
+            self.operations.pop(operation_id, None)
+        if removable:
+            self.bump_sync()
         return len(removable)
 
     def delete_operation_sync(self, operation_id: int) -> bool:

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from .database import connect
-from .db import now
-from .download_task_service import list_download_tasks
+from .db import log, now
+from .download_task_service import list_download_tasks, queue_download_for_episode, queue_download_for_release
 from .runtime_store import runtime_store
 
 
@@ -160,17 +161,55 @@ async def cancel_task(task_id: str) -> bool:
         return await cancel_operation(int(raw))
     if kind == "download" and raw.isdigit():
         from .download_worker_service import cancel_download_job_worker
+        from .pipeline_orchestrator import cancel_active_processor_tasks
+        from .runtime_service import DOWNLOAD_RUNTIME_PROCESSORS
 
-        cancel_download_job_worker(int(raw))
+        job_id = int(raw)
+        cancel_download_job_worker(job_id)
         with connect() as conn:
+            row = conn.execute("SELECT * FROM download_jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                return False
+            entry_id = int(row["entry_id"] or 0)
+            episode_number = int(row["episode_number"] or 0)
+            target_local_path = str(row["target_local_path"] or "")
             conn.execute(
                 """
                 UPDATE download_jobs
                 SET status='cancelled', phase='cancelled', last_error='用户取消任务', retry_after='', updated_at=?
                 WHERE id=?
                 """,
-                (now(), int(raw)),
+                (now(), job_id),
             )
+            conn.execute(
+                """
+                UPDATE episode_resources
+                SET status='cancelled', updated_at=?
+                WHERE entry_id=? AND episode_number=? AND selected=1 AND downloaded=0
+                """,
+                (now(), entry_id, episode_number),
+            )
+            conn.execute(
+                "UPDATE episodes SET status_note='下载任务已取消', updated_at=? WHERE entry_id=? AND episode_number=?",
+                (now(), entry_id, episode_number),
+            )
+        await runtime_store.cancel_episode_tasks(entry_id, episode_number, DOWNLOAD_RUNTIME_PROCESSORS)
+        await cancel_active_processor_tasks(
+            DOWNLOAD_RUNTIME_PROCESSORS,
+            entry_id=entry_id,
+            episode_number=episode_number,
+        )
+        if target_local_path:
+            partial_path = Path(target_local_path).with_name(f"{Path(target_local_path).name}.anitrack.part")
+            try:
+                if partial_path.exists() and partial_path.is_file():
+                    partial_path.unlink()
+            except OSError as exc:
+                log("warn", f"下载临时文件清理失败: task_id={job_id} path={partial_path} error={str(exc)[:500]}")
+        log(
+            "warn",
+            f"下载任务已取消: task_id={job_id} entry_id={entry_id} episode={episode_number}",
+        )
         return True
     return False
 
@@ -210,6 +249,31 @@ async def resume_task(task_id: str) -> bool:
     return False
 
 
+async def retry_task(task_id: str) -> bool:
+    kind, _, raw = task_id.partition(":")
+    if kind == "runtime" and raw.isdigit():
+        return await runtime_store.retry_task(int(raw))
+    if kind == "download" and raw.isdigit():
+        from .download_worker_service import trigger_download_worker
+
+        with connect() as conn:
+            row = conn.execute("SELECT release_id, episode_id FROM download_jobs WHERE id=?", (int(raw),)).fetchone()
+        if not row:
+            return False
+        release_id = int(row["release_id"] or 0)
+        episode_id = int(row["episode_id"] or 0)
+        queued = (
+            queue_download_for_episode(episode_id, reset_cancelled=True)
+            if episode_id > 0
+            else queue_download_for_release(release_id, reset_cancelled=True)
+        )
+        if not queued.get("queued") and queued.get("reason") != "已有活跃下载任务":
+            return False
+        trigger_download_worker(delay=0)
+        return True
+    return False
+
+
 async def delete_task(task_id: str) -> bool:
     kind, _, raw = task_id.partition(":")
     if kind == "runtime" and raw.isdigit():
@@ -221,3 +285,22 @@ async def delete_task(task_id: str) -> bool:
             conn.execute("DELETE FROM download_jobs WHERE id=? AND status NOT IN ('submitting','remote_downloading','local_copying')", (int(raw),))
         return True
     return False
+
+
+async def clear_completed_tasks() -> dict[str, int]:
+    runtime_count = await runtime_store.clear_completed_tasks()
+    operation_count = runtime_store.clear_completed_operations_sync()
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM download_jobs WHERE status IN ('completed', 'cancelled')")
+        download_count = cursor.rowcount if cursor.rowcount is not None else 0
+    total = runtime_count + operation_count + download_count
+    log(
+        "info",
+        f"已清除完成任务: total={total} runtime={runtime_count} operation={operation_count} download={download_count}",
+    )
+    return {
+        "total": total,
+        "runtime": runtime_count,
+        "operation": operation_count,
+        "download": download_count,
+    }

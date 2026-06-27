@@ -112,6 +112,7 @@ export default appContextComponent({ draggable, PriorityList })
             <div class="settings-section-toolbar">
               <div><strong>下载器优先级</strong><span>按顺序尝试可用下载器；详细字段在编辑窗口里配置。</span></div>
               <div class="settings-toolbar-actions">
+                <el-button plain @click="openProcessorSettings">下载并发</el-button>
                 <el-button plain @click="openDownloaderDialog(-1)">添加下载器</el-button>
                 <el-button type="primary" :loading="savingSettings" @click="saveAllSettings">保存设置</el-button>
               </div>
