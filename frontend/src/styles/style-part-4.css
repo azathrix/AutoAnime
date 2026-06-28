@@ -1785,3 +1785,36 @@
 .el-message .el-message__icon {
   display: none !important;
 }
+
+/* Center the whole personal layout, not only the content panel */
+.app-shell {
+  --mochi-layout-width: min(1280px, calc(100vw - 48px));
+  --mochi-sidebar-width: 252px;
+  --mochi-sidebar-left: max(24px, calc((100vw - var(--mochi-layout-width)) / 2));
+  --mochi-main-width: calc(var(--mochi-layout-width) - var(--mochi-sidebar-width) - 28px);
+}
+
+.sidebar {
+  left: var(--mochi-sidebar-left) !important;
+  width: var(--mochi-sidebar-width) !important;
+}
+
+.main {
+  margin-left: calc(var(--mochi-sidebar-left) + var(--mochi-sidebar-width) + 28px) !important;
+  margin-right: 0 !important;
+  max-width: var(--mochi-main-width) !important;
+  width: var(--mochi-main-width) !important;
+}
+
+@media (max-width: 1100px) {
+  .app-shell {
+    --mochi-layout-width: calc(100vw - 32px);
+    --mochi-main-width: calc(100vw - 32px);
+  }
+
+  .main {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    width: auto !important;
+  }
+}

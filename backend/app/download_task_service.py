@@ -412,7 +412,7 @@ def list_download_tasks(limit: int = 200) -> list[dict[str, Any]]:
                 item["progress"] = 0
                 item["progress_text"] = "-"
         if status == "completed":
-            item["progress"] = 0
+            item["progress"] = 100
             item["progress_text"] = "可观看"
         elif status == "failed":
             item["progress"] = 0
