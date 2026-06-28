@@ -30,16 +30,10 @@
         </div>
       </div>
       <div class="sidebar-status-card">
-        <div class="sidebar-status-head">
-          <span class="status-orb" :class="{ running: scanRunning }"></span>
-          <div>
-            <strong>{{ scanRunning ? 'RSS 扫描中' : '实时连接' }}</strong>
-            <p>{{ scannerStatusText }}</p>
-          </div>
-        </div>
-        <div class="sidebar-user-line">
-          <span>👤 {{ authState.username || 'admin' }}</span>
-          <span>{{ liveConnected ? '在线' : '重连中' }}</span>
+        <div class="sidebar-profile">
+          <img class="sidebar-profile-avatar" src="/anitrack-icon.png" alt="用户头像" />
+          <strong>{{ authState.username || 'admin' }}</strong>
+          <p>正在整理你的追番花园</p>
         </div>
         <div class="profile-stats">
           <div><b>{{ seasonalCatalogTotal }}</b><span>新番</span></div>
@@ -50,6 +44,13 @@
           <el-icon><Search /></el-icon>
           {{ scanRunning ? '扫描中...' : '快速扫描 RSS' }}
         </button>
+        <div class="sidebar-live-line">
+          <span class="status-orb" :class="{ running: scanRunning, active: liveConnected }"></span>
+          <div>
+            <strong>{{ scanRunning ? 'RSS 扫描中' : '实时连接' }}</strong>
+            <p>{{ scannerStatusText }}</p>
+          </div>
+        </div>
       </div>
       <nav>
         <div class="nav-caption">媒体</div>
@@ -72,10 +73,6 @@
           <span class="page-title-kicker">AniTrack</span>
           <h1>{{ pageTitle }}</h1>
           <p>{{ pageSubtitle }}</p>
-        </div>
-        <div class="page-title-status">
-          <span :class="['page-live-dot', { active: liveConnected }]"></span>
-          <strong>{{ liveConnected ? '实时连接' : '等待连接' }}</strong>
         </div>
       </header>
       <DashboardPage />
@@ -940,8 +937,6 @@ function notifyTaskTransitions(nextDashboard) {
       ElMessage.success(`🍓 ${item.title} 已完成`)
     } else if (item.status === 'failed') {
       ElMessage.error(`⚠️ ${item.title} 失败`)
-    } else if (item.status === 'cancelled') {
-      ElMessage.warning(`🧹 ${item.title} 已取消`)
     }
   }
   taskToastReady = true
