@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import shutil
 from typing import Any
 from html import unescape
 from urllib.parse import quote, quote_plus, urljoin
@@ -417,6 +419,51 @@ def _qmp4_raise_if_blocked(text: str, label: str) -> None:
         raise RuntimeError(f"QMP4 {label}返回站点防护页，当前环境无法自动解析")
 
 
+async def _qmp4_fetch_with_curl(url: str, timeout: int, proxy: str | None, label: str) -> str:
+    curl_path = shutil.which("curl.exe") or shutil.which("curl")
+    if not curl_path:
+        raise RuntimeError(f"QMP4 {label}需要 curl 传输，但当前系统未找到 curl")
+    args = [curl_path, "-L", "-sS", "--max-time", str(timeout)]
+    if proxy:
+        args.extend(["--proxy", proxy])
+    args.append(url)
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout + 5)
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        raise RuntimeError(f"QMP4 {label}请求超时") from exc
+    if process.returncode != 0:
+        message = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"QMP4 {label}curl 请求失败: {message[:180] or process.returncode}")
+    return stdout.decode("utf-8", errors="replace")
+
+
+async def _qmp4_fetch_text(
+    client: httpx.AsyncClient,
+    url: str,
+    label: str,
+    timeout: int,
+    proxy: str | None,
+    params: dict[str, str] | None = None,
+) -> str:
+    request_url = str(httpx.URL(url, params=params or {}))
+    # QMP4 currently returns a guard page to Python HTTP clients but serves curl normally.
+    if shutil.which("curl.exe") or shutil.which("curl"):
+        text = await _qmp4_fetch_with_curl(request_url, timeout, proxy, label)
+        _qmp4_raise_if_blocked(text, label)
+        return text
+    response = await client.get(request_url)
+    response.raise_for_status()
+    _qmp4_raise_if_blocked(response.text, label)
+    return response.text
+
+
 def _qmp4_suggest_candidates(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict) or int(payload.get("code") or 0) != 1:
         return []
@@ -670,26 +717,27 @@ async def _search_qmp4_source(source: dict[str, Any], keyword: str, media_type: 
         if direct_match:
             qmp4_id = int(direct_match.group(1))
             page_url = urljoin(f"{base_url}/", f"/mv/{qmp4_id}.html")
-            detail_resp = await client.get(page_url)
-            detail_resp.raise_for_status()
-            _qmp4_raise_if_blocked(detail_resp.text, "详情页")
-            return _qmp4_detail_to_items(source, {"id": qmp4_id, "name": "", "pic": ""}, detail_resp.text, page_url, media_type, year)
+            detail_text = await _qmp4_fetch_text(client, page_url, "详情页", timeout, proxy)
+            return _qmp4_detail_to_items(source, {"id": qmp4_id, "name": "", "pic": ""}, detail_text, page_url, media_type, year)
 
-        suggest_resp = await client.get(urljoin(f"{base_url}/", "/index.php/ajax/suggest"), params={"mid": "1", "wd": keyword})
-        suggest_resp.raise_for_status()
-        _qmp4_raise_if_blocked(suggest_resp.text, "搜索接口")
+        suggest_text = await _qmp4_fetch_text(
+            client,
+            urljoin(f"{base_url}/", "/index.php/ajax/suggest"),
+            "搜索接口",
+            timeout,
+            proxy,
+            {"mid": "1", "wd": keyword},
+        )
         try:
-            suggest_payload = suggest_resp.json()
+            suggest_payload = json.loads(suggest_text)
         except json.JSONDecodeError as exc:
             raise RuntimeError("QMP4 搜索接口返回非 JSON 响应，无法自动解析") from exc
         candidates = _qmp4_suggest_candidates(suggest_payload)
         result: list[dict[str, Any]] = []
         for candidate in candidates[:detail_limit]:
             page_url = urljoin(f"{base_url}/", f"/mv/{candidate['id']}.html")
-            detail_resp = await client.get(page_url)
-            detail_resp.raise_for_status()
-            _qmp4_raise_if_blocked(detail_resp.text, "详情页")
-            result.extend(_qmp4_detail_to_items(source, candidate, detail_resp.text, page_url, media_type, year))
+            detail_text = await _qmp4_fetch_text(client, page_url, "详情页", timeout, proxy)
+            result.extend(_qmp4_detail_to_items(source, candidate, detail_text, page_url, media_type, year))
     return result
 
 
