@@ -405,6 +405,18 @@ def _qmp4_is_verify_page(text: str) -> bool:
     return "系统安全验证" in (text or "") and "/index.php/ajax/verify_check?type=search" in (text or "")
 
 
+def _qmp4_is_guard_page(text: str) -> bool:
+    value = text or ""
+    return "/_guard/html.js" in value or "easy_click_html" in value
+
+
+def _qmp4_raise_if_blocked(text: str, label: str) -> None:
+    if _qmp4_is_verify_page(text):
+        raise RuntimeError(f"QMP4 {label}触发安全验证，已停止自动解析")
+    if _qmp4_is_guard_page(text):
+        raise RuntimeError(f"QMP4 {label}返回站点防护页，当前环境无法自动解析")
+
+
 def _qmp4_suggest_candidates(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict) or int(payload.get("code") or 0) != 1:
         return []
@@ -660,22 +672,23 @@ async def _search_qmp4_source(source: dict[str, Any], keyword: str, media_type: 
             page_url = urljoin(f"{base_url}/", f"/mv/{qmp4_id}.html")
             detail_resp = await client.get(page_url)
             detail_resp.raise_for_status()
-            if _qmp4_is_verify_page(detail_resp.text):
-                raise RuntimeError("QMP4 详情页触发安全验证，已停止自动解析")
+            _qmp4_raise_if_blocked(detail_resp.text, "详情页")
             return _qmp4_detail_to_items(source, {"id": qmp4_id, "name": "", "pic": ""}, detail_resp.text, page_url, media_type, year)
 
         suggest_resp = await client.get(urljoin(f"{base_url}/", "/index.php/ajax/suggest"), params={"mid": "1", "wd": keyword})
         suggest_resp.raise_for_status()
-        if _qmp4_is_verify_page(suggest_resp.text):
-            raise RuntimeError("QMP4 搜索触发安全验证，已停止自动解析")
-        candidates = _qmp4_suggest_candidates(suggest_resp.json())
+        _qmp4_raise_if_blocked(suggest_resp.text, "搜索接口")
+        try:
+            suggest_payload = suggest_resp.json()
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("QMP4 搜索接口返回非 JSON 响应，无法自动解析") from exc
+        candidates = _qmp4_suggest_candidates(suggest_payload)
         result: list[dict[str, Any]] = []
         for candidate in candidates[:detail_limit]:
             page_url = urljoin(f"{base_url}/", f"/mv/{candidate['id']}.html")
             detail_resp = await client.get(page_url)
             detail_resp.raise_for_status()
-            if _qmp4_is_verify_page(detail_resp.text):
-                raise RuntimeError("QMP4 详情页触发安全验证，已停止自动解析")
+            _qmp4_raise_if_blocked(detail_resp.text, "详情页")
             result.extend(_qmp4_detail_to_items(source, candidate, detail_resp.text, page_url, media_type, year))
     return result
 
