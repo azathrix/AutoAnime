@@ -403,13 +403,26 @@ def _qmp4_headers(base_url: str) -> dict[str, str]:
     }
 
 
+def _qmp4_cookie(source: dict[str, Any]) -> str:
+    value = _text(source.get("api_key")) or _text(_config_dict(source).get("cookie"))
+    if value.lower().startswith("cookie:"):
+        value = value.split(":", 1)[1].strip()
+    return value
+
+
 def _qmp4_is_verify_page(text: str) -> bool:
     return "系统安全验证" in (text or "") and "/index.php/ajax/verify_check?type=search" in (text or "")
 
 
 def _qmp4_is_guard_page(text: str) -> bool:
     value = text or ""
-    return "/_guard/html.js" in value or "easy_click_html" in value
+    return (
+        "/_guard/html.js" in value
+        or "easy_click_html" in value
+        or "Security Verification" in value
+        or "Please click in sequence" in value
+        or "请依次点击" in value
+    )
 
 
 def _qmp4_raise_if_blocked(text: str, label: str) -> None:
@@ -419,13 +432,15 @@ def _qmp4_raise_if_blocked(text: str, label: str) -> None:
         raise RuntimeError(f"QMP4 {label}返回站点防护页，当前环境无法自动解析")
 
 
-async def _qmp4_fetch_with_curl(url: str, timeout: int, proxy: str | None, label: str) -> str:
+async def _qmp4_fetch_with_curl(url: str, timeout: int, proxy: str | None, cookie: str, label: str) -> str:
     curl_path = shutil.which("curl.exe") or shutil.which("curl")
     if not curl_path:
         raise RuntimeError(f"QMP4 {label}需要 curl 传输，但当前系统未找到 curl")
     args = [curl_path, "-L", "-sS", "--max-time", str(timeout)]
     if proxy:
         args.extend(["--proxy", proxy])
+    if cookie:
+        args.extend(["-H", f"Cookie: {cookie}"])
     args.append(url)
     process = await asyncio.create_subprocess_exec(
         *args,
@@ -450,12 +465,13 @@ async def _qmp4_fetch_text(
     label: str,
     timeout: int,
     proxy: str | None,
+    cookie: str,
     params: dict[str, str] | None = None,
 ) -> str:
     request_url = str(httpx.URL(url, params=params or {}))
     # QMP4 currently returns a guard page to Python HTTP clients but serves curl normally.
     if shutil.which("curl.exe") or shutil.which("curl"):
-        text = await _qmp4_fetch_with_curl(request_url, timeout, proxy, label)
+        text = await _qmp4_fetch_with_curl(request_url, timeout, proxy, cookie, label)
         _qmp4_raise_if_blocked(text, label)
         return text
     response = await client.get(request_url)
@@ -706,6 +722,7 @@ async def _search_qmp4_source(source: dict[str, Any], keyword: str, media_type: 
     base_url = _qmp4_base_url(source)
     timeout = max(3, int(source.get("timeout_seconds") or 20))
     proxy = source.get("proxy") or get_settings().get("rss_proxy") or None
+    cookie = _qmp4_cookie(source)
     detail_limit = _config_int(source, "detail_limit", QMP4_DEFAULT_DETAIL_LIMIT, 1, 20)
     async with httpx.AsyncClient(
         proxy=proxy,
@@ -717,7 +734,7 @@ async def _search_qmp4_source(source: dict[str, Any], keyword: str, media_type: 
         if direct_match:
             qmp4_id = int(direct_match.group(1))
             page_url = urljoin(f"{base_url}/", f"/mv/{qmp4_id}.html")
-            detail_text = await _qmp4_fetch_text(client, page_url, "详情页", timeout, proxy)
+            detail_text = await _qmp4_fetch_text(client, page_url, "详情页", timeout, proxy, cookie)
             return _qmp4_detail_to_items(source, {"id": qmp4_id, "name": "", "pic": ""}, detail_text, page_url, media_type, year)
 
         suggest_text = await _qmp4_fetch_text(
@@ -726,17 +743,22 @@ async def _search_qmp4_source(source: dict[str, Any], keyword: str, media_type: 
             "搜索接口",
             timeout,
             proxy,
+            cookie,
             {"mid": "1", "wd": keyword},
         )
+        if "Website request error" in suggest_text or "502 Bad Gateway" in suggest_text:
+            raise RuntimeError("QMP4 搜索接口返回站点/CDN错误，可能被风控或临时不可用")
         try:
             suggest_payload = json.loads(suggest_text)
         except json.JSONDecodeError as exc:
+            if "<html" in suggest_text[:500].lower() or "<!doctype" in suggest_text[:500].lower():
+                raise RuntimeError("QMP4 搜索接口返回 HTML 响应，可能被风控或临时不可用") from exc
             raise RuntimeError("QMP4 搜索接口返回非 JSON 响应，无法自动解析") from exc
         candidates = _qmp4_suggest_candidates(suggest_payload)
         result: list[dict[str, Any]] = []
         for candidate in candidates[:detail_limit]:
             page_url = urljoin(f"{base_url}/", f"/mv/{candidate['id']}.html")
-            detail_text = await _qmp4_fetch_text(client, page_url, "详情页", timeout, proxy)
+            detail_text = await _qmp4_fetch_text(client, page_url, "详情页", timeout, proxy, cookie)
             result.extend(_qmp4_detail_to_items(source, candidate, detail_text, page_url, media_type, year))
     return result
 
