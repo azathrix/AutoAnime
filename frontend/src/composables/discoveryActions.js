@@ -24,6 +24,37 @@ function blankSearchSourceForm() {
 
 export function createDiscoveryActions(app, deps) {
   const { deleteAction, getAction, postAction, putAction, openMediaWizard, apiErrorMessage } = deps
+  let resourcePackagePollTimer = 0
+
+  function shouldPollResourcePackage(data = {}) {
+    const status = String(data.package?.status || '')
+    return Boolean(data.active) || status === 'queued' || status === 'downloading'
+  }
+
+  function stopResourcePackagePolling() {
+    if (resourcePackagePollTimer && typeof window !== 'undefined') {
+      window.clearTimeout(resourcePackagePollTimer)
+      resourcePackagePollTimer = 0
+    }
+  }
+
+  function scheduleResourcePackagePolling(packageId, remaining = 60) {
+    if (!packageId || remaining <= 0 || typeof window === 'undefined') return
+    stopResourcePackagePolling()
+    resourcePackagePollTimer = window.setTimeout(async () => {
+      resourcePackagePollTimer = 0
+      if (!app.resourcePackageDialogOpen) return
+      try {
+        const data = await getAction(`/resource-packages/${packageId}`)
+        setResourcePackageDetail(data)
+        if (shouldPollResourcePackage(data)) {
+          scheduleResourcePackagePolling(packageId, remaining - 1)
+        }
+      } catch {
+        if (remaining > 1) scheduleResourcePackagePolling(packageId, remaining - 1)
+      }
+    }, 8000)
+  }
 
   function setResourcePackageDetail(data = {}) {
     Object.assign(app.resourcePackageDetail, {
@@ -292,6 +323,7 @@ export function createDiscoveryActions(app, deps) {
       const data = await postAction(`/discovery/results/${resultId}/package-download`, payload)
       setResourcePackageDetail(data)
       app.resourcePackageDialogOpen = true
+      if (shouldPollResourcePackage(data)) scheduleResourcePackagePolling(Number(data.package?.id || 0))
       ElMessage.success('资源包已提交下载')
       if (app.discoveryState.search?.id) {
         const refreshed = await getAction(`/discovery/searches/${app.discoveryState.search.id}`)
@@ -313,6 +345,7 @@ export function createDiscoveryActions(app, deps) {
     try {
       const data = await getAction(`/resource-packages/${packageId}`)
       setResourcePackageDetail(data)
+      if (shouldPollResourcePackage(data)) scheduleResourcePackagePolling(packageId)
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
     } finally {
@@ -327,6 +360,7 @@ export function createDiscoveryActions(app, deps) {
     try {
       const data = await postAction(`/resource-packages/${packageId}/scan`)
       setResourcePackageDetail(data)
+      if (shouldPollResourcePackage(data)) scheduleResourcePackagePolling(packageId)
       ElMessage.success('资源包扫描完成')
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
@@ -348,6 +382,7 @@ export function createDiscoveryActions(app, deps) {
     try {
       const data = await postAction(`/resource-packages/${packageId}/apply-match`, { files, organize: true })
       setResourcePackageDetail(data)
+      stopResourcePackagePolling()
       const result = data.result || {}
       ElMessage.success(`已整理 ${result.applied || 0} 个视频，字幕 ${result.subtitles || 0} 个`)
       await app.reload()
@@ -365,6 +400,7 @@ export function createDiscoveryActions(app, deps) {
     try {
       const data = await postAction(`/resource-packages/${packageId}/cleanup`)
       if (data.package) setResourcePackageDetail({ ...app.resourcePackageDetail, package: data.package })
+      stopResourcePackagePolling()
       ElMessage.success('资源包临时目录已清理')
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))

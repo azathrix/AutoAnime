@@ -29,6 +29,8 @@ from .utils import row_to_dict
 
 VIDEO_SUFFIXES = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".flv", ".webm"}
 SUBTITLE_SUFFIXES = {".ass", ".srt", ".ssa", ".vtt", ".sup", ".sub"}
+PACKAGE_SCAN_POLL_ATTEMPTS = 24
+PACKAGE_SCAN_POLL_INTERVAL_SECONDS = 15
 
 _active_package_tasks: dict[int, asyncio.Task] = {}
 
@@ -224,10 +226,35 @@ async def run_package_download(package_id: int) -> None:
             """,
             (status, completed, completed, now(), package_id),
         )
-    try:
-        await scan_package_async(package_id)
-    except Exception as exc:
-        log("warn", f"资源包首次扫描失败: package_id={package_id} error={str(exc)[:1000]}")
+    if completed:
+        await wait_for_package_files(package_id)
+
+
+async def wait_for_package_files(package_id: int) -> int:
+    for attempt in range(PACKAGE_SCAN_POLL_ATTEMPTS):
+        try:
+            detail = await scan_package_async(package_id)
+        except Exception as exc:
+            log("warn", f"资源包扫描等待失败: package_id={package_id} attempt={attempt + 1} error={str(exc)[:1000]}")
+            detail = {}
+        files = detail.get("files") or []
+        if files:
+            return len(files)
+        if attempt < PACKAGE_SCAN_POLL_ATTEMPTS - 1:
+            await asyncio.sleep(PACKAGE_SCAN_POLL_INTERVAL_SECONDS)
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE resource_packages
+            SET status='downloading',
+                match_status='pending',
+                last_error='离线下载已提交，暂未发现文件；请稍后手动扫描资源包',
+                updated_at=?
+            WHERE id=?
+            """,
+            (now(), package_id),
+        )
+    return 0
 
 
 def list_entry_packages(entry_id: int) -> dict[str, Any]:
@@ -355,6 +382,8 @@ def _refresh_package_counts(package_id: int, status: str = "") -> None:
         counts = conn.execute(
             """
             SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN file_kind IN ('video', 'subtitle') AND ignored=0 THEN 1 ELSE 0 END) AS actionable,
               SUM(CASE WHEN status IN ('matched', 'applied', 'skipped') AND ignored=0 THEN 1 ELSE 0 END) AS matched,
               SUM(CASE WHEN file_kind IN ('video', 'subtitle') AND ignored=0 AND episode_number<=0 THEN 1 ELSE 0 END) AS unmatched
             FROM resource_package_files
@@ -362,6 +391,8 @@ def _refresh_package_counts(package_id: int, status: str = "") -> None:
             """,
             (package_id,),
         ).fetchone()
+        total_files = int(counts["total"] or 0) if counts else 0
+        actionable_files = int(counts["actionable"] or 0) if counts else 0
         fields = {
             "matched_files": int(counts["matched"] or 0) if counts else 0,
             "unmatched_files": int(counts["unmatched"] or 0) if counts else 0,
@@ -369,7 +400,12 @@ def _refresh_package_counts(package_id: int, status: str = "") -> None:
         }
         if status:
             fields["status"] = status
-            fields["match_status"] = "ready" if fields["unmatched_files"] == 0 else "needs_review"
+            if status in {"queued", "downloading"} and total_files == 0:
+                fields["match_status"] = "pending"
+            elif actionable_files <= 0:
+                fields["match_status"] = "needs_review"
+            else:
+                fields["match_status"] = "ready" if fields["unmatched_files"] == 0 else "needs_review"
         assignments = ", ".join(f"{key}=?" for key in fields)
         conn.execute(f"UPDATE resource_packages SET {assignments} WHERE id=?", [*fields.values(), package_id])
 

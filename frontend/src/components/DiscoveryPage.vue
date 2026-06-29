@@ -197,6 +197,20 @@ function fileKindText(kind) {
           <el-tag type="success">已匹配 {{ app.resourcePackageDetail.package?.matched_files || 0 }}</el-tag>
           <el-tag type="warning">待处理 {{ app.resourcePackageDetail.package?.unmatched_files || 0 }}</el-tag>
         </div>
+        <el-alert
+          v-if="app.resourcePackageDetail.package?.last_error"
+          type="warning"
+          show-icon
+          :closable="false"
+          :title="app.resourcePackageDetail.package.last_error"
+        />
+        <el-alert
+          v-else-if="app.resourcePackageDetail.package?.status === 'downloading' && !(app.resourcePackageDetail.files || []).length"
+          type="info"
+          show-icon
+          :closable="false"
+          title="离线下载处理中，文件出现后会自动刷新匹配列表"
+        />
         <el-table :data="app.resourcePackageDetail.files || []" height="460" class="resource-package-table">
           <el-table-column label="文件" min-width="300">
             <template #default="{ row }">
@@ -240,7 +254,7 @@ function fileKindText(kind) {
             </template>
           </el-table-column>
         </el-table>
-        <el-empty v-if="!(app.resourcePackageDetail.files || []).length" description="下载完成后点击扫描匹配临时目录" />
+        <el-empty v-if="!(app.resourcePackageDetail.files || []).length" description="暂存目录还没有可匹配文件" />
       </div>
       <template #footer>
         <el-button @click="app.resourcePackageDialogOpen = false">关闭</el-button>
