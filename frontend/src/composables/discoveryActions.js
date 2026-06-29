@@ -22,25 +22,19 @@ function blankSearchSourceForm() {
   }
 }
 
-function draftEpisodeItem(kind, item, index) {
-  const parsedEpisode = Number(item.episode_number ?? 0)
-  const episode = Number.isFinite(parsedEpisode) ? parsedEpisode : 0
-  const ref = String(item.ref || '').trim()
-  return {
-    id: `discovery-${kind}-${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
-    source_mode: 'link',
-    episode_number: episode,
-    title: item.title || ref,
-    file_name: item.file_name || '',
-    source_ref: kind === 'video' ? ref : '',
-    local_path: '',
-    subtitle_ref: kind === 'subtitle' ? ref : '',
-    subtitle_path: '',
-  }
-}
-
 export function createDiscoveryActions(app, deps) {
   const { deleteAction, getAction, postAction, putAction, openMediaWizard, apiErrorMessage } = deps
+
+  function setResourcePackageDetail(data = {}) {
+    Object.assign(app.resourcePackageDetail, {
+      package: data.package || {},
+      entry: data.entry || {},
+      items: data.items || [],
+      files: data.files || [],
+      active: Boolean(data.active),
+      result: data.result || {},
+    })
+  }
 
   function resetSearchSourceForm() {
     app.searchSourceEditingId = 0
@@ -226,8 +220,8 @@ export function createDiscoveryActions(app, deps) {
         tags_text: listTextFromJson(entry.tags_json || '[]').replace(/\n/g, '，'),
         genres_text: '',
       })
-      app.mediaWizardResourceItems = (draft.resources || []).map((item, index) => draftEpisodeItem('video', item, index))
-      app.mediaWizardSubtitleItems = (draft.subtitles || []).map((item, index) => draftEpisodeItem('subtitle', item, index))
+      app.mediaWizardResourceItems = []
+      app.mediaWizardSubtitleItems = []
       app.mediaWizardDraft.resources_text = app.mediaWizardResourceItems.map(item => item.source_ref).filter(Boolean).join('\n')
       app.mediaWizardDraft.subtitles_text = app.mediaWizardSubtitleItems.map(item => item.subtitle_ref).filter(Boolean).join('\n')
     } catch (error) {
@@ -276,17 +270,114 @@ export function createDiscoveryActions(app, deps) {
     }
   }
 
+  async function downloadDiscoveryPackage(result) {
+    const resultId = Number(result?.id || 0)
+    if (!resultId) return
+    app.resourcePackageLoading = true
+    try {
+      const payload = {
+        entry_id: Number(app.discoveryState.backfill_entry_id || 0),
+      }
+      const data = await postAction(`/discovery/results/${resultId}/package-download`, payload)
+      setResourcePackageDetail(data)
+      app.resourcePackageDialogOpen = true
+      ElMessage.success('资源包已提交下载')
+      if (app.discoveryState.search?.id) {
+        const refreshed = await getAction(`/discovery/searches/${app.discoveryState.search.id}`)
+        app.discoveryState.search = refreshed.search || app.discoveryState.search
+        app.discoveryState.items = refreshed.items || app.discoveryState.items
+      }
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    } finally {
+      app.resourcePackageLoading = false
+    }
+  }
+
+  async function openResourcePackage(packageOrId) {
+    const packageId = Number(packageOrId?.id || packageOrId || 0)
+    if (!packageId) return
+    app.resourcePackageLoading = true
+    app.resourcePackageDialogOpen = true
+    try {
+      const data = await getAction(`/resource-packages/${packageId}`)
+      setResourcePackageDetail(data)
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    } finally {
+      app.resourcePackageLoading = false
+    }
+  }
+
+  async function scanResourcePackage() {
+    const packageId = Number(app.resourcePackageDetail?.package?.id || 0)
+    if (!packageId) return
+    app.resourcePackageLoading = true
+    try {
+      const data = await postAction(`/resource-packages/${packageId}/scan`)
+      setResourcePackageDetail(data)
+      ElMessage.success('资源包扫描完成')
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    } finally {
+      app.resourcePackageLoading = false
+    }
+  }
+
+  async function applyResourcePackageMatch() {
+    const packageId = Number(app.resourcePackageDetail?.package?.id || 0)
+    if (!packageId) return
+    const files = (app.resourcePackageDetail.files || []).map(item => ({
+      file_id: Number(item.id || 0),
+      episode_number: Number(item.episode_number || 0),
+      role: item.role || item.file_kind || '',
+      ignored: Boolean(Number(item.ignored || 0)),
+    }))
+    app.resourcePackageLoading = true
+    try {
+      const data = await postAction(`/resource-packages/${packageId}/apply-match`, { files, organize: true })
+      setResourcePackageDetail(data)
+      const result = data.result || {}
+      ElMessage.success(`已整理 ${result.applied || 0} 个视频，字幕 ${result.subtitles || 0} 个`)
+      await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    } finally {
+      app.resourcePackageLoading = false
+    }
+  }
+
+  async function cleanupResourcePackage() {
+    const packageId = Number(app.resourcePackageDetail?.package?.id || 0)
+    if (!packageId) return
+    app.resourcePackageLoading = true
+    try {
+      const data = await postAction(`/resource-packages/${packageId}/cleanup`)
+      if (data.package) setResourcePackageDetail({ ...app.resourcePackageDetail, package: data.package })
+      ElMessage.success('资源包临时目录已清理')
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    } finally {
+      app.resourcePackageLoading = false
+    }
+  }
+
   return {
     applyBackfillResult,
+    applyResourcePackageMatch,
+    cleanupResourcePackage,
     deleteSearchSource,
+    downloadDiscoveryPackage,
     editSearchSource,
     loadSearchSources,
+    openResourcePackage,
     openSearchSourceDialog,
     openTorznabDialog,
     openDiscoveryCollectDraft,
     resetSearchSourceForm,
     runDiscoverySearch,
     saveSearchSource,
+    scanResourcePackage,
     searchBackfillForCurrentEntry,
     reorderSearchSources,
     testSearchSource,

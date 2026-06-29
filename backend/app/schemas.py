@@ -213,6 +213,19 @@ class BackfillApplyPayload(BaseModel):
     resource_ids: list[int] = Field(default_factory=list)
     auto_download: bool = True
 
+class DiscoveryPackageDownloadPayload(BaseModel):
+    entry_id: int = 0
+
+class ResourcePackageFileMatchPayload(BaseModel):
+    file_id: int = 0
+    episode_number: int = 0
+    role: str = "video"
+    ignored: bool = False
+
+class ResourcePackageApplyPayload(BaseModel):
+    files: list[ResourcePackageFileMatchPayload] = Field(default_factory=list)
+    organize: bool = True
+
 class ProcessorSettingsPayload(BaseModel):
     download_concurrency: int = 2
 

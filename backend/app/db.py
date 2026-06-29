@@ -509,6 +509,61 @@ def init_db() -> None:
                 UNIQUE(result_id, episode_number, resource_ref, subtitle_ref)
             );
 
+            CREATE TABLE IF NOT EXISTS resource_packages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_id INTEGER NOT NULL DEFAULT 0,
+                result_id INTEGER NOT NULL DEFAULT 0,
+                search_id INTEGER NOT NULL DEFAULT 0,
+                title TEXT NOT NULL DEFAULT '',
+                media_type TEXT NOT NULL DEFAULT 'anime',
+                provider TEXT NOT NULL DEFAULT '',
+                target_dir TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'queued',
+                match_status TEXT NOT NULL DEFAULT 'pending',
+                total_resources INTEGER NOT NULL DEFAULT 0,
+                completed_resources INTEGER NOT NULL DEFAULT 0,
+                matched_files INTEGER NOT NULL DEFAULT 0,
+                unmatched_files INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS resource_package_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                package_id INTEGER NOT NULL,
+                discovery_resource_id INTEGER NOT NULL DEFAULT 0,
+                source_ref TEXT NOT NULL DEFAULT '',
+                source_title TEXT NOT NULL DEFAULT '',
+                target_dir TEXT NOT NULL DEFAULT '',
+                submission_id TEXT NOT NULL DEFAULT '',
+                provider_file_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'queued',
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS resource_package_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                package_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL DEFAULT 0,
+                file_path TEXT NOT NULL DEFAULT '',
+                provider_file_id TEXT NOT NULL DEFAULT '',
+                file_name TEXT NOT NULL DEFAULT '',
+                file_kind TEXT NOT NULL DEFAULT 'other',
+                size INTEGER NOT NULL DEFAULT 0,
+                inferred_episode_number INTEGER NOT NULL DEFAULT 0,
+                episode_number INTEGER NOT NULL DEFAULT 0,
+                role TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                ignored INTEGER NOT NULL DEFAULT 0,
+                final_path TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(package_id, file_path)
+            );
+
             CREATE TABLE IF NOT EXISTS schedules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 key TEXT NOT NULL UNIQUE,
@@ -629,6 +684,15 @@ def init_db() -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_download_artifacts_provider_file
             ON download_artifacts(provider, provider_file_id)
             WHERE provider_file_id != '';
+
+            CREATE INDEX IF NOT EXISTS idx_resource_packages_entry
+            ON resource_packages(entry_id, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_resource_package_items_package
+            ON resource_package_items(package_id);
+
+            CREATE INDEX IF NOT EXISTS idx_resource_package_files_package
+            ON resource_package_files(package_id, status);
             """
         )
         ensure_pipeline_runtime(conn)
@@ -1146,8 +1210,82 @@ def migrate(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             UNIQUE(result_id, episode_number, resource_ref, subtitle_ref)
         );
+
+        CREATE TABLE IF NOT EXISTS resource_packages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id INTEGER NOT NULL DEFAULT 0,
+            result_id INTEGER NOT NULL DEFAULT 0,
+            search_id INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL DEFAULT '',
+            media_type TEXT NOT NULL DEFAULT 'anime',
+            provider TEXT NOT NULL DEFAULT '',
+            target_dir TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'queued',
+            match_status TEXT NOT NULL DEFAULT 'pending',
+            total_resources INTEGER NOT NULL DEFAULT 0,
+            completed_resources INTEGER NOT NULL DEFAULT 0,
+            matched_files INTEGER NOT NULL DEFAULT 0,
+            unmatched_files INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS resource_package_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_id INTEGER NOT NULL,
+            discovery_resource_id INTEGER NOT NULL DEFAULT 0,
+            source_ref TEXT NOT NULL DEFAULT '',
+            source_title TEXT NOT NULL DEFAULT '',
+            target_dir TEXT NOT NULL DEFAULT '',
+            submission_id TEXT NOT NULL DEFAULT '',
+            provider_file_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'queued',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS resource_package_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_id INTEGER NOT NULL,
+            item_id INTEGER NOT NULL DEFAULT 0,
+            file_path TEXT NOT NULL DEFAULT '',
+            provider_file_id TEXT NOT NULL DEFAULT '',
+            file_name TEXT NOT NULL DEFAULT '',
+            file_kind TEXT NOT NULL DEFAULT 'other',
+            size INTEGER NOT NULL DEFAULT 0,
+            inferred_episode_number INTEGER NOT NULL DEFAULT 0,
+            episode_number INTEGER NOT NULL DEFAULT 0,
+            role TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            ignored INTEGER NOT NULL DEFAULT 0,
+            final_path TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(package_id, file_path)
+        );
         """
     )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_resource_packages_entry
+        ON resource_packages(entry_id, updated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_resource_package_items_package
+        ON resource_package_items(package_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_resource_package_files_package
+        ON resource_package_files(package_id, status)
+        """
+    )
+    ensure_column(conn, "resource_package_files", "provider_file_id", "TEXT NOT NULL DEFAULT ''")
     episode_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(episodes)").fetchall()

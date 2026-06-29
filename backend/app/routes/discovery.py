@@ -14,7 +14,22 @@ from ..discovery_service import (
     search_backfill,
     test_search_source,
 )
-from ..schemas import BackfillApplyPayload, DiscoverySearchPayload, ReorderPayload, SearchSourcePayload
+from ..resource_package_service import (
+    apply_package_match,
+    cleanup_package_async,
+    create_package_from_discovery,
+    list_entry_packages,
+    package_detail,
+    scan_package_async,
+)
+from ..schemas import (
+    BackfillApplyPayload,
+    DiscoveryPackageDownloadPayload,
+    DiscoverySearchPayload,
+    ReorderPayload,
+    ResourcePackageApplyPayload,
+    SearchSourcePayload,
+)
 
 
 router = APIRouter()
@@ -88,6 +103,51 @@ def api_discovery_results(search_id: int = Query(..., ge=1)) -> dict:
 def api_discovery_collect_draft(result_id: int) -> dict:
     try:
         return collect_draft(result_id)
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/api/discovery/results/{result_id}/package-download")
+async def api_discovery_package_download(result_id: int, payload: DiscoveryPackageDownloadPayload) -> dict:
+    try:
+        return create_package_from_discovery(result_id, payload)
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.get("/api/entries/{entry_id}/resource-packages")
+def api_entry_resource_packages(entry_id: int) -> dict:
+    return list_entry_packages(entry_id)
+
+
+@router.get("/api/resource-packages/{package_id}")
+def api_resource_package_detail(package_id: int) -> dict:
+    try:
+        return package_detail(package_id)
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/api/resource-packages/{package_id}/scan")
+async def api_resource_package_scan(package_id: int) -> dict:
+    try:
+        return await scan_package_async(package_id)
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/api/resource-packages/{package_id}/apply-match")
+async def api_resource_package_apply_match(package_id: int, payload: ResourcePackageApplyPayload) -> dict:
+    try:
+        return await apply_package_match(package_id, payload)
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/api/resource-packages/{package_id}/cleanup")
+async def api_resource_package_cleanup(package_id: int) -> dict:
+    try:
+        return await cleanup_package_async(package_id)
     except ValueError as exc:
         raise _bad_request(exc) from exc
 

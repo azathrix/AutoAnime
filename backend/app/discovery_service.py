@@ -950,10 +950,32 @@ def discovery_results(search_id: int = 0) -> dict[str, Any]:
     for row in resource_rows:
         item = _row_dict(row)
         resources_by_result.setdefault(int(item["result_id"] or 0), []).append(item)
+    result_ids = [int(row["id"] or 0) for row in results]
+    packages_by_result: dict[int, dict[str, Any]] = {}
+    package_counts: dict[int, int] = {}
+    if result_ids:
+        placeholders = ",".join(["?"] * len(result_ids))
+        with connect() as conn:
+            package_rows = conn.execute(
+                f"""
+                SELECT *
+                FROM resource_packages
+                WHERE result_id IN ({placeholders})
+                ORDER BY id DESC
+                """,
+                result_ids,
+            ).fetchall()
+        for package_row in package_rows:
+            package = _row_dict(package_row)
+            result_id = int(package.get("result_id") or 0)
+            package_counts[result_id] = package_counts.get(result_id, 0) + 1
+            packages_by_result.setdefault(result_id, package)
     items = []
     for row in results:
         item = _row_dict(row)
         item["resources"] = resources_by_result.get(int(item["id"] or 0), [])
+        item["package"] = packages_by_result.get(int(item["id"] or 0), {})
+        item["package_count"] = package_counts.get(int(item["id"] or 0), 0)
         items.append(item)
     return {"search": _row_dict(search), "items": items}
 
