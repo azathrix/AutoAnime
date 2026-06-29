@@ -147,6 +147,63 @@ def _ensure_entry_for_package(payload: DiscoveryPackageDownloadPayload) -> dict[
     return row_to_dict(entry)
 
 
+def _clean_target_title(value: str) -> str:
+    text = re.sub(r"^\s*[\[【][^\]】]+[\]】]\s*", "", value or "")
+    text = re.sub(r"[\[【(（][^\]】)）]*(1080p|720p|2160p|4k|8k|bdrip|webrip|web-dl|flac|aac|hevc|avc|x26[45]|10bit|简繁|簡繁|简体|簡體|繁体|繁體|chs|cht|dual-audio)[^\]】)）]*[\]】)）]", " ", text, flags=re.I)
+    text = re.sub(r"\bS\d{1,2}\b|\bSeason\s*\d{1,2}\b|第[一二三四五六七八九十百零两\d]+季", " ", text, flags=re.I)
+    text = re.sub(r"\b\d{1,3}\s*[-~～]\s*\d{1,3}\b.*$", " ", text)
+    return clean_name(text)
+
+
+def _planned_target_seasons(title: str, resources: list[dict[str, Any]], default_entry: dict[str, Any]) -> dict[int, str]:
+    root = str(default_entry.get("title_root") or default_entry.get("title_cn") or default_entry.get("display_title") or "").strip()
+    default_season = max(1, int(default_entry.get("season_number") or 1))
+    plan: dict[int, str] = {default_season: ""}
+    source_texts = [title or ""]
+    source_texts.extend(str(item.get("source_title") or "") for item in resources)
+    combined = " ".join(source_texts)
+
+    for match in re.finditer(r"\bS(\d{1,2})\s*[+＋&＆/]\s*S?(\d{1,2})\b", combined, re.I):
+        for value in match.groups():
+            plan[max(1, int(value))] = ""
+    for match in re.finditer(r"\bSeason\s*(\d{1,2})\b|第([一二三四五六七八九十百零两\d]+)季", combined, re.I):
+        raw = match.group(1) or match.group(2) or ""
+        plan[cn_number_to_int(raw) if not raw.isdigit() else max(1, int(raw))] = ""
+    for match in re.finditer(r"全\s*([两二2三四五六七八九十\d]+)\s*季", combined):
+        count = cn_number_to_int(match.group(1))
+        for season in range(1, count + 1):
+            plan[season] = ""
+
+    parts = [part.strip() for part in re.split(r"[+＋&＆/]", title or "") if part.strip()]
+    for index, part in enumerate(parts, start=1):
+        explicit = _parse_explicit_season(part)
+        compact = _compact_text(part)
+        season = 2 if "afterstory" in compact and _package_is_multi_season(title) else explicit
+        if not season and index > 1 and _package_is_multi_season(title):
+            season = index
+        if season > 0:
+            cleaned = _clean_target_title(part)
+            if cleaned == "Unknown":
+                cleaned = ""
+            if root and _compact_text(cleaned) == _compact_text(root):
+                cleaned = ""
+            if "afterstory" in compact and root:
+                cleaned = clean_name(f"{root} After Story")
+            plan[season] = cleaned or plan.get(season, "")
+
+    return {season: title for season, title in sorted(plan.items()) if season > 0}
+
+
+def _prepare_initial_target_entries(conn, package: dict[str, Any], result: dict[str, Any], resources: list[dict[str, Any]], default_entry: dict[str, Any]) -> None:
+    seasons = _planned_target_seasons(str(package.get("title") or result.get("title") or ""), resources, default_entry)
+    created: list[int] = []
+    for season_number, title in seasons.items():
+        target = _ensure_target_entry(conn, package, season_number, title)
+        created.append(int(target.get("season_number") or season_number))
+    if created:
+        log("info", f"资源包目标季已准备: package_id={package.get('id')} seasons={','.join(str(item) for item in created)}")
+
+
 def create_package_from_discovery(result_id: int, payload: DiscoveryPackageDownloadPayload) -> dict[str, Any]:
     with connect() as conn:
         result_row = conn.execute("SELECT * FROM discovery_results WHERE id=?", (result_id,)).fetchone()
@@ -228,6 +285,9 @@ def create_package_from_discovery(result_id: int, payload: DiscoveryPackageDownl
                 "UPDATE resource_package_items SET target_dir=?, updated_at=? WHERE id=?",
                 (_child_dir(base_dir, item_id), ts, item_id),
             )
+        package_row = conn.execute("SELECT * FROM resource_packages WHERE id=?", (package_id,)).fetchone()
+        if package_row:
+            _prepare_initial_target_entries(conn, row_to_dict(package_row), result, resources, entry)
     trigger_package_download(package_id)
     return package_detail(package_id)
 
