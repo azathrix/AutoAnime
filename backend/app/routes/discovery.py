@@ -18,6 +18,7 @@ from ..resource_package_service import (
     apply_package_match,
     cleanup_package_async,
     create_package_from_discovery,
+    create_package_target_entry,
     list_entry_packages,
     package_detail,
     scan_package_async,
@@ -28,6 +29,7 @@ from ..schemas import (
     DiscoverySearchPayload,
     ReorderPayload,
     ResourcePackageApplyPayload,
+    ResourcePackageTargetEntryPayload,
     SearchSourcePayload,
 )
 
@@ -132,6 +134,14 @@ def api_resource_package_detail(package_id: int) -> dict:
 async def api_resource_package_scan(package_id: int) -> dict:
     try:
         return await scan_package_async(package_id)
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/api/resource-packages/{package_id}/target-entries")
+def api_resource_package_target_entry(package_id: int, payload: ResourcePackageTargetEntryPayload) -> dict:
+    try:
+        return create_package_target_entry(package_id, payload)
     except ValueError as exc:
         raise _bad_request(exc) from exc
 

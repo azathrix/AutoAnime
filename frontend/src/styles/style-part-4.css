@@ -188,6 +188,13 @@
   gap: 8px;
 }
 
+.resource-package-target-create {
+  display: grid;
+  grid-template-columns: 112px minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .resource-file-cell {
   display: grid;
   gap: 4px;
@@ -199,6 +206,13 @@
   font-size: 13px;
   line-height: 1.35;
   word-break: break-all;
+}
+
+.resource-match-note,
+.resource-confidence {
+  color: var(--ani-dark-light);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .resource-package-table .el-input-number {

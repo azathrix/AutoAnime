@@ -286,6 +286,7 @@ const resourcePackageDetail = reactive({
   entry: {},
   items: [],
   files: [],
+  target_entries: [],
   active: false,
   result: {},
 })
@@ -913,24 +914,29 @@ function downloaderSummary(item = {}) {
 }
 
 function taskCanCancel(row = {}) {
+  if (row.source === 'resource_package') return false
   return !['completed', 'failed', 'cancelled', 'skipped'].includes(String(row.status || ''))
 }
 
 function taskCanPause(row = {}) {
+  if (row.source === 'resource_package') return false
   if (row.source === 'operation') return false
   return ['pending', 'running', 'waiting', 'submitting', 'remote_downloading', 'remote_completed', 'local_copying', 'downloading'].includes(String(row.status || ''))
 }
 
 function taskCanResume(row = {}) {
+  if (row.source === 'resource_package') return false
   return String(row.status || '') === 'paused'
 }
 
 function taskCanRetry(row = {}) {
+  if (row.source === 'resource_package') return false
   if (row.source === 'operation') return false
   return ['failed', 'cancelled', 'waiting', 'paused'].includes(String(row.status || ''))
 }
 
 function taskCanClear(row = {}) {
+  if (row.source === 'resource_package') return false
   return ['completed', 'failed', 'cancelled', 'skipped', 'paused'].includes(String(row.status || ''))
 }
 
@@ -1510,6 +1516,7 @@ const {
   applyBackfillResult,
   applyResourcePackageMatch,
   cleanupResourcePackage,
+  createResourcePackageTargetEntry,
   deleteSearchSource,
   downloadDiscoveryPackage,
   editSearchSource,
@@ -1538,13 +1545,14 @@ const {
 exposeAppContext({
   applyBackfillResult,
   applyResourcePackageMatch,
+  createResourcePackageTargetEntry,
   addDownloader, addMediaWizardResourceLines, addMediaWizardServerFile, addMediaWizardSubtitleLines, advanceMediaWizard, apiErrorMessage, applyMetadataToWizard,
   browseServerFiles,
   archiveCurrentEntry, backfillCurrentEntrySeason, cancelAllDownloads, cancelAllGenericTasks, cancelDownloadTask, cancelEpisodeDownload, cancelQueueDownload, clearCompletedDownloadTasks, clearEntryEditForm,
   cancelGenericTask, clearGenericTask, pauseAllGenericTasks, pauseGenericTask, resumeAllGenericTasks, resumeGenericTask, retryFailedGenericTasks,
   commitEpisodeImport, commitMediaWizard,
   deleteCurrentEntry, deleteDownloadTask, deleteEpisodeResource, deleteRssSubscription, deleteSearchSource, downloadCurrentEntryResources, downloadEpisodeResource,
-  cleanupResourcePackage, downloadDiscoveryPackage, editRssSubscription, editSearchSource, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, loadSearchSources, normalizeSettingsShape, openDiscoveryCollectDraft, openEntry,
+  cleanupResourcePackage, createResourcePackageTargetEntry, downloadDiscoveryPackage, editRssSubscription, editSearchSource, entryEditPayload, exportLogs, fetchEntryMetadata, loadRssSubscriptions, loadSearchSources, normalizeSettingsShape, openDiscoveryCollectDraft, openEntry,
   openEntryEditDialog, openEpisodeResourceEditor, openMediaWizard, openMetadataSearch, openProcessorSettings, openQueueEntry, openRssDialog, openServerFileBrowser,
   openScheduledSettings, openSearchSourceDialog, openTorznabDialog, migrateEpisodeModel, openDownloaderDialog, organizeAllLocalFiles, organizeCurrentEntryLocalFiles, refreshAllMetadata, refreshAllLocalStatus, refreshCurrentEntryLocalStatus, refreshEntryMetadata, repairLocalPaths, retryDownloadTask, retryGenericTask, refreshEpisodeResource, removeDownloader, removeMediaWizardResourceItem,
   openResourcePackage, removeMediaWizardSubtitleItem, reorderRssSubscriptions, resetRssForm, resetSearchSourceForm, resetSelectionRules, runAction, runDiscoverySearch, runMetadataSearch, saveAllSettings, saveBatchSubtitles, scanResourcePackage,

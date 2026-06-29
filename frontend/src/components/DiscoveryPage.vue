@@ -1,7 +1,9 @@
 <script setup>
-import { computed, inject } from 'vue'
+import { computed, inject, ref } from 'vue'
 
 const app = inject('appContext') || {}
+const packageTargetSeason = ref(2)
+const packageTargetTitle = ref('')
 
 const discoverySourceGroups = computed(() => {
   const orderedSources = app.searchSources || []
@@ -72,6 +74,20 @@ function fileKindText(kind) {
   if (kind === 'video') return '视频'
   if (kind === 'subtitle') return '字幕'
   return '杂项'
+}
+
+function targetEntryLabel(item) {
+  const title = item?.display_title || item?.title_cn || item?.title_raw || item?.title_root || '目标作品'
+  const season = Number(item?.season_number || 1)
+  return `S${String(season).padStart(2, '0')} · ${title}`
+}
+
+async function createTargetEntry() {
+  await app.createResourcePackageTargetEntry?.({
+    season_number: Number(packageTargetSeason.value || 1),
+    title: packageTargetTitle.value || '',
+  })
+  packageTargetTitle.value = ''
 }
 </script>
 
@@ -194,8 +210,14 @@ function fileKindText(kind) {
         </div>
         <div class="resource-package-stats">
           <el-tag type="info">种子 {{ app.resourcePackageDetail.items?.length || 0 }}</el-tag>
+          <el-tag type="info">目标季 {{ app.resourcePackageDetail.target_entries?.length || 0 }}</el-tag>
           <el-tag type="success">已匹配 {{ app.resourcePackageDetail.package?.matched_files || 0 }}</el-tag>
           <el-tag type="warning">待处理 {{ app.resourcePackageDetail.package?.unmatched_files || 0 }}</el-tag>
+        </div>
+        <div class="resource-package-target-create">
+          <el-input-number v-model="packageTargetSeason" :min="1" :max="99" size="small" controls-position="right" />
+          <el-input v-model="packageTargetTitle" size="small" placeholder="目标季标题，可留空自动生成" />
+          <el-button size="small" type="primary" plain :loading="app.resourcePackageLoading" @click="createTargetEntry">新增目标季</el-button>
         </div>
         <el-alert
           v-if="app.resourcePackageDetail.package?.last_error"
@@ -217,7 +239,20 @@ function fileKindText(kind) {
               <div class="resource-file-cell">
                 <strong>{{ row.file_name || row.file_path }}</strong>
                 <code>{{ row.file_path }}</code>
+                <span v-if="row.match_note" class="resource-match-note">{{ row.match_note }}</span>
               </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="目标作品 / 季" width="230">
+            <template #default="{ row }">
+              <el-select v-model="row.target_entry_id" size="small" :disabled="row.file_kind === 'other' || Number(row.ignored || 0)" filterable placeholder="选择目标季">
+                <el-option
+                  v-for="entry in app.resourcePackageDetail.target_entries || []"
+                  :key="entry.id"
+                  :label="targetEntryLabel(entry)"
+                  :value="Number(entry.id || 0)"
+                />
+              </el-select>
             </template>
           </el-table-column>
           <el-table-column label="类型" width="92">
@@ -251,6 +286,7 @@ function fileKindText(kind) {
               <el-tag size="small" :type="row.status === 'applied' ? 'success' : row.status === 'pending' ? 'warning' : row.status === 'ignored' ? 'info' : ''">
                 {{ row.status || '-' }}
               </el-tag>
+              <span v-if="Number(row.match_confidence || 0)" class="resource-confidence">{{ Math.round(Number(row.match_confidence || 0) * 100) }}%</span>
             </template>
           </el-table-column>
         </el-table>

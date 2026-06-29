@@ -62,6 +62,7 @@ export function createDiscoveryActions(app, deps) {
       entry: data.entry || {},
       items: data.items || [],
       files: data.files || [],
+      target_entries: data.target_entries || [],
       active: Boolean(data.active),
       result: data.result || {},
     })
@@ -372,8 +373,19 @@ export function createDiscoveryActions(app, deps) {
   async function applyResourcePackageMatch() {
     const packageId = Number(app.resourcePackageDetail?.package?.id || 0)
     if (!packageId) return
+    const missing = (app.resourcePackageDetail.files || []).find(item => {
+      if (Number(item.ignored || 0)) return false
+      const role = item.role || item.file_kind || ''
+      if (!['video', 'subtitle'].includes(role)) return false
+      return !Number(item.target_entry_id || 0) || !Number(item.episode_number || 0)
+    })
+    if (missing) {
+      ElMessage.warning('请先为所有要处理的视频/字幕选择目标作品并填写集数')
+      return
+    }
     const files = (app.resourcePackageDetail.files || []).map(item => ({
       file_id: Number(item.id || 0),
+      target_entry_id: Number(item.target_entry_id || 0),
       episode_number: Number(item.episode_number || 0),
       role: item.role || item.file_kind || '',
       ignored: Boolean(Number(item.ignored || 0)),
@@ -386,6 +398,24 @@ export function createDiscoveryActions(app, deps) {
       const result = data.result || {}
       ElMessage.success(`已整理 ${result.applied || 0} 个视频，字幕 ${result.subtitles || 0} 个`)
       await app.reload()
+    } catch (error) {
+      ElMessage.error(apiErrorMessage(error))
+    } finally {
+      app.resourcePackageLoading = false
+    }
+  }
+
+  async function createResourcePackageTargetEntry(payload = {}) {
+    const packageId = Number(app.resourcePackageDetail?.package?.id || 0)
+    if (!packageId) return
+    app.resourcePackageLoading = true
+    try {
+      const data = await postAction(`/resource-packages/${packageId}/target-entries`, {
+        season_number: Number(payload.season_number || 1),
+        title: payload.title || '',
+      })
+      setResourcePackageDetail(data)
+      ElMessage.success('目标季已创建')
     } catch (error) {
       ElMessage.error(apiErrorMessage(error))
     } finally {
@@ -413,6 +443,7 @@ export function createDiscoveryActions(app, deps) {
     applyBackfillResult,
     applyResourcePackageMatch,
     cleanupResourcePackage,
+    createResourcePackageTargetEntry,
     deleteSearchSource,
     downloadDiscoveryPackage,
     editSearchSource,

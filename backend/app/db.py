@@ -512,6 +512,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS resource_packages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 entry_id INTEGER NOT NULL DEFAULT 0,
+                work_id INTEGER NOT NULL DEFAULT 0,
                 result_id INTEGER NOT NULL DEFAULT 0,
                 search_id INTEGER NOT NULL DEFAULT 0,
                 title TEXT NOT NULL DEFAULT '',
@@ -553,9 +554,13 @@ def init_db() -> None:
                 file_name TEXT NOT NULL DEFAULT '',
                 file_kind TEXT NOT NULL DEFAULT 'other',
                 size INTEGER NOT NULL DEFAULT 0,
+                target_entry_id INTEGER NOT NULL DEFAULT 0,
+                inferred_season_number INTEGER NOT NULL DEFAULT 0,
                 inferred_episode_number INTEGER NOT NULL DEFAULT 0,
                 episode_number INTEGER NOT NULL DEFAULT 0,
                 role TEXT NOT NULL DEFAULT '',
+                match_confidence REAL NOT NULL DEFAULT 0,
+                match_note TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
                 ignored INTEGER NOT NULL DEFAULT 0,
                 final_path TEXT NOT NULL DEFAULT '',
@@ -1214,6 +1219,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS resource_packages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entry_id INTEGER NOT NULL DEFAULT 0,
+            work_id INTEGER NOT NULL DEFAULT 0,
             result_id INTEGER NOT NULL DEFAULT 0,
             search_id INTEGER NOT NULL DEFAULT 0,
             title TEXT NOT NULL DEFAULT '',
@@ -1255,9 +1261,13 @@ def migrate(conn: sqlite3.Connection) -> None:
             file_name TEXT NOT NULL DEFAULT '',
             file_kind TEXT NOT NULL DEFAULT 'other',
             size INTEGER NOT NULL DEFAULT 0,
+            target_entry_id INTEGER NOT NULL DEFAULT 0,
+            inferred_season_number INTEGER NOT NULL DEFAULT 0,
             inferred_episode_number INTEGER NOT NULL DEFAULT 0,
             episode_number INTEGER NOT NULL DEFAULT 0,
             role TEXT NOT NULL DEFAULT '',
+            match_confidence REAL NOT NULL DEFAULT 0,
+            match_note TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
             ignored INTEGER NOT NULL DEFAULT 0,
             final_path TEXT NOT NULL DEFAULT '',
@@ -1267,10 +1277,22 @@ def migrate(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    ensure_column(conn, "resource_packages", "work_id", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "resource_package_files", "provider_file_id", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "resource_package_files", "target_entry_id", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "resource_package_files", "inferred_season_number", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "resource_package_files", "match_confidence", "REAL NOT NULL DEFAULT 0")
+    ensure_column(conn, "resource_package_files", "match_note", "TEXT NOT NULL DEFAULT ''")
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_resource_packages_entry
         ON resource_packages(entry_id, updated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_resource_packages_work
+        ON resource_packages(work_id, updated_at DESC)
         """
     )
     conn.execute(
@@ -1285,7 +1307,35 @@ def migrate(conn: sqlite3.Connection) -> None:
         ON resource_package_files(package_id, status)
         """
     )
-    ensure_column(conn, "resource_package_files", "provider_file_id", "TEXT NOT NULL DEFAULT ''")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_resource_package_files_target
+        ON resource_package_files(target_entry_id, episode_number)
+        """
+    )
+    conn.execute(
+        """
+        UPDATE resource_packages
+        SET work_id=(
+          SELECT COALESCE(e.work_id, 0)
+          FROM entries e
+          WHERE e.id=resource_packages.entry_id
+        )
+        WHERE COALESCE(work_id, 0)=0
+          AND COALESCE(entry_id, 0)>0
+        """
+    )
+    conn.execute(
+        """
+        UPDATE resource_package_files
+        SET target_entry_id=(
+          SELECT COALESCE(rp.entry_id, 0)
+          FROM resource_packages rp
+          WHERE rp.id=resource_package_files.package_id
+        )
+        WHERE COALESCE(target_entry_id, 0)=0
+        """
+    )
     episode_columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(episodes)").fetchall()

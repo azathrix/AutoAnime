@@ -218,6 +218,7 @@ class DiscoveryPackageDownloadPayload(BaseModel):
 
 class ResourcePackageFileMatchPayload(BaseModel):
     file_id: int = 0
+    target_entry_id: int = 0
     episode_number: int = 0
     role: str = "video"
     ignored: bool = False
@@ -225,6 +226,10 @@ class ResourcePackageFileMatchPayload(BaseModel):
 class ResourcePackageApplyPayload(BaseModel):
     files: list[ResourcePackageFileMatchPayload] = Field(default_factory=list)
     organize: bool = True
+
+class ResourcePackageTargetEntryPayload(BaseModel):
+    season_number: int = 1
+    title: str = ""
 
 class ProcessorSettingsPayload(BaseModel):
     download_concurrency: int = 2

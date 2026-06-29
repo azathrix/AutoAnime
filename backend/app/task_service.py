@@ -128,6 +128,9 @@ def list_tasks(task_type: str = "") -> list[dict[str, Any]]:
                     "episode_number": item.get("episode_number") or "",
                 }
             )
+        from .resource_package_service import list_resource_package_tasks
+
+        rows.extend(list_resource_package_tasks())
     rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     return rows[:500]
 
